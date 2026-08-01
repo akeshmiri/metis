@@ -1,0 +1,33 @@
+[project]
+name = "metis-mcp-server"
+version = "0.1.0"
+description = "Métis MCP server — Phase 0 dogfooding pilot, stdio transport"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.0.0,<2.0.0",
+    "PyYAML>=6.0",
+    "neo4j>=5.0.0",
+    "psycopg[binary]>=3.0.0",
+    "PyJWT>=2.0.0",
+    "uvicorn>=0.30.0",
+    "starlette>=0.37.0",
+    "jsonschema>=4.0.0",
+    "markdown>=3.5",
+    "python-pptx>=1.0.0",
+]
+
+[project.scripts]
+metis-mcp-server = "metis_mcp.server:main"
+
+[tool.setuptools]
+packages = ["metis_mcp"]
+# Explicit, not auto-discovered: corpus/ sits alongside metis_mcp/ as bundled
+# DATA, not a second Python package -- setuptools' automatic flat-layout
+# discovery can't tell the difference and fails without this. Found for real
+# during the move to /Users/akeshmiri/Projects/claude/, not anticipated in
+# advance -- `pip install -e .` was never actually exercised before that
+# point, only direct dependency installs.
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"

@@ -1,0 +1,101 @@
+# Métis project-level configuration.
+# Resolution: this file (project-level) overrides ~/.metis/config.yaml
+# (host-level) if both exist. First-found-wins, no merge -- see
+# config_manager.py's docstring for the full resolution rule.
+
+zdr:
+  # Explicit, current decision (not a placeholder): no commercial Zero Data
+  # Retention agreement with Anthropic is being pursued right now. This is a
+  # deliberate choice, not an unfinished task -- see the reasoning recorded
+  # in metis-const-053-confirmation-record.md and the conversation that led
+  # to it. Because this is false, any repository classified `confidential`
+  # below will be blocked at the gate (CONST-051) until this changes.
+  confirmed: false
+  confirmed_date: null
+  confirmed_by: null
+  note: >
+    Decided 2026-07-25: standard API terms (no training, 30-day auto-delete)
+    are sufficient for now. Revisit only if a specific repository's
+    contractual or regulatory requirements actually need stricter handling
+    -- see the classification guidance below, not a blanket policy change.
+
+models:
+  extraction: claude-haiku-4-5-20251001
+  judge: claude-sonnet-5
+
+corpus:
+  glob: "corpus/*.md"
+
+# Graph backend (Phase 1): 'local' is LocalGraphStore, the dogfooding-corpus
+# BFS-over-dict stand-in used before Neo4j exists. 'neo4j' is Neo4jGraphStore,
+# running real Cypher -- see metis_mcp/neo4j_graph_store.py and
+# load_dogfooding_corpus.py (the one-off script that populates it from this
+# same corpus). password_env names an environment variable holding the
+# actual secret; the secret itself never lives in this checked-in file.
+graph:
+  backend: local
+  neo4j:
+    uri: "bolt://localhost:7687"
+    user: "neo4j"
+    password_env: "METIS_NEO4J_PASSWORD"
+
+# Per-repository classification (CONST-051/052). Every repository Métis
+# ingests should have an explicit entry here -- anything NOT listed defaults
+# to `confidential` (fail-closed) and will be blocked, per CONST-052, not
+# silently treated as safe.
+#
+# Given the ZDR decision above, most repositories should genuinely be
+# `public_internal` unless a specific one has a real contractual, regulatory,
+# or embedded-secrets reason to be stricter -- see the classification
+# discussion for guidance on which is which. Defaulting everything to
+# `confidential` "to be safe" just means nothing ingests; that's not actually
+# safer, it's just inert.
+repositories:
+  - name: metis-self
+    classification: public_internal
+    note: "This platform's own design documents -- the Phase 0 dogfooding corpus."
+
+  # - name: REPLACE-your-repo-name
+  #   classification: public_internal | confidential | restricted
+  #   note: "REPLACE: why this classification, in one line"
+
+# Connector connection settings (Phase 2). application_code reads from a mock
+# Athena Postgres in this environment (see connectors/mock_athena_schema.sql
+# for why it's a mock, not real Athena) -- password_env, same indirection
+# pattern as graph.neo4j.password_env above.
+connectors:
+  application_code:
+    athena:
+      host: "localhost"
+      port: 5432
+      dbname: "athena_mock"
+      user: "athena"
+      password_env: "METIS_ATHENA_PASSWORD"
+
+# Transport (Phase 6). 'stdio' is what every Claude Code session so far has
+# used -- no OAuth2 needed, sufficient for local single-user dogfooding.
+# 'streamable-http' is the production multi-client path (§11.2); it
+# requires security.jwt_secret_env to be set (the actual secret lives only
+# in that env var, never in this file) and every :User node it authorizes
+# against to already exist in Neo4j with a real owner_team.
+#
+# public_url: the real externally-reachable Streamable HTTP URL
+# (docs/metis-multi-client-integration.md's REPLACE-metis-host placeholders
+# resolve from here) -- consumed by metis_mcp/copilot_integration.py to
+# generate .github/agents/spec-aware.agent.md. Unset here deliberately: no
+# real hostname/OAuth2 provider has been chosen yet (that doc's own §4).
+server:
+  transport: stdio
+  # public_url: "https://REPLACE-metis-host.example.com/mcp"
+
+security:
+  jwt_secret_env: "METIS_JWT_SECRET"
+
+# §9.1 Headroom-style response compression (metis_mcp/token_optimization.py).
+# Opt-in, off by default -- REQ-METIS-COST-01 treats this as a
+# guardrail-boundary control, not a silent default. Applies only to
+# metis_get_context/metis_get_traceability/metis_impact_analysis; the
+# source_episode_id/source_span provenance fields are never compressed
+# regardless of this setting.
+token_optimization:
+  headroom_enabled: false

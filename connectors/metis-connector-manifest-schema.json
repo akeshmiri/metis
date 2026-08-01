@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "metis-connector-manifest-schema",
+  "$comment": "Schema for REQ-METIS-CONN-01/02 (metis-connector-architecture.md). A new intake source is added by writing a manifest conforming to this schema, not by modifying pipeline code. trust_tier_on_first_use is hardcoded to calibration_required in this schema -- no manifest can opt out of the Data Quality Framework's CONST-036 onboarding gate.",
+  "type": "object",
+  "required": ["connector_id", "display_name", "version", "protocol", "entity_type_mapping", "temporal_strategy", "precedence_tier", "environment_scope", "trust_tier_on_first_use"],
+  "properties": {
+    "connector_id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+    "display_name": { "type": "string" },
+    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "protocol": { "type": "string", "enum": ["mcp_client", "file_scan", "direct_api", "athena_internal_read"] },
+    "athena_internal_read_config": {
+      "type": "object",
+      "description": "Required if protocol=athena_internal_read. Reads FROM Athena's already-populated tables/views for sources Athena already ingests (git, jira, openapi, pipeline, kube, tms/scale) -- does NOT re-fetch from the original external source. This is the corrected ETL pattern: the graph is derived from Athena's existing data, not a second independent ingestion of the same sources.",
+      "required": ["athena_schema_object", "change_detection_column"],
+      "properties": {
+        "athena_schema_object": { "type": "string", "description": "the logical Athena schema-catalog object to read, e.g. 'athena.mv_commits', resolved via Athena's existing schema-catalog pattern (athena_schema_catalog.py), not a hardcoded table name" },
+        "change_detection_column": { "type": "string", "description": "the column used for incremental sync (e.g. 'updated_at') -- polling this, not re-calling the original external API, is what makes this protocol cheap and avoids the duplicate-ingestion problem" },
+        "poll_interval_seconds": { "type": "integer" }
+      }
+    },
+    "mcp_config": {
+      "type": "object",
+      "description": "Required if protocol=mcp_client.",
+      "required": ["server_provider", "transport", "auth_type"],
+      "properties": {
+        "server_provider": { "type": "string", "description": "e.g. 'Grafana Labs official', 'Atlassian Rovo official', 'mcp-atlassian (community, Server/Data Center)'" },
+        "server_address_or_command": { "type": "string" },
+        "transport": { "type": "string", "enum": ["stdio", "sse", "streamable_http"] },
+        "auth_type": { "type": "string", "enum": ["oauth2.1", "api_token", "personal_access_token", "service_account"] },
+        "tool_allowlist": { "type": "array", "items": { "type": "string" }, "description": "Explicit subset of the external MCP server's tools this connector is permitted to call -- least-privilege, not 'all tools the server happens to expose'." }
+      }
+    },
+    "file_scan_config": {
+      "type": "object",
+      "description": "Required if protocol=file_scan.",
+      "properties": {
+        "watch_path": { "type": "string" },
+        "upload_endpoint": { "type": "string" },
+        "accepted_extensions": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "entity_type_mapping": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_shape", "target_entity_type"],
+        "properties": {
+          "source_shape": { "type": "string", "description": "what the source data looks like, e.g. 'Grafana alert rule', 'Jira issue of type Bug'" },
+          "target_entity_type": { "type": "string", "description": "the ontology entity this becomes, e.g. 'Alert', 'Defect'" },
+          "target_episode_type": { "type": "string" }
+        }
+      },
+      "minItems": 1
+    },
+    "temporal_strategy": {
+      "type": "object",
+      "required": ["t_recorded_source", "event_time_confidence_default"],
+      "properties": {
+        "t_recorded_source": { "type": "string", "description": "which field on the source system is used as t_recorded, per §5.1's rule that t_recorded is preferred over re-derivation" },
+        "event_time_confidence_default": { "type": "string", "enum": ["verified", "inferred", "unknown"] },
+        "known_pitfalls": { "type": "string" }
+      }
+    },
+    "precedence_tier": {
+      "type": "object",
+      "required": ["role"],
+      "properties": {
+        "role": { "type": "string", "enum": ["system_of_record", "supplementary", "override_by_org_decision"] },
+        "applies_to_entity_types": { "type": "array", "items": { "type": "string" } },
+        "outranked_by": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "environment_scope": {
+      "type": "string",
+      "enum": ["production_only", "all_environments", "sandbox_only"],
+      "description": "BS-010: enforced at credential level, not just this manifest field -- the field documents intent, the credential enforces it."
+    },
+    "trust_tier_on_first_use": {
+      "const": "calibration_required",
+      "description": "Hardcoded -- no manifest may set anything else. Every new connector goes through the 500-extraction calibration batch (Data Quality Framework §3.2, CONST-036) before reaching auto_write confidence tier."
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "protocol": { "const": "mcp_client" } } },
+      "then": { "required": ["mcp_config"] }
+    },
+    {
+      "if": { "properties": { "protocol": { "const": "file_scan" } } },
+      "then": { "required": ["file_scan_config"] }
+    },
+    {
+      "if": { "properties": { "protocol": { "const": "athena_internal_read" } } },
+      "then": { "required": ["athena_internal_read_config"] }
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+apiVersion: v2
+type: application
+name: metis
+version: 0.1.0
+description: Métis helm chart — AI-driven specification knowledge graph platform
+home: https://github.com/REPLACE-org/metis
+appVersion: "0.1.0"
+dependencies:
+  - name: neo4j
+    version: "5.x"
+    repository: "https://helm.neo4j.com/neo4j"
+    condition: neo4j.enabled
+    # REPLACE: pin to the actual Enterprise-tier chart version once confirmed against
+    # the deployed Neo4j Enterprise version (§15 risk register — licensing already
+    # budgeted as a Phase 1→2 line item, not a Phase 0 blocker). Community Edition
+    # is a valid single-instance substitute for Phase 0 by setting neo4j.edition
+    # below to "community" — see values.yaml.

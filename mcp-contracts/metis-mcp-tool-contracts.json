@@ -1,0 +1,995 @@
+{
+  "$comment": "Métis MCP tool contracts, resolving master spec §11.1. Shared $defs at the bottom avoid repeating the provenance/confidence shape on every tool's output -- every fact Métis serves carries the same grounding fields per §7 Layer 1, regardless of which tool returned it.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "tools": {
+    "metis_explain_decision": {
+      "description": "Pure retrieval. Returns linked ArchitectureDecisionRecorded episodes for a node. Ships enabled by default (§11.1 -- lowest risk, ship first).",
+      "input": {
+        "type": "object",
+        "required": [
+          "node_id"
+        ],
+        "properties": {
+          "node_id": {
+            "type": "string",
+            "description": "Métis node id, e.g. 'svc:billing/api:POST /invoices'"
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "required": [
+          "node_id",
+          "decisions"
+        ],
+        "properties": {
+          "node_id": {
+            "type": "string"
+          },
+          "decisions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "decision_id",
+                "rationale",
+                "decided_at",
+                "provenance"
+              ],
+              "properties": {
+                "decision_id": {
+                  "type": "string"
+                },
+                "rationale": {
+                  "type": "string"
+                },
+                "alternatives_considered": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "decided_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "provenance": {
+                  "$ref": "#/$defs/provenance"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "metis_get_context": {
+      "description": "Structured context assembly for a coding agent (§9.1's core retrieval path). Applies pinned-block injection (§8.1) + hybrid retrieval (§8.2) automatically. Ships enabled by default.",
+      "input": {
+        "type": "object",
+        "required": [
+          "anchor"
+        ],
+        "properties": {
+          "anchor": {
+            "type": "object",
+            "description": "Exactly one of these three -- schema enforces mutual exclusivity at the application layer, not expressible in plain JSON Schema without oneOf below.",
+            "oneOf": [
+              {
+                "properties": {
+                  "file_path": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "file_path"
+                ]
+              },
+              {
+                "properties": {
+                  "method_signature": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "method_signature"
+                ]
+              },
+              {
+                "properties": {
+                  "task_description": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "task_description"
+                ]
+              }
+            ]
+          },
+          "client": {
+            "type": "string",
+            "enum": [
+              "copilot",
+              "claude_code"
+            ],
+            "description": "REQ-METIS-CPT-05: sizes traversal depth/top-k to the caller's context budget up front, not truncated late. Copilot = 2-hop default; claude_code = 3-hop default (Phase 3, §11.5)."
+          },
+          "include_draft_tier": {
+            "type": "boolean",
+            "default": false,
+            "description": "§7.3: Draft-tier facts are excluded by default -- only a human curator's review UI should set this true."
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "required": [
+          "requirement",
+          "acceptance_criteria",
+          "transition_spec",
+          "existing_tests",
+          "constraints",
+          "relevant_adrs",
+          "prior_rejected_attempts",
+          "pinned_context"
+        ],
+        "properties": {
+          "requirement": {
+            "$ref": "#/$defs/gradedFact"
+          },
+          "acceptance_criteria": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/gradedFact"
+            }
+          },
+          "transition_spec": {
+            "$ref": "#/$defs/gradedFact"
+          },
+          "existing_tests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/gradedFact"
+            }
+          },
+          "constraints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/gradedFact"
+            }
+          },
+          "relevant_adrs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/gradedFact"
+            }
+          },
+          "prior_rejected_attempts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/gradedFact"
+            },
+            "description": "§8's Engineering Memory episodes -- prior AI attempts a human overturned, and why."
+          },
+          "pinned_context": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/gradedFact"
+            },
+            "description": "§8.1 pinned core memory blocks -- always included, never reranked out."
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "e.g. 'no matching requirement exists in the graph' -- the .agent.md instruction (§4.6.1's shared content-gathering step, §11.2) requires this be surfaced, never silently omitted."
+          }
+        }
+      }
+    },
+    "metis_get_traceability": {
+      "description": "Full up/down traceability chain (§7.1). Read-only. Ships enabled by default.",
+      "input": {
+        "type": "object",
+        "required": [
+          "node_id"
+        ],
+        "properties": {
+          "node_id": {
+            "type": "string"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "up",
+              "down",
+              "both"
+            ],
+            "default": "both"
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "required": [
+          "node_id",
+          "chain"
+        ],
+        "properties": {
+          "node_id": {
+            "type": "string"
+          },
+          "chain": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "node_id",
+                "entity_type",
+                "relationship",
+                "provenance"
+              ],
+              "properties": {
+                "node_id": {
+                  "type": "string"
+                },
+                "entity_type": {
+                  "type": "string"
+                },
+                "relationship": {
+                  "type": "string",
+                  "description": "e.g. 'HAS_AC', 'IMPLEMENTS', 'VERIFIES'"
+                },
+                "provenance": {
+                  "$ref": "#/$defs/provenance"
+                }
+              }
+            }
+          },
+          "gaps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "§7.2 automatic gap detection results along this chain -- orphan/untested/stale entries."
+          }
+        }
+      }
+    },
+    "metis_check_coverage": {
+      "description": "Test coverage status + stale-coverage flags (§7.2). Read-only. Ships enabled by default.",
+      "input": {
+        "type": "object",
+        "required": [
+          "target_id"
+        ],
+        "properties": {
+          "target_id": {
+            "type": "string",
+            "description": "A Transition or Requirement node id."
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "required": [
+          "target_id",
+          "covered",
+          "stale"
+        ],
+        "properties": {
+          "target_id": {
+            "type": "string"
+          },
+          "covered": {
+            "type": "boolean"
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "true if the TestCase's t_valid predates the Transition's most recent t_valid (§7.2's stale-coverage pattern)."
+          },
+          "test_cases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "graph ids of covering TestCase nodes."
+          }
+        }
+      }
+    },
+    "metis_impact_analysis": {
+      "description": "Impacted requirements/services/tests for a diff or file list (§9.2). Read-only, safe for pre-merge use. Ships enabled by default.",
+      "input": {
+        "type": "object",
+        "required": [
+          "changed_files"
+        ],
+        "properties": {
+          "changed_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "diff": {
+            "type": "string",
+            "description": "Optional unified diff, for finer-grained impact than file-level."
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "required": [
+          "impacted_requirements",
+          "impacted_services",
+          "recommended_regression_tests"
+        ],
+        "properties": {
+          "impacted_requirements": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "impacted_services": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "recommended_regression_tests": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "metis_propose_test_skeleton": {
+      "description": "Structured test skeleton from a Transition (§6's generation table). Feature-flagged, off by default. Skeleton only -- never auto-commits.",
+      "input": {
+        "type": "object",
+        "required": [
+          "transition_id"
+        ],
+        "properties": {
+          "transition_id": {
+            "type": "string"
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "required": [
+          "transition_id",
+          "skeleton",
+          "requires_human_review"
+        ],
+        "properties": {
+          "transition_id": {
+            "type": "string"
+          },
+          "skeleton": {
+            "type": "object",
+            "properties": {
+              "fixtures": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "assertions_targeted": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "test_type": {
+                "type": "string",
+                "enum": [
+                  "functional",
+                  "integration",
+                  "contract",
+                  "performance",
+                  "security"
+                ]
+              }
+            }
+          },
+          "requires_human_review": {
+            "const": true,
+            "description": "Always true -- structural invariant, not a runtime flag."
+          }
+        }
+      }
+    },
+    "metis_submit_episode": {
+      "description": "Write path. DISABLED BY DEFAULT (REQ-METIS-CPT-01). Org opt-in required. Confidence-tiered on arrival per §7.3 -- never writes directly to Approved.",
+      "input": {
+        "type": "object",
+        "required": [
+          "episode_type",
+          "payload",
+          "source_ref"
+        ],
+        "properties": {
+          "episode_type": {
+            "type": "string"
+          },
+          "payload": {
+            "type": "object"
+          },
+          "source_ref": {
+            "type": "string",
+            "description": "connector-specific pointer -- required, enforces REQ-METIS-ONT-03 at the API boundary, not just at the DB."
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "required": [
+          "episode_id",
+          "confidence_tier",
+          "status"
+        ],
+        "properties": {
+          "episode_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "confidence_tier": {
+            "type": "string",
+            "enum": [
+              "auto_write",
+              "quarantine",
+              "rejected"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "accepted_draft",
+              "queued_for_review",
+              "rejected"
+            ]
+          },
+          "rejection_reason": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "metis_explain_answer": {
+      "description": "§12.1's Academy tool. Explains the retrieval path behind any prior metis_get_context/metis_get_traceability response in plain language. Read-only, cheap (templated from already-computed data, not a fresh LLM call per §12.5's content-assembly-once principle).",
+      "input": {
+        "type": "object",
+        "required": [
+          "prior_response_id"
+        ],
+        "properties": {
+          "prior_response_id": {
+            "type": "string",
+            "description": "correlation id returned alongside every metis_get_context/metis_get_traceability response."
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "required": [
+          "explanation",
+          "sources",
+          "confidence_summary"
+        ],
+        "properties": {
+          "explanation": {
+            "type": "string"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/provenance"
+            }
+          },
+          "confidence_summary": {
+            "type": "string"
+          },
+          "academy_links": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "REQ-METIS-ACD-03: every explanation links to the relevant Academy page."
+          }
+        }
+      }
+    },
+    "metis_quality_score": {
+      "description": "REQ-METIS-DQ-01 (Data & Specification Quality Framework §3.3). Composite quality score plus full metric breakdown for any graph scope. Read-only, pure aggregation over already-computed data -- no new LLM calls. Ships enabled by default.",
+      "input": {
+        "type": "object",
+        "required": [
+          "scope"
+        ],
+        "properties": {
+          "scope": {
+            "$ref": "#/$defs/scope"
+          },
+          "include_trend": {
+            "type": "boolean",
+            "default": false,
+            "description": "if true, include the last N periods of composite-score history for the weekly trend check (Data Quality Framework §3.2)."
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "required": [
+          "scope_description",
+          "composite_score",
+          "dimension_breakdown",
+          "gate_status"
+        ],
+        "properties": {
+          "scope_description": {
+            "type": "string"
+          },
+          "composite_score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "dimension_breakdown": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "metric_id",
+                "dimension",
+                "value",
+                "target",
+                "status"
+              ],
+              "properties": {
+                "metric_id": {
+                  "type": "string",
+                  "description": "e.g. 'DQ-012'"
+                },
+                "dimension": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "number"
+                },
+                "target": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "pass",
+                    "warn",
+                    "fail"
+                  ]
+                }
+              }
+            }
+          },
+          "gate_status": {
+            "type": "string",
+            "enum": [
+              "clear",
+              "blocked_individual_gate",
+              "blocked_composite_threshold"
+            ],
+            "description": "Data Quality Framework CONST-034: an individual hard-gate failure (e.g. DQ-012 or DQ-017) blocks regardless of composite score."
+          },
+          "blocking_reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "trend": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "period": {
+                  "type": "string"
+                },
+                "score": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "metis_generate_quality_report": {
+      "description": "Real, scoped quality report -- fixes metis_quality_score's own scope parameter, which was accepted but never used to filter any underlying metric (verified in metis_mcp/dq_metrics.py). Functional/performance/security attribute breakdown, executive summary in business language plus full metric detail. Read-only, pure aggregation over already-computed data -- no new LLM calls.",
+      "input": {
+        "type": "object",
+        "required": [
+          "scope"
+        ],
+        "properties": {
+          "scope": {
+            "$ref": "#/$defs/scope"
+          },
+          "attributes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "functional",
+                "performance",
+                "security"
+              ]
+            },
+            "description": "Subset to score; defaults to all three when omitted."
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "required": [
+          "scope_description",
+          "composite_score",
+          "gate_status",
+          "executive_summary",
+          "detail"
+        ],
+        "properties": {
+          "scope_description": {
+            "type": "string"
+          },
+          "scope_kind": {
+            "type": "string",
+            "enum": [
+              "requirement_id",
+              "service_id",
+              "release_id",
+              "project_wide"
+            ]
+          },
+          "requirement_count": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "composite_score": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 100,
+            "description": "Average of the functional attribute's computable metrics. null when none of them are computable for this scope -- disclosed, not defaulted to 0/100."
+          },
+          "gate_status": {
+            "type": "string",
+            "enum": [
+              "clear",
+              "blocked_individual_gate",
+              "blocked_composite_threshold"
+            ],
+            "description": "An individual failing security/performance metric blocks regardless of the composite score (CONST-034's own principle, reused here)."
+          },
+          "blocking_reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "executive_summary": {
+            "type": "string",
+            "description": "Deterministic, template-generated business-language summary -- never a new model call, same discipline as academy.py's plain-language changelog."
+          },
+          "detail": {
+            "type": "object",
+            "required": [
+              "dimension_breakdown"
+            ],
+            "properties": {
+              "dimension_breakdown": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "metric_id",
+                    "dimension",
+                    "value",
+                    "target",
+                    "status",
+                    "note"
+                  ],
+                  "properties": {
+                    "metric_id": {
+                      "type": "string",
+                      "description": "e.g. 'DQ-003', 'SEC-01', 'PERF-01'"
+                    },
+                    "dimension": {
+                      "type": "string",
+                      "enum": [
+                        "functional",
+                        "performance",
+                        "security"
+                      ]
+                    },
+                    "value": {
+                      "type": [
+                        "number",
+                        "null"
+                      ],
+                      "description": "null when honestly not computable for this scope -- never a fabricated number"
+                    },
+                    "target": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "pass",
+                        "warn",
+                        "fail"
+                      ]
+                    },
+                    "note": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "metis_generate_release_report": {
+      "description": "Release-readiness report: metis_generate_quality_report scoped to a Release, plus a real changelog (metis_mcp/academy.py's actual :Revision history) and a deterministic, rule-based ship/hold/no-ship recommendation derived from gate_status -- never a model judgment call.",
+      "input": {
+        "type": "object",
+        "required": [
+          "release_id"
+        ],
+        "properties": {
+          "release_id": {
+            "type": "string"
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "required": [
+          "release_id",
+          "scope_description",
+          "gate_status",
+          "recommendation",
+          "changelog",
+          "detail"
+        ],
+        "properties": {
+          "release_id": {
+            "type": "string"
+          },
+          "scope_description": {
+            "type": "string"
+          },
+          "composite_score": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 100
+          },
+          "gate_status": {
+            "type": "string",
+            "enum": [
+              "clear",
+              "blocked_individual_gate",
+              "blocked_composite_threshold"
+            ]
+          },
+          "blocking_reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "executive_summary": {
+            "type": "string"
+          },
+          "recommendation": {
+            "type": "string",
+            "description": "Deterministic, rule-based ship/hold/no-ship text derived from gate_status."
+          },
+          "changelog": {
+            "type": "string",
+            "description": "Plain-language, generated from real :Revision history."
+          },
+          "detail": {
+            "type": "object",
+            "required": [
+              "dimension_breakdown"
+            ],
+            "properties": {
+              "dimension_breakdown": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "metric_id",
+                    "dimension",
+                    "value",
+                    "target",
+                    "status",
+                    "note"
+                  ],
+                  "properties": {
+                    "metric_id": {
+                      "type": "string",
+                      "description": "e.g. 'DQ-003', 'SEC-01', 'PERF-01'"
+                    },
+                    "dimension": {
+                      "type": "string",
+                      "enum": [
+                        "functional",
+                        "performance",
+                        "security"
+                      ]
+                    },
+                    "value": {
+                      "type": [
+                        "number",
+                        "null"
+                      ],
+                      "description": "null when honestly not computable for this scope -- never a fabricated number"
+                    },
+                    "target": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "pass",
+                        "warn",
+                        "fail"
+                      ]
+                    },
+                    "note": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "provenance": {
+      "type": "object",
+      "required": [
+        "source_episode_id",
+        "source_connector",
+        "t_recorded"
+      ],
+      "properties": {
+        "source_episode_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "source_connector": {
+          "type": "string"
+        },
+        "source_span": {
+          "type": "object",
+          "properties": {
+            "start": {
+              "type": "integer"
+            },
+            "end": {
+              "type": "integer"
+            }
+          }
+        },
+        "t_recorded": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "t_valid": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "t_invalid": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        }
+      }
+    },
+    "gradedFact": {
+      "type": "object",
+      "required": [
+        "value",
+        "confidence_tier",
+        "provenance"
+      ],
+      "properties": {
+        "value": {},
+        "confidence_tier": {
+          "type": "string",
+          "enum": [
+            "auto_write",
+            "quarantine",
+            "rejected"
+          ]
+        },
+        "corroboration_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "description": "Exactly one of these -- the subgraph to score.",
+      "oneOf": [
+        {
+          "properties": {
+            "release_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "release_id"
+          ]
+        },
+        {
+          "properties": {
+            "service_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "service_id"
+          ]
+        },
+        {
+          "properties": {
+            "requirement_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "requirement_id"
+          ]
+        },
+        {
+          "properties": {
+            "project_wide": {
+              "type": "boolean",
+              "const": true
+            }
+          },
+          "required": [
+            "project_wide"
+          ]
+        }
+      ]
+    }
+  }
+}

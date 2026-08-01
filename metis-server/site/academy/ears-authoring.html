@@ -1,0 +1,86 @@
+<!doctype html><html><head><meta charset='utf-8'><title>EARS Authoring</title><style>
+body { font-family: -apple-system, sans-serif; max-width: 860px; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; }
+nav { margin-bottom: 2rem; padding-bottom: 1rem; border-bottom: 1px solid #ccc; }
+nav a { margin-right: 1rem; }
+code { background: #f4f4f4; padding: 0.1em 0.3em; border-radius: 3px; }
+pre { background: #f4f4f4; padding: 1em; overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; }
+th, td { border: 1px solid #ddd; padding: 0.5em; text-align: left; }
+footer { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #ccc; color: #666; font-size: 0.85em; }
+</style></head><body><nav><a href="index.html">Index</a> | <a href="academy/graph-model-basics.html">Graph Model Basics</a> | <a href="academy/reading-traceability-chains.html">Reading Traceability Chains</a> | <a href="academy/confidence-tiers.html">Confidence Tiers</a> | <a href="academy/ears-authoring.html">EARS Authoring</a> | <a href="changelog.html">Changelog</a></nav><h1>EARS Authoring</h1><h1 id="ears-authoring">EARS Authoring</h1>
+<p><code>REQ-METIS-ACD-02</code>. EARS (Easy Approach to Requirements Syntax) is the
+first real gate a <code>Requirement</code> passes through — <code>metis_mcp/ears_checker.py</code>,
+<code>REQ-METIS-ONT-04</code>, <code>CONST-002</code>.</p>
+<h2 id="the-five-real-patterns">The five real patterns</h2>
+<p>Checked in this exact order (comma-clause patterns before the bare
+Ubiquitous fallback — Ubiquitous's shape is a strict subset of the
+others' tail clause, so checking it first would misclassify every
+Event/State/Unwanted/Optional sentence):</p>
+<table>
+<thead>
+<tr>
+<th>Pattern</th>
+<th>Shape</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Event-driven</td>
+<td><code>When &lt;trigger&gt;, the &lt;system&gt; shall &lt;response&gt;.</code></td>
+<td>"When a subscription renews, the payment service shall charge the customer."</td>
+</tr>
+<tr>
+<td>State-driven</td>
+<td><code>While &lt;state&gt;, the &lt;system&gt; shall &lt;response&gt;.</code></td>
+<td>"While an order is in Placed state, the system shall accept cancellation requests."</td>
+</tr>
+<tr>
+<td>Unwanted-behavior</td>
+<td><code>If &lt;condition&gt;, then the &lt;system&gt; shall &lt;response&gt;.</code></td>
+<td>"If the currency field is missing, then the system shall return HTTP 400."</td>
+</tr>
+<tr>
+<td>Optional</td>
+<td><code>Where &lt;feature is included&gt;, the &lt;system&gt; shall &lt;response&gt;.</code></td>
+<td>"Where multi-currency support is enabled, the system shall convert at the daily rate."</td>
+</tr>
+<tr>
+<td>Ubiquitous</td>
+<td><code>The &lt;system&gt; shall &lt;response&gt;.</code></td>
+<td>"The system shall log every rejected extraction."</td>
+</tr>
+</tbody>
+</table>
+<p>A sentence that doesn't match any of the five is <strong>structurally
+non-conformant</strong> — <code>check_ears_conformance()</code> returns <code>conformant: False</code>
+with a specific reason, and Layer 2 structural validation rejects the
+candidate outright for missing <code>ears_pattern</code>. This is a hard, mechanical
+gate, not a style suggestion.</p>
+<h2 id="structural-conformance-is-necessary-not-sufficient">Structural conformance is necessary, not sufficient</h2>
+<p><strong><code>CONST-047</code> is the important distinction to internalize:</strong> a sentence
+can pass EARS structural conformance and still be a bad requirement.
+"The system shall provide a user-friendly experience." matches the
+Ubiquitous pattern perfectly — and fails CONST-047's substantive checklist
+immediately, because "user-friendly" isn't measurable.</p>
+<p><code>metis_mcp/requirement_quality.py</code> implements the 8 ISO/IEC/IEEE 29148
+characteristics CONST-047 requires, split by how they're checked:</p>
+<ul>
+<li><strong>Deterministic</strong> (checked automatically, <code>metis_mcp/constitution_gate.py</code>
+  hard-blocks a <code>Requirement</code> candidate that fails any of these):</li>
+<li><em>unambiguous</em> — no known vague/unfalsifiable term (<code>metis_mcp/vagueness.py</code>'s
+    shared list: "user-friendly", "fast", "several", "TBD", etc.)</li>
+<li><em>complete</em> — EARS-conformant, no placeholder markers, every captured
+    clause non-empty</li>
+<li><em>singular</em> — exactly one <code>shall</code> obligation, no bundled second one</li>
+<li><em>consistent</em> — no numeric-threshold conflict with another real
+    <code>Requirement</code> sharing the same pattern and response shape</li>
+<li><strong>Judgment</strong> (needs a real, deliberate, costed LLM call — never run
+  automatically in the hot submission path):</li>
+<li><em>verifiable</em>, <em>feasible</em>, <em>correct</em>, <em>necessary</em></li>
+</ul>
+<h2 id="where-to-look-next">Where to look next</h2>
+<ul>
+<li>What happens to a <code>Requirement</code> once it passes both gates: <a href="confidence-tiers.md">confidence-tiers.md</a></li>
+<li>The entities EARS-checked text feeds into: <a href="graph-model-basics.md">graph-model-basics.md</a></li>
+</ul><footer>Academy content version: 1.0.0</footer></body></html>

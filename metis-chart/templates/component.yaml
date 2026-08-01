@@ -1,0 +1,19 @@
+{{- range $name, $config := .Values.components }}
+    {{- $config := set . "Capabilities" $.Capabilities }}
+    {{- $config := set . "Template" $.Template }}
+    {{- $config := set . "name" ($name | lower) }}
+    {{- $config := set . "Release" $.Release }}
+    {{- $config := set . "Chart" $.Chart }}
+    {{- $config := set . "serviceAccount" $.Values.serviceAccount }}
+    {{- $config := set . "defaultValues" $.Values.default }}
+
+    {{- if $config.enabled }}
+        {{- if eq ($config.kind | default "deployment") "cronjob" }}
+            {{- include "metis.cronjob" $config }}
+        {{- else }}
+            {{- include "metis.deployment" $config }}
+            {{- include "metis.service" $config }}
+        {{- end }}
+    {{- end }}
+
+{{- end }}

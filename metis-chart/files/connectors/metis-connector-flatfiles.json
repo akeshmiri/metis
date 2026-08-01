@@ -1,0 +1,26 @@
+{
+  "connector_id": "flat-files",
+  "display_name": "Flat File Intake (PDF, Markdown, Word, CSV)",
+  "version": "1.0.0",
+  "protocol": "file_scan",
+  "file_scan_config": {
+    "watch_path": "REPLACE: e.g. /intake/flat-files/",
+    "upload_endpoint": "REPLACE: optional, if a direct-upload path is also wanted alongside the watched folder",
+    "accepted_extensions": [".pdf", ".md", ".docx", ".csv", ".txt"]
+  },
+  "entity_type_mapping": [
+    { "source_shape": "Any dropped/uploaded document", "target_entity_type": "Document-sourced content (§5.2, generalized Documents row)", "target_episode_type": "DocumentIngested" }
+  ],
+  "temporal_strategy": {
+    "t_recorded_source": "file's own last-modified timestamp where reliable",
+    "event_time_confidence_default": "unknown",
+    "known_pitfalls": "Re-uploaded copies lose the original modification timestamp -- falls back to t_recorded = t_ingested, flagged event_time_confidence=unknown, identical to §5.2's original Documents-row rule for revision-less sources."
+  },
+  "precedence_tier": {
+    "role": "supplementary",
+    "applies_to_entity_types": ["Requirement", "BusinessRule", "Constraint"],
+    "outranked_by": ["atlassian-prod"]
+  },
+  "environment_scope": "all_environments",
+  "trust_tier_on_first_use": "calibration_required"
+}

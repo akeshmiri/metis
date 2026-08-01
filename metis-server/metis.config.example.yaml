@@ -1,0 +1,46 @@
+# Métis config template — copy to .metis/config.yaml (project-level) or
+# ~/.metis/config.yaml (host-level default) and fill in for real.
+# See config_manager.py for the resolution rule this file participates in.
+
+zdr:
+  confirmed: false   # REPLACE only after metis-const-053-confirmation-record.md
+                      # is genuinely filled in -- do not set true speculatively.
+  confirmed_date: null
+  confirmed_by: null
+  note: "REPLACE: why this value, and when it was last reviewed"
+
+models:
+  extraction: "REPLACE: e.g. claude-haiku-4-5-20251001"
+  judge: "REPLACE: e.g. claude-sonnet-5"
+
+corpus:
+  glob: "REPLACE: e.g. corpus/*.md or /path/to/real/documents/*.md"
+
+repositories:
+  - name: "REPLACE: repository or service name"
+    classification: "REPLACE: public_internal | confidential | restricted"
+    note: "REPLACE: why this classification"
+
+graph:
+  backend: "REPLACE: local | neo4j"
+  neo4j:
+    uri: "REPLACE: e.g. bolt://localhost:7687"
+    user: "REPLACE: e.g. neo4j"
+    password_env: "REPLACE: env var name holding the real password"
+
+server:
+  transport: "REPLACE: stdio | streamable-http"
+  # public_url: "REPLACE: real externally-reachable Streamable HTTP URL, e.g.
+  #   https://metis.example.com/mcp -- consumed by metis_mcp/
+  #   copilot_integration.py to generate the Copilot discovery file. Leave
+  #   unset until a real hostname/OAuth2 provider is chosen."
+
+security:
+  jwt_secret_env: "REPLACE: env var name holding the real JWT secret (streamable-http only)"
+
+# §9.1 Headroom-style response compression -- opt-in, off by default.
+# REQ-METIS-COST-01 treats this as a guardrail-boundary control, not a
+# tuning default; source_episode_id/source_span are never compressed
+# regardless of this setting.
+token_optimization:
+  headroom_enabled: false

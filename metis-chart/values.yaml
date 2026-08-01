@@ -1,0 +1,219 @@
+# Métis Helm chart values
+# Structure mirrors Athena's real orchestration chart convention (single chart,
+# `components:` map, shared deployment/service/configmap templates) so this is
+# a recognizable sibling chart, not a differently-shaped one.
+
+default:
+  env:
+    - name: LOG_LEVEL
+      value: "WARN"
+    - name: METIS_LOG_LEVEL
+      value: "WARN"
+    # Athena connectivity -- Métis reads FROM Athena's existing Postgres, per the
+    # athena_internal_read protocol (§3.3, §6 of the master spec). This is NOT a
+    # new database deployment -- these are connection details to Athena's already-
+    # running instance, same pattern Athena's own chart uses for its own DB.
+    - name: ATHENA_DB_HOSTNAME
+      value: "REPLACE: same host as Athena's own ATHENA_DB_HOSTNAME"
+    - name: ATHENA_DB_PORT
+      value: "5432"
+    - name: ATHENA_DB_DATABASE
+      value: "athena"
+    - name: ATHENA_DB_USERNAME
+      value: "REPLACE: a read-only role scoped to the schema-catalog objects Métis reads (CONST-052-adjacent least-privilege -- do not reuse Athena's own write-capable service account)"
+    - name: NEO4J_URI
+      value: "bolt://{{ .Release.Name }}-neo4j:7687"
+    - name: NEO4J_DATABASE
+      value: "metis"
+    # LLM vendor call routing config (ZDR status, model names, classifications)
+    # lives ENTIRELY in the mounted metis-config ConfigMap below, not as
+    # individual env vars here -- this is the "no configuration in code"
+    # directive applied to the chart itself, not just the Python package.
+    # See metis_mcp/config_manager.py for the resolution logic that reads it.
+
+  envOverrides: []
+
+  image:
+    registry: "REPLACE: e.g. harbor-ny2n.saas-n.com, same registry Athena's chart uses if co-located"
+    repository: "REPLACE: e.g. pbs-pmx/bat/metis-services"
+    tag: "0.1.0"
+    pullPolicy: Always
+    pullSecrets: []
+
+  replicas: 1
+  revisionHistoryLimit: 10
+
+  schedulingRules:
+    nodeSelector: {}
+    affinity: {}
+    tolerations: []
+
+  securityContext:
+    runAsNonRoot: true
+    readOnlyRootFilesystem: true
+
+# secrets.yaml's real values are injected via --set-string at install time
+# (never committed here) -- this empty map exists so `.Values.secrets.foo`
+# resolves to nil safely instead of erroring on a nil pointer, letting each
+# key's own `| default "REPLACE-AT-INSTALL-TIME"` actually take effect. Real
+# bug found the first time `helm lint` was ever run against this chart: with
+# no `secrets:` key at all, `.Values.secrets.athenaDbPassword` failed before
+# the `default` pipeline stage ran, regardless of what it would default to.
+secrets: {}
+  # athenaDbPassword: ""
+  # neo4jPassword: ""
+  # anthropicApiKey: ""
+  # oauthClientSecret: ""
+
+external:
+  enabled: true
+
+ingress:
+  enabled: true
+  # MCP server transport is Streamable HTTP (client-agnostic -- Claude Code, Claude
+  # Desktop, and GitHub Copilot Agent mode all speak the same MCP-over-HTTP
+  # protocol; this is not a Copilot-specific or Claude-specific endpoint).
+  host: "REPLACE: e.g. metis.internal.example.com"
+  tls:
+    enabled: true
+    secretName: "REPLACE"
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# ---- Neo4j Enterprise (or Community for Phase 0 — see the risk register) ----
+# Deployed as a subchart dependency (the official Neo4j Helm chart), not a
+# hand-rolled StatefulSet — clustering, backup, and RBAC are Neo4j's own
+# well-tested chart's job, not something to reimplement here.
+neo4j:
+  enabled: true
+  edition: "community"  # REPLACE: "enterprise" once licensing (§15) is budgeted for Phase 1+
+  acceptLicenseAgreement: "no"  # REPLACE: "yes" only after actually accepting Neo4j's license terms
+  neo4j:
+    name: "metis"
+    password: "REPLACE — use a real secret reference, never a literal value in committed values.yaml"
+  volumes:
+    data:
+      mode: "dynamic"
+      dynamic:
+        storageClassName: "REPLACE"
+  resources:
+    requests:
+      memory: 4Gi
+      cpu: 1000m
+    limits:
+      memory: 8Gi
+      cpu: 2000m
+
+# ---- Métis's own components ----
+# Grafana and the Postgres episode-log-that-no-longer-exists are deliberately
+# NOT components here -- guardrail/DQ metrics are new panels on Athena's
+# existing Grafana (§12.4), and the episode log lives in the Neo4j database
+# above (single-database decision) -- both reuse infrastructure that already
+# exists rather than duplicating it.
+components:
+  mcp-server:
+    enabled: true
+    ports:
+      - name: http
+        value: 8090
+    imageOverride:
+      name: "metis-mcp-server"
+    useDefault:
+      env: true
+    env:
+      - name: MCP_TRANSPORT
+        value: "streamable-http"
+      - name: OAUTH_TOKEN_TTL_SECONDS
+        value: "3600"   # CONST-064 -- 1 hour access tokens
+      - name: OAUTH_REFRESH_TTL_DAYS
+        value: "30"     # CONST-064 -- 30 day refresh tokens, revocable
+      - name: OAUTH_REVALIDATE_PER_REQUEST
+        value: "true"   # CONST-064 -- team/RBAC re-checked every request, not cached from issuance
+      # Real bug found deploying this to a real cluster: this component had
+      # no METIS_HOME/mountedConfigMaps at all, so it had no way to ever
+      # find config.yaml -- config_manager.py's ConfigNotFoundError halted
+      # the container on startup, every time, regardless of image content.
+      - name: METIS_HOME
+        value: "/etc/metis/config"
+    resources:
+      requests:
+        memory: 512Mi
+        cpu: 250m
+      limits:
+        memory: 1Gi
+        cpu: 1000m
+    livenessProbe:
+      httpGet:
+        path: /healthz
+        port: 8090
+      initialDelaySeconds: 10
+      periodSeconds: 15
+    mountedConfigMaps:
+      - name: metis-config
+        mountPath: /etc/metis/config/config.yaml
+        subPath: config.yaml
+
+  ingestion-worker:
+    enabled: true
+    ports:
+      - name: http
+        value: 8091
+    imageOverride:
+      name: "metis-ingestion-worker"
+    useDefault:
+      env: true
+    env:
+      - name: CONNECTOR_MANIFEST_DIR
+        value: "/etc/metis/connectors"
+      - name: METIS_HOME
+        value: "/etc/metis/config"   # config_manager.py resolves config.yaml from here (host-level default)
+      # Poll cadence for athena_internal_read-protocol connectors -- matches the
+      # per-connector poll_interval_seconds already set in each manifest
+      # (e.g. metis-connector-application-code.json's 300s); this env var is a
+      # platform-wide default the worker falls back to only if a manifest omits it.
+      - name: DEFAULT_POLL_INTERVAL_SECONDS
+        value: "300"
+    resources:
+      requests:
+        memory: 1Gi
+        cpu: 500m
+      limits:
+        memory: 2Gi
+        cpu: 1500m
+    mountedConfigMaps:
+      - name: connector-manifests
+        mountPath: /etc/metis/connectors
+      - name: metis-config
+        mountPath: /etc/metis/config/config.yaml
+        subPath: config.yaml
+
+  guardrail-corpus-runner:
+    enabled: true
+    kind: cronjob
+    schedule: "0 3 * * 0"  # CONST-058 -- weekly is the chart default; CONST-058 itself
+                            # requires quarterly at minimum against production data --
+                            # weekly here is a stricter, cheap-to-run default since the
+                            # corpus is only 12 cases (see the cost review's own token math).
+    imageOverride:
+      name: "metis-guardrail-corpus-runner"
+    useDefault:
+      env: true
+    env:
+      - name: CORPUS_PATH
+        value: "/etc/metis/adversarial-injection-corpus.json"
+      - name: MIN_PASS_RATE
+        value: "1.0"  # CONST-057 -- any failure blocks, does not just warn
+    resources:
+      requests:
+        memory: 256Mi
+        cpu: 100m
+      limits:
+        memory: 512Mi
+        cpu: 500m
+    mountedConfigMaps:
+      - name: adversarial-corpus
+        mountPath: /etc/metis/adversarial-injection-corpus.json
+        subPath: adversarial-injection-corpus.json

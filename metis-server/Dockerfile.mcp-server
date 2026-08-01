@@ -1,0 +1,25 @@
+# Real bug found deploying this via metis-chart: config_manager.py resolves
+# project-level (.metis/config.yaml relative to cwd) BEFORE host-level
+# (METIS_HOME/config.yaml), first-found-wins, NO MERGE. Baking .metis/ into
+# this image would make it always win over the chart's mounted ConfigMap
+# (METIS_HOME=/etc/metis/config), silently defeating per-deployment
+# configuration -- the deployed config would always be this dev-only file,
+# regardless of what the chart intends. Deliberately NOT bundled here; the
+# chart supplies config via its mounted ConfigMap + env var overrides
+# (see files/metis-config.yaml). For standalone (non-chart) testing without
+# a mount, pass your own: `-e METIS_HOME=/config -v $(pwd)/.metis:/config`.
+FROM python:3.13-slim
+WORKDIR /app
+COPY pyproject.toml requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+COPY metis_mcp/ ./metis_mcp/
+COPY corpus/ ./corpus/
+EXPOSE 8090
+ENV METIS_HTTP_PORT=8090
+# Real bug found deploying this: values.yaml's securityContext.runAsNonRoot:
+# true requires the image to actually run as non-root -- Kubernetes refused
+# to start the pod ("container has runAsNonRoot and image will run as
+# root") because nothing here ever created/switched to one.
+RUN useradd --create-home --uid 10001 metis
+USER 10001
+CMD ["python3", "-m", "metis_mcp.server"]

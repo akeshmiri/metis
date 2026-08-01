@@ -1,0 +1,52 @@
+{
+  "connector_id": "application-code",
+  "display_name": "Application Source Code (Repositories)",
+  "version": "2.0.0",
+  "protocol": "athena_internal_read",
+  "entity_type_mapping": [
+    {
+      "source_shape": "Repository root",
+      "target_entity_type": "Repository",
+      "target_episode_type": "RepositoryRegistered"
+    },
+    {
+      "source_shape": "Source file, AST-parsed locally after fetch (Tree-sitter, deterministic per \u00a79's code-vs-LLM table -- NOT an LLM extraction step)",
+      "target_entity_type": "Class / Method",
+      "target_episode_type": "CodeStructureExtracted"
+    },
+    {
+      "source_shape": "Pull request",
+      "target_entity_type": "PullRequest",
+      "target_episode_type": "PullRequestOpened / Merged"
+    },
+    {
+      "source_shape": "Commit",
+      "target_entity_type": "Commit",
+      "target_episode_type": "CommitPushed"
+    }
+  ],
+  "temporal_strategy": {
+    "t_recorded_source": "PR merge time as primary anchor for traceability-relevant facts; commit author-date as secondary/best-effort (\u00a75.2's existing Git/Core row -- this manifest is the concrete implementation of what was previously described only abstractly)",
+    "event_time_confidence_default": "verified",
+    "known_pitfalls": "Rebased/squashed history loses individual commit dates -- prefer PR merge events, per \u00a75.2's already-documented mitigation."
+  },
+  "precedence_tier": {
+    "role": "system_of_record",
+    "applies_to_entity_types": [
+      "Repository",
+      "Class",
+      "Method",
+      "PullRequest",
+      "Commit"
+    ],
+    "outranked_by": []
+  },
+  "environment_scope": "all_environments",
+  "trust_tier_on_first_use": "calibration_required",
+  "notes": "REQ-METIS-CONN-03 (new): fetch access only -- the github-mcp-server's --read-only flag (or equivalent for the reference Git server) is mandatory for this connector, mirroring BS-002's architectural separation (extraction has no write credential) at the transport level, not just the pipeline-process level. REVISION (v2.0.0): superseded the original MCP-client design (v1.0.0) per the single-database/no-duplicate-ingestion decision -- this connector now reads from athena-client-git's already-populated Athena tables instead of re-fetching from GitHub directly. The code-graph (CALLS/IMPORTS/INHERITS) extraction still requires a local AST pass, run against file contents Athena already has cached/fetched, not a second live GitHub connection.",
+  "athena_internal_read_config": {
+    "athena_schema_object": "athena.mv_commits (and related git-derived objects, resolved via athena_schema_catalog.py)",
+    "change_detection_column": "updated_at",
+    "poll_interval_seconds": 300
+  }
+}

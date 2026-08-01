@@ -1,0 +1,10 @@
+mcp>=1.0.0,<2.0.0
+PyYAML>=6.0
+neo4j>=5.0.0
+psycopg[binary]>=3.0.0
+PyJWT>=2.0.0
+uvicorn>=0.30.0
+starlette>=0.37.0
+jsonschema>=4.0.0
+markdown>=3.5
+python-pptx>=1.0.0

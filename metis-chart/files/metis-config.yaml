@@ -1,0 +1,83 @@
+# Métis configuration -- mounted via the Helm chart as this deployment's
+# host-level config (METIS_HOME=/etc/metis/config, see values.yaml's
+# ingestion-worker component). A project-level .metis/config.yaml, if one
+# exists inside a specific checkout the worker operates on, would override
+# this -- first-found-wins, no merge (see config_manager.py).
+
+zdr:
+  # Explicit, current decision (not a placeholder): no commercial Zero Data
+  # Retention agreement with Anthropic is being pursued right now. This is a
+  # deliberate choice, not an unfinished task -- see the reasoning recorded
+  # in metis-const-053-confirmation-record.md and the conversation that led
+  # to it. Because this is false, any repository classified `confidential`
+  # below will be blocked at the gate (CONST-051) until this changes.
+  confirmed: false
+  confirmed_date: null
+  confirmed_by: null
+  note: >
+    Decided 2026-07-25: standard API terms (no training, 30-day auto-delete)
+    are sufficient for now. Revisit only if a specific repository's
+    contractual or regulatory requirements actually need stricter handling
+    -- see the classification guidance below, not a blanket policy change.
+
+models:
+  extraction: claude-haiku-4-5-20251001
+  judge: claude-sonnet-5
+
+corpus:
+  glob: "corpus/*.md"
+
+# Graph backend, transport, and connector connection settings. password_env
+# values name the Secret keys templates/secrets.yaml actually creates
+# (ATHENA_DB_PASSWORD, NEO4J_PASSWORD) -- wired into every container via
+# envFrom/secretRef in _objects.tpl. uri/host below are placeholders the
+# real NEO4J_URI/ATHENA_DB_HOSTNAME env vars (values.yaml's default.env)
+# override at runtime (config_manager.py's get_neo4j_config()/
+# get_connector_config() apply that override) -- this file supplies the
+# fallback default, the deployment supplies the real per-environment value.
+graph:
+  backend: neo4j
+  neo4j:
+    uri: "bolt://REPLACE-neo4j-service:7687"
+    user: "neo4j"
+    password_env: "NEO4J_PASSWORD"
+
+server:
+  transport: streamable-http
+  # public_url: "REPLACE: real externally-reachable Streamable HTTP URL,
+  #   e.g. https://REPLACE-metis-host.example.com/mcp -- consumed by
+  #   metis_mcp/copilot_integration.py to generate the real Copilot
+  #   discovery file (.github/agents/spec-aware.agent.md). Unset until a
+  #   real hostname/OAuth2 provider is chosen for this deployment.
+
+security:
+  jwt_secret_env: "OAUTH_CLIENT_SECRET"
+
+connectors:
+  application_code:
+    athena:
+      host: "REPLACE-athena-hostname"
+      port: 5432
+      dbname: "athena"
+      user: "REPLACE-athena-readonly-user"
+      password_env: "ATHENA_DB_PASSWORD"
+
+# Per-repository classification (CONST-051/052). Every repository Métis
+# ingests should have an explicit entry here -- anything NOT listed defaults
+# to `confidential` (fail-closed) and will be blocked, per CONST-052, not
+# silently treated as safe.
+#
+# Given the ZDR decision above, most repositories should genuinely be
+# `public_internal` unless a specific one has a real contractual, regulatory,
+# or embedded-secrets reason to be stricter -- see the classification
+# discussion for guidance on which is which. Defaulting everything to
+# `confidential` "to be safe" just means nothing ingests; that's not actually
+# safer, it's just inert.
+repositories:
+  - name: metis-self
+    classification: public_internal
+    note: "This platform's own design documents -- the Phase 0 dogfooding corpus."
+
+  # - name: REPLACE-your-repo-name
+  #   classification: public_internal | confidential | restricted
+  #   note: "REPLACE: why this classification, in one line"
