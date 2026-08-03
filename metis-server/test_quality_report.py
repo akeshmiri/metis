@@ -13,7 +13,7 @@ import os
 
 from neo4j import GraphDatabase
 
-from metis_mcp.quality_report import resolve_scope, build_report, build_release_report
+from metis_mcp.quality_report import resolve_scope, build_report, build_release_report, build_test_design_report
 from metis_mcp.behavior_model import load_transition
 from metis_mcp.temporal import record_revision
 
@@ -76,6 +76,21 @@ def _setup():
         _run(s, "MATCH (r:Requirement {id: 'qr-test-req-a'}), (rel:Release {id: 'qr-test-release'}) "
                 "MERGE (r)-[:TRACES_TO]->(rel)")
         record_revision(s, "qr-test-req-a", {"lifecycle_state": "Draft"}, "qr-test-episode")
+
+        # Real Intent/TestDesign backbone (Session 10) for req-a's AC --
+        # metis_generate_test_design_report's real signal to find.
+        _run(s, "MERGE (i:Intent {id: 'qr-test-intent-a'}) SET i.source_episode_id = 'qr-test-episode', "
+                "i.text = 'When valid credentials are submitted, the user should be logged in.'")
+        _run(s, "MATCH (r:Requirement {id: 'qr-test-req-a'}), (i:Intent {id: 'qr-test-intent-a'}) "
+                "MERGE (r)-[:TRACES_TO]->(i)")
+        _run(s, "MERGE (td:TestDesign {id: 'qr-test-testdesign-a'}) SET td.source_episode_id = 'qr-test-episode', "
+                "td.techniques = ['Equivalence Partitioning', 'State Transition Testing']")
+        _run(s, "MATCH (td:TestDesign {id: 'qr-test-testdesign-a'}), (i:Intent {id: 'qr-test-intent-a'}) "
+                "MERGE (td)-[:TRACES_TO]->(i)")
+        _run(s, "MATCH (td:TestDesign {id: 'qr-test-testdesign-a'}), (a:AcceptanceCriterion {id: 'qr-test-ac-a'}) "
+                "MERGE (td)-[:COVERS]->(a)")
+        _run(s, "MATCH (td:TestDesign {id: 'qr-test-testdesign-a'}), (t:TestCase {id: 'qr-test-tc-a'}) "
+                "MERGE (td)-[:PRODUCES]->(t)")
 
         # A real performance-type TestCase in the same repo, and an
         # SLA-critical Transition implemented by the same Method -- PERF-01's
@@ -182,6 +197,41 @@ def test_release_report_has_a_real_changelog_and_a_gate_consistent_recommendatio
             assert report["recommendation"].startswith("Ship it")
         else:
             assert not report["recommendation"].startswith("Ship it")
+    finally:
+        _cleanup()
+
+
+def test_test_design_report_shows_real_technique_and_test_case_data():
+    _cleanup()
+    _setup()
+    try:
+        with _session() as s:
+            report = build_test_design_report(s, {"requirement_id": "qr-test-req-a"})
+        assert report["total_acceptance_criteria"] == 1
+        assert report["acceptance_criteria_with_test_design"] == 1
+        assert "Equivalence Partitioning" in report["techniques_used"]
+        assert "State Transition Testing" in report["techniques_used"]
+        req = report["requirements"][0]
+        assert req["requirement_id"] == "qr-test-req-a"
+        ac = req["acceptance_criteria"][0]
+        assert ac["ac_id"] == "qr-test-ac-a"
+        assert ac["test_design"]["design_id"] == "qr-test-testdesign-a"
+        assert any(tc["test_case_id"] == "qr-test-tc-a" for tc in ac["test_cases"])
+    finally:
+        _cleanup()
+
+
+def test_test_design_report_honestly_shows_no_design_when_backbone_is_absent():
+    """qr-test-req-b has an AcceptanceCriterion... actually req-b has none
+    at all (see _setup) -- real absence, not a fabricated empty design."""
+    _cleanup()
+    _setup()
+    try:
+        with _session() as s:
+            report = build_test_design_report(s, {"requirement_id": "qr-test-req-b"})
+        assert report["total_acceptance_criteria"] == 0
+        assert report["acceptance_criteria_with_test_design"] == 0
+        assert report["techniques_used"] == []
     finally:
         _cleanup()
 

@@ -24,6 +24,7 @@ time, as t_recorded -- honoring that documented pitfall for real, not
 just noting it.
 """
 import json
+import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # Disclosed test data. The Story's description is a real EARS-conformant
@@ -47,11 +48,20 @@ ISSUES = [
     },
 ]
 
+# Body/version/when are env-var-overridable (same idiom as
+# METIS_MOCK_JIRA_PORT below) so a test can start this server twice with
+# genuinely different Confluence page content -- a real page edit between
+# two graph_sync.py sync runs, needed to prove real drift detection
+# (Session 11, item 4) the same way test_graph_sync.py's existing
+# test-suite-connector proof edits a real docstring between two runs.
 CONFLUENCE_PAGES = [
     {
         "id": "98765", "title": "Billing Service — Refund Policy",
-        "body": {"storage": {"value": "<p>Refunds are issued within 5 business days of approval.</p>"}},
-        "version": {"number": 3, "when": "2026-07-18T11:00:00Z"},
+        "body": {"storage": {"value": os.environ.get(
+            "METIS_MOCK_CONFLUENCE_BODY",
+            "<p>Refunds are issued within 5 business days of approval.</p>")}},
+        "version": {"number": int(os.environ.get("METIS_MOCK_CONFLUENCE_VERSION", "3")),
+                    "when": os.environ.get("METIS_MOCK_CONFLUENCE_UPDATED", "2026-07-18T11:00:00Z")},
     },
 ]
 

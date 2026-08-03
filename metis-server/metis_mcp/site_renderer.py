@@ -32,7 +32,7 @@ footer { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #ccc; color:
 
 _NAV = ('<nav><a href="index.html">Index</a>' + "".join(
     f' | <a href="academy/{pid}.html">{ACADEMY_PAGES[pid]["title"]}</a>' for pid in ACADEMY_PAGES
-) + ' | <a href="changelog.html">Changelog</a></nav>')
+) + ' | <a href="changelog.html">Changelog</a> | <a href="test-design-report.html">Test Design Report</a></nav>')
 
 
 def _page_shell(title: str, body_html: str, content_version: str | None = None) -> str:
@@ -82,6 +82,54 @@ def render_changelog(output_dir: Path, session=None) -> str:
     return str(changelog_path)
 
 
+def render_test_design_report(output_dir: Path, session=None, scope: dict | None = None) -> str:
+    """Session 10: "anyone can go and check this model" -- a browsable
+    rendering of the real Intent/TestDesign backbone (metis_mcp/
+    quality_report.py's build_test_design_report), not just an MCP-only
+    JSON tool. Defaults to project_wide -- the whole graph's current
+    Requirement/AcceptanceCriterion/TestDesign/TestCase state, same scope
+    render_index()'s quality snapshot already uses."""
+    scope = scope or {"project_wide": True}
+    if session is None:
+        body = "<p>No graph session available -- this report needs a real Neo4j connection.</p>"
+    else:
+        report = assemble_content(session, kind="test_design_report", scope=scope)
+        rows = []
+        for req in report["requirements"]:
+            if not req["acceptance_criteria"]:
+                continue  # honest: requirements outside the backbone yet aren't padded in
+            for ac in req["acceptance_criteria"]:
+                design = ac["test_design"]
+                techniques = ", ".join(design["techniques"]) if design else "<em>no TestDesign yet</em>"
+                levels = ", ".join(sorted({tc["type"] or "untyped" for tc in ac["test_cases"]})) or "<em>none</em>"
+                # Real, disclosed data-quality finding, not a rendering
+                # assumption: a small number of real AcceptanceCriterion
+                # nodes carry no `text` property -- shown honestly rather
+                # than crashing the whole report.
+                ac_text = ac["text"] if ac["text"] is not None else "(no text recorded)"
+                rows.append(
+                    f"<tr><td>{html.escape(req['requirement_id'])}</td>"
+                    f"<td>{html.escape(ac_text)}</td><td>{techniques}</td><td>{levels}</td></tr>"
+                )
+        table = (
+            "<table><thead><tr><th>Requirement</th><th>Acceptance Criterion</th>"
+            "<th>Test design technique(s)</th><th>Test levels</th></tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody></table>" if rows else
+            "<p>No AcceptanceCriterion in this scope is covered by the real Intent/TestDesign "
+            "backbone yet (Session 10) -- an honest gap, not an error.</p>"
+        )
+        body = (
+            f"<p>Scope: {html.escape(report['scope_description'])}. "
+            f"{report['acceptance_criteria_with_test_design']}/{report['total_acceptance_criteria']} "
+            f"AcceptanceCriteria have a real TestDesign. "
+            f"Techniques found: {', '.join(report['techniques_used']) or 'none'}.</p>{table}"
+        )
+
+    report_path = output_dir / "test-design-report.html"
+    report_path.write_text(_page_shell("Test Design Report", body), encoding="utf-8")
+    return str(report_path)
+
+
 def render_index(output_dir: Path, session=None) -> str:
     links = "".join(
         f"<li><a href='academy/{pid}.html'>{html.escape(ACADEMY_PAGES[pid]['title'])}</a></li>"
@@ -108,6 +156,7 @@ def render_site(output_dir: str, session=None) -> dict:
     out.mkdir(parents=True, exist_ok=True)
     academy_files = render_academy_pages(out)
     changelog_file = render_changelog(out, session=session)
+    test_design_report_file = render_test_design_report(out, session=session)
     index_file = render_index(out, session=session)
     return {"output_dir": str(out), "index": index_file, "academy_pages": academy_files,
-            "changelog": changelog_file}
+            "changelog": changelog_file, "test_design_report": test_design_report_file}

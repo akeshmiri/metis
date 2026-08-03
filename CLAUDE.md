@@ -16,6 +16,540 @@ unit/integration coverage.
 **Read `README.md` first** — it indexes the full directory tree and says
 where each piece lives. Don't re-derive the structure; it's already mapped.
 
+## Session 13 addendum — Trigger/Guard folded into Transition, real relationship-level guardrail + ontology spec doc, and a real requirements-completeness gap found and fixed
+
+User reviewed the live login-example graph and pushed on the behavior
+model's own design, in three rounds:
+
+**Round 1 — three concrete corrections + "build a spec."** (1) Remove
+`Transition-[:TRACES_TO]->Intent` (Trigger never had one). (2)
+`AcceptanceCriterion` should validate the concrete behavior it tests --
+new `AcceptanceCriterion-[:VALIDATES]->Transition` edge. (3) Trigger is
+conceptually an attribute of one Transition, not its own entity --
+**removed as a node**, folded into `Transition.trigger`; user then said
+Guard should get the same treatment ("I have no clue what Guard is") --
+**removed as a node too**, folded into `Transition.guard_expression`.
+Plus: "we do not generate node on the fly... build a spec for how to
+build graph database and how to build a guardrail so we do not do
+anything outside of that doc."
+
+Built:
+- `metis_mcp/behavior_model.py`: `load_transition()` sets `trigger`/
+  `guard_expression` directly on the Transition node instead of
+  MERGE-ing separate Trigger/Guard nodes + `ON_TRIGGER`/`WHEN_GUARD`
+  edges. `check_determinism()`/`check_completeness()` (CONST-048/049)
+  rewritten to compare Transitions by property value (`t1.trigger =
+  t2.trigger`) instead of shared-node identity.
+  `metis_mcp/test_skeleton_generator.py`'s `_fetch_transition_detail()`/
+  `_resolves_completeness_gap()` got the same property-based rewrite
+  (`TransitionDetail.trigger_id`/`trigger_name` collapsed into one
+  `trigger` field -- they were always the same string).
+- `demo_data/login_example.py`: removed `Transition-TRACES_TO->Intent`;
+  added `AcceptanceCriterion-[:VALIDATES]->Transition` per AC. Real,
+  disclosed consequence: a `planned` Transition (no AC yet, by design)
+  now has **no live graph path** to its own Intent/Requirement until it's
+  actually built and validated -- the most honest available modeling,
+  not a bug.
+- **New `docs/metis-ontology-specification.md`** -- the authoritative,
+  living reference: one table per layer (label, purpose, required
+  properties, allowed outgoing relationships) plus a consolidated
+  Relationship Catalog (every real `(FromLabel)-[:REL]->(ToLabel)` triple
+  in the codebase, derived by grepping `demo_data/`, `connectors/`,
+  `guardrails/`, `metis_mcp/`, not invented). States the governance rule
+  directly: schema-01 + schema-02 + `structural_validation.py` +
+  this doc, all four, together, every time.
+- **New relationship-level guardrail**: `metis_mcp/
+  structural_validation.py`'s `ALLOWED_RELATIONSHIPS` (the literal data
+  behind the doc's Relationship Catalog) + `validate_relationship()` --
+  the same enforcement Layer 2's node-label check already does, extended
+  to edges for the first time (previously nothing validated relationship
+  type/cardinality at all). One documented, intentional exception:
+  `test_suite_connector.py`'s tag-citation `TestCase-[:VERIFIES]->
+  (target)` has no fixed target label by design (validated by real
+  tag-existence instead, REQ-METIS-CONN-04) -- not a policing gap.
+- **New DQ-024** (`metis_mcp/layer8_heuristics.py`'s
+  `check_transition_ac_coverage`, added mid-session on the user's own
+  follow-up): every `implemented` Transition must have >=1
+  `AcceptanceCriterion-VALIDATES->` edge -- real behavior nothing
+  validates is an unverified claim, not a covered one. `planned`
+  Transitions excluded (nothing to validate yet is correct).
+
+**Round 2 — "the state-transition still looks wrong," a real
+architecture brainstorm.** User pushed further: shouldn't a Transition
+just be a link, not a node? Investigated and found two real, hard Neo4j
+constraints, not style preferences: (1) a relationship cannot be the
+target of another relationship, so `AcceptanceCriterion-[:VALIDATES]->
+Transition` requires Transition to be a node; (2) `metis_mcp/temporal.py`'s
+whole provenance mechanism (`record_revision`/`history`/`as_of`/`diff`)
+writes `(entity)-[:HAS_REVISION]->(:Revision)`, which also requires
+`entity` to be a node -- so a Transition-as-edge would permanently lose
+real revision history, the one entity type representing behavior
+changing over time, directly cutting against Session 10/11's own
+"Métis should be Temporal context aware" requirement. Explored a
+target-state-only alternative (real ambiguity found: `t2`/`t3`
+originally shared a target *event* but diverged on state; separately,
+4 different transitions shared a target *state* -- `LoggedOut`) and an
+`Event`-node alternative (same ambiguity, mirrored: `t2`/`t3` shared the
+*event* `submit_invalid_credentials` but diverged on guard). **User's own
+final call, given full information: keep Transition as a node.** Nothing
+changed from Round 1's design as a result -- this was a real
+architecture review that confirmed the existing shape, not a rebuild.
+
+**Round 3 — a genuine, real requirements-completeness gap, found by user
+inspection, not by running the checker first.** The original lockout
+sub-flow modeled the 5-attempt counter as a guard on a `LoggedOut`
+self-loop (`attempt_count < 5` / `>= 5`) -- which hid 4 real, distinct
+security states (1/2/3/4 prior failures) behind one guard variable, and
+hiding them is exactly what let a real gap go unnoticed: nothing in that
+model ever asked "what happens on a VALID login after 1, 2, 3, or 4 prior
+failures?" User: "shall we revisit requirement management part?"
+
+Fixed for real in `demo_data/login_example.py`: re-modeled with explicit
+`Failed1`-`Failed4` states, each getting its own real, distinct,
+EARS-conformant Requirement/AcceptanceCriterion -- both for the
+failure-count increment (`t2a`-`t2d`) AND the "valid credentials still
+succeed from here" recovery path per state (`t1b`-`t1e`), plus the
+lockout transition retargeted from `Failed4` (was `LoggedOut`). Real
+Transition count: 9 implemented -> **16 implemented** + 1 planned (2FA
+enrollment, unchanged). Verified live, not assumed: all 17 real
+Requirement texts re-checked through the actual `check_ears_conformance`
+(all conformant); `check_determinism` finds 0 ambiguous pairs;
+`check_reachability` finds 0 unreachable states; **the exact original
+gap is confirmed closed** -- none of `LoggedOut`/`Failed1`-`Failed4` are
+missing either login-flow trigger anymore (queried directly, not
+inferred). `check_completeness` does report 73 gaps against the *whole*
+login example, but 63 of those are the checker's own strict "every state
+must handle every trigger used anywhere" definition correctly surfacing
+expected non-applicability (e.g. `AccountLocked` has no `click_forgot_
+password` handler -- correct, that form isn't reachable while locked
+out), not real problems -- reported honestly to the user as the real
+output, not smoothed over. DQ-024: 0 flagged, real AC coverage on all 16
+implemented Transitions.
+
+Also this session: restored real data that a prior full-database reset
+(user's own explicit choice, a separate request) had wiped --
+`load_dogfooding_corpus.py` (177 `DogfoodingItem` nodes),
+`connectors/seed_mock_athena.py` (the mock Postgres backing
+`application_code_connector.py` had never been touched by the Neo4j-only
+reset, but its Neo4j-side checkpoint episodes had been wiped, so it
+found nothing to resume from until re-seeded), `application_code_connector.py`,
+and `cognify/code_graph_archaeology.py` (real `CALLS`/`IMPORTS`/
+`INHERITS`) -- all re-run for real, confirmed via the 4 previously-failing
+test files (`test_bm01_corroboration.py`, `test_neo4j_graph_store.py`,
+`test_demo_data.py`, `test_test_skeleton_generation.py`) going green.
+
+Verified for real at default scale (`factor=1.0`, seed 42): full 45-file
+deterministic regression suite green, `KNOWN_LABELS` = 45 (Trigger/Guard
+removed, net even after Session 12's TestCycle/TestExecution/
+ApplicationConfiguration additions), real `VALIDATES` edges present, 0
+`Trigger`/`Guard` nodes or `ON_TRIGGER`/`WHEN_GUARD` relationships
+anywhere.
+
+**Round 4 — two more real, same-session follow-ups.**
+
+1. **`check_guard_completeness()`** (`metis_mcp/behavior_model.py`), on
+   the user's own request: `check_determinism()`'s `guards_conflict()`
+   already checks that guards on a shared `(State, trigger)` don't
+   overlap (atomicity) -- nothing checked the complementary property,
+   that they jointly cover the *whole* domain (completeness). A real
+   input matching none of the guards would silently match no transition
+   at all, invisible anywhere in the graph. Built as the natural sibling
+   of the existing interval-based overlap check (same `_parse_guard`/
+   `_interval_for` machinery, same fail-closed discipline -- unparseable
+   guards or guards on different variables are flagged unverifiable, not
+   assumed complete). Verified for real: 0 findings against the live
+   login example (expected -- the `Failed1`-`Failed4` redesign already
+   made every `(state, trigger)` pair map to exactly one transition, so
+   there's no multi-guard group left to check), and a new dedicated test
+   fixture (`test_behavior_model.py`) proves it catches a genuine gap
+   (`severity >= 0.9` / `severity < 0.5`, leaving `[0.5, 0.9)`
+   uncovered) and doesn't false-positive on a real jointly-exhaustive
+   group. `docs/metis-ontology-specification.md` gained real guidance on
+   when a condition should become an explicit State (bounded, enumerable,
+   durable) vs. stay a guard (continuous, per-request, or combinatorial).
+2. **`FROM_STATE`/`TO_STATE` renamed to `LAUNCHES`/`LANDS_IN`**, with
+   `LAUNCHES` direction reversed (was `Transition-[:FROM_STATE]->State`,
+   now `State-[:LAUNCHES]->Transition`). User's own reasoning: this makes
+   the whole thing read as one continuous forward path,
+   `State-[:LAUNCHES]->Transition-[:LANDS_IN]->State`, instead of two
+   edges both originating at the Transition -- and matches the rest of
+   the ontology's verb-phrase convention (`TRACES_TO`, `VALIDATES`,
+   `EXECUTES`, ...), which `FROM_STATE`/`TO_STATE` never did. Real,
+   incidental find: neither `FROM_STATE` nor `TO_STATE` ever had a
+   relationship-property index in schema-02 (an oversight); `LAUNCHES`/
+   `LANDS_IN` get one now, closing that gap at the same time. Touched 5
+   real files (`behavior_model.py`, `test_skeleton_generator.py`,
+   `login_example.py`, `structural_validation.py`'s
+   `ALLOWED_RELATIONSHIPS`, the ontology spec doc) -- no test file
+   referenced the old names directly, so none needed changes.
+
+Re-verified after both: full 45-file regression suite green, live graph
+showed 17 real `LAUNCHES`/17 real `LANDS_IN` edges, 0 `FROM_STATE`/
+`TO_STATE` anywhere.
+
+**Round 5 — one more rename, same session**: `LAUNCHES`/`LANDS_IN` ->
+`WHEN`/`THEN` (direction unchanged from Round 4 -- still
+`State-[:WHEN]->Transition-[:THEN]->State`), explicitly to mirror the
+Given/When/Then shape a Transition already structurally is: the State
+it's reached from is the implicit "Given," `WHEN` this edge fires is the
+Transition, `THEN` this edge's target State is the result. Same 5 real
+files touched as Round 4 (`behavior_model.py`, `test_skeleton_generator.py`,
+`login_example.py`, `structural_validation.py`'s `ALLOWED_RELATIONSHIPS`,
+the ontology spec doc), same schema-02 index rename (`rel_launches_t_valid`/
+`rel_lands_in_t_valid` dropped live, `rel_when_t_valid`/`rel_then_t_valid`
+created). Re-verified: full 45-file regression suite green, live graph
+shows 17 real `WHEN`/17 real `THEN` edges, 0 `LAUNCHES`/`LANDS_IN`/
+`FROM_STATE`/`TO_STATE` anywhere.
+
+## Session 12 addendum — TestRun renamed to TestCycle; real per-case TestExecution; ApplicationConfiguration for release-report version tracking
+
+User correction to Session 11's TestRun model, stated directly: a "run"
+is a batch/container, but each individual TestCase's result within that
+batch needs its own record — the real shape test-management tools
+(TestRail/Xray/Zephyr) already use (TestRun/Cycle → many TestExecutions),
+not one flat `status` property covering a whole batch of 3-25 TestCases
+regardless of how many actually passed. Confirmed via 2 clarifying
+questions before touching schema:
+- **ApplicationConfiguration links per TestExecution**, not per
+  TestCycle — different executions within the same cycle can reference
+  different component-version snapshots (e.g. a cycle spanning a mid-run
+  deploy).
+- **Component versions are real edges to the existing Service label**
+  (`ApplicationConfiguration-[:INCLUDES_VERSION {version}]->Service`),
+  not a flat property blob — versions stay independently
+  queryable/traceable, reusing Session 11's own Service label instead of
+  inventing a new "component" node.
+
+**Renamed `TestRun` → `TestCycle`** across the whole stack: `schema/
+metis-graph-01-entity-baseline-constraints.cypher` (constraints/indexes
+dropped and recreated live), `structural_validation.py`'s `KNOWN_LABELS`/
+`LABEL_SPECIFIC_REQUIRED` (dropped `application_version` — now
+superseded by the precise per-execution ApplicationConfiguration/Service
+links; kept `run_type`), `layer8_heuristics.py`'s
+`check_testrun_completeness` → `check_testcycle_completeness`,
+`dq_metrics.py`'s DQ-023 and `dq_017`, `quality_report.py`'s SEC-02,
+and `demo_data/generate_demo_data.py`'s generator block.
+
+**Two new labels, both real, not filler:**
+- **`TestExecution`** — one real node per (TestCycle, TestCase) pair,
+  properties `executed_at`/`result` only, exactly "time and result" as
+  asked. `PART_OF->TestCycle` (reuses the generic PART_OF edge, same as
+  TestCase→TestSuite), `EXECUTES->TestCase` and `PRODUCES->Defect` (both
+  moved DOWN from TestCycle — a defect comes from a specific failing
+  execution, not the batch abstractly), and the new
+  `RAN_AGAINST->ApplicationConfiguration`.
+- **`ApplicationConfiguration`** — id/source_episode_id only; the actual
+  component versions live entirely on its outgoing `INCLUDES_VERSION`
+  edges to real Service nodes, not node properties (Neo4j has no clean
+  native map-property type for this anyway, and edge-based versions stay
+  independently traceable).
+
+**Demo data** (`demo_data/generate_demo_data.py`): a new
+`application_configurations` pool (`scale.n(40)`, each `INCLUDES_VERSION`
+to 3-8 random real Services with a semver string), `test_cycles` (was
+`test_runs`, `application_version` dropped), and for each cycle's sampled
+TestCases a real `TestExecution` node with its own weighted-mostly-passed
+`result` — Defects now `PRODUCES`-linked from a round-robin subset of
+`result='failed'` executions specifically, not the cycle. Verified at
+full scale (`factor=1.0`, seed 42): **TestCycle: 800, TestExecution:
+11,200, ApplicationConfiguration: 40**, `EXECUTES`/`RAN_AGAINST`: 11,200
+each, `INCLUDES_VERSION`: 230 — no `TestRun` label anywhere in the
+regenerated graph.
+
+`dq_017` and SEC-02 (both made real in Session 11) were updated to the
+new chain — `Requirement->HAS_AC->AC<-VERIFIES-TestCase<-EXECUTES
+-TestExecution-PART_OF->TestCycle{run_type:'regression'}` and
+`Defect<-PRODUCES-TestExecution-EXECUTES->TestCase-VERIFIES->AC
+<-HAS_AC-Requirement` respectively — both re-verified against the live
+regenerated graph (SEC-02: 127 real open high/critical Defects traced,
+up from Session 11's 112 since the per-execution PRODUCES linkage is now
+more granular).
+
+**Real bug found and fixed, caused by this session's own rename**: after
+renaming `check_testrun_completeness` → `check_testcycle_completeness`
+in `layer8_heuristics.py`, `test_structural_extraction.py`'s
+`test_real_run_against_landed_episodes_matches_independently_computed_counts`
+failed — `application_code_connector.py`'s real Cognify pass adds new
+Method nodes for new/renamed functions on re-run but never prunes the
+stale node for a function that no longer exists in source, so the old
+`check_testrun_completeness` Method node lingered as a real, orphaned
+artifact after the rename, one off from the fresh AST-computed count.
+Fixed by deleting that specific stale node directly (confirmed genuinely
+orphaned first, not a blind deletion) — a real, disclosed, pre-existing
+limitation of the connector's non-destructive re-ingestion design (it
+has no rename/delete detection), not something fixed generally this
+session.
+
+**Out of scope, disclosed**: `quality_report.py`'s `build_release_report`
+was NOT changed to display component versions — the user's stated
+purpose ("for release report generation") was the rationale for building
+this model, not a request to also change the report's output shape yet.
+The full chain is already traversable
+(`Release<-TRACES_TO-TestCycle<-PART_OF-TestExecution-RAN_AGAINST->
+ApplicationConfiguration-INCLUDES_VERSION->Service`) for a future report
+addition.
+
+All 45 real deterministic regression test files green.
+
+## Session 11 addendum — five ontology corrections: behavior scope, real TestRun, Table/Database linkage, broader drift detection, LLM-session layer removed
+
+User reviewed the Session 10 model and gave 5 concrete corrections, each
+confirmed against the real, current code (not assumed) before building:
+
+**1 — State/Transition/Trigger scoped to real application behaviour.**
+The demo generator's "Behavior layer" turned out to be pure count-padding
+on inspection: 80 generic States wired into a meaningless index ring
+(`state[i]->state[i+1]`) with 300 Transitions, none tied to any real
+application — unlike `demo_data/login_example.py`'s real, hand-authored
+login-page state machine (Session 10). Removed entirely from
+`demo_data/generate_demo_data.py` (the ring, the `load_transition` loop,
+the `check_determinism`/`check_completeness`/`check_reachability` calls
+against it). `login_example.py` is now the sole source of State/
+Transition/Trigger/Guard data in this generator. `Action`/`Event`/
+`Workflow` (separate labels, already independently dangling, not covered
+by this rule) were left untouched, out of scope.
+
+**2 — Real TestRun modeling.** Investigation found TestRun (800 demo
+nodes) had only ever gotten a `PRODUCES->Defect` edge — no
+`EXECUTES->TestCase`, no link to what suite it ran, no application
+version, nothing regression-specific tying it to a Release. TestSuite
+(150 nodes) had **zero relationships at all** — the spec's own
+`TestCase-[:PART_OF]->TestSuite` edge had never been built despite being
+named since the platform's original spec. This is exactly the concrete
+gap `dq_017` and `quality_report.py`'s SEC-02 have disclosed since
+Sessions 4/8 ("no TestRun->TestCase edge exists anywhere in this
+codebase") — now real. Built: `application_version`/`run_type`
+properties on TestRun (`structural_validation.py`'s
+`LABEL_SPECIFIC_REQUIRED`), `TestCase-[:PART_OF]->TestSuite`,
+`TestRun-[:EXECUTES]->TestCase`, `TestRun-[:PART_OF]->TestSuite`, and
+`TestRun-[:TRACES_TO]->Release` for `run_type='regression'` runs (reusing
+the existing generic TRACES_TO edge, not a new type). A new heuristic,
+`metis_mcp/layer8_heuristics.py`'s `check_testrun_completeness`, flags a
+TestRun missing any of these links — wired in as `dq_metrics.py`'s new
+**DQ-023** (deliberately not folded into `run_layer8`'s aggregate, since
+it isn't one of REQ-METIS-GRD-08's original four checks). `dq_017` now
+computes the doc's originally-specified formula
+(`Requirement->AC->TestCase->regression-TestRun`) for real when at least
+one such edge exists, falling back to the prior AC-mediated-only chain
+otherwise — never a hard break for graphs that predate this. SEC-02
+(open high/critical Defects, scoped) went from a disclosed permanent
+`None` to a real computed value for the first time — verified against
+the live full-scale graph: **112 open high/critical Defects** traced via
+`Defect<-PRODUCES-TestRun-EXECUTES->TestCase-VERIFIES->AC<-HAS_AC-Requirement`
+at project-wide scope.
+
+**3 — Table linked to Database, with real revision history.** The whole
+Architecture layer (Service/API/Endpoint/Database/Table/Column/
+KafkaTopic/ExternalSystem) turned out to have **zero internal
+relationships** before this — Table had never been linked to Database at
+all. Fixed: `Database-[:HAS]->Table` (the spec's own documented
+direction), and every Database/Table write now calls
+`metis_mcp/temporal.py`'s `record_revision()` immediately after creation
+— the same "write, then revise" discipline `login_example.py` established
+in Session 10 — giving both labels real, queryable revision history for
+the first time, which is the actual prerequisite for staleness to mean
+anything for them (`graph_sync.py`'s `check_staleness` already worked
+per-connector for any label; it had nothing to read here before).
+
+**4 — Drift detection extended to a second, structurally different
+connector.** `metis_mcp/graph_sync.py`'s `sync_and_detect_drift` was only
+proof-wired through `test_suite_connector.py` (Session 10). Extended to
+`connectors/atlassian_connector.py`'s Confluence path — the concrete
+"document management" case the user named. Confluence pages land as bare
+Episode nodes with no downstream typed entity (a real, disclosed ontology
+gap since Session 4 — "Document-sourced content" has no closed-ontology
+label), unlike TestCase's Episode-plus-typed-node shape, so
+`_snapshot_entities` gained a real `entity_label='Episode'` path (with an
+optional `episode_type` filter) that snapshots Episode nodes directly
+instead of assuming a wrapper-Episode-plus-typed-node hop always exists.
+Proof-wired end to end with a genuine two-run drift scenario in
+`test_graph_sync.py`: `connectors/mock_jira_server.py` gained
+env-var-overridable Confluence page content
+(`METIS_MOCK_CONFLUENCE_BODY`/`_VERSION`/`_UPDATED`, same idiom as its
+existing `METIS_MOCK_JIRA_PORT`) so a test can restart the mock with
+genuinely different page content between two sync runs — round 1 (new
+page) shows no drift, round 2 (edited body, bumped version) produces a
+real `SpecDriftDetected` Episode with real `changed_fields`. Disclosed,
+not silently implied complete: the remaining 8 connectors still aren't
+wired through this — same "mechanical follow-up, not a redesign" note
+Session 10 made, now with 2 real proof connectors instead of 1.
+
+**5 — LLM-session-tracking layer removed.** User's own reasoning: keeping
+ephemeral LLM/Copilot session data in a graph meant to be a global,
+persistent source of truth is counterproductive. Two real, load-bearing
+facts surfaced and confirmed with the user (via AskUserQuestion) before
+removing anything:
+  - **Cache**, named by the user as an example, actually modeled
+    *infrastructure* caching technology (e.g. Redis used by a Service) in
+    this schema, unrelated to LLM sessions — grouped with KafkaTopic/
+    ExternalSystem, not the AI-session layer. User confirmed removing it
+    anyway.
+  - **GeneratedTest**, one of the 6 "AI layer" labels, was NOT filler
+    like the other 5 — `metis_mcp/test_skeleton_generator.py` genuinely
+    uses it for REQ-METIS-BM-03 (AI-proposed test-skeleton provenance
+    until it converges with a real TestCase), with 8 real tests depending
+    on it. User confirmed keeping it.
+
+Removed (6 labels): `CopilotSession`, `Prompt`, `GeneratedCode`,
+`AIDecision`, `HumanReview`, `Cache` — confirmed by grep to be pure demo
+filler with **zero relationships anywhere in this codebase** before
+removal (no real code referenced them outside the label registry and the
+demo generator). `KNOWN_LABELS` (`structural_validation.py`) went from 51
+to 45; `schema/metis-graph-01-entity-baseline-constraints.cypher`'s
+constraint/index blocks for the 6 were dropped live from the running
+Neo4j instance; the demo generator's "AI layer" block (including its own
+dangling, non-real `GeneratedTest` filler rows — distinct from and easily
+confused with the real ones `test_skeleton_generator.py` creates) was
+deleted. `GeneratedTest`'s schema constraints and `KNOWN_LABELS` entry
+were left untouched. Historical corpus text describing the old AI layer
+(`corpus/specification-knowledge-graph-platform.md`) was left unedited,
+per this project's established precedent of treating corpus content as
+immutable historical record (same as Session 9's ontology correction) —
+the live ontology now deliberately diverges from that section.
+
+**Real bug found and fixed while verifying this** (not by the user): the
+new Database/Table `record_revision()` calls created real `:Revision`
+nodes that don't carry `is_demo_data` (the exact same gap
+`login_example.py` hit in Session 10) — caught by
+`test_demo_data.py`'s `test_no_relationship_points_at_a_nonexistent_node`
+and `test_generate_reported_total_matches_real_graph_count` actually
+failing on the first regenerate, not assumed fixed. Fixed with the same
+one-pass tagging query Session 10 already established. **A second real
+bug**: adding DQ-023 changed `compute_all_metrics`'s real returned count
+from 22 to 23, breaking `test_dq_metrics.py`'s own hardcoded
+`test_compute_all_metrics_returns_all_22` — renamed and updated, caught
+by running the full suite, not assumed.
+
+Verified for real at default scale (`factor=1.0`, seed 42): **51,710
+nodes / 92,047 relationships** (down from 53,097 — expected, given the
+generic Behavior-layer removal outweighs the new TestRun/TestSuite/
+Database/Table edges and the 6 removed labels). No `CopilotSession`/
+`Prompt`/`GeneratedCode`/`AIDecision`/`HumanReview`/`Cache` nodes present;
+`GeneratedTest` present only via its real `test_skeleton_generator.py`
+usage, not demo filler. State: 6, Transition: 10, Trigger: 9, Guard: 7 —
+all from `login_example.py` alone. All 45 real deterministic regression
+test files green (including the 2 new/extended: `test_graph_sync.py`'s
+Confluence proof, `test_demo_data.py`'s Revision-tagging fix).
+
+## Session 10 addendum — Intent/TestDesign backbone, real provenance, staleness/drift detection, test-design reporting
+
+User described a real gap between the graph and their original vision:
+State/Transition should be the primary backbone Requirements/tests derive
+FROM (their example: a login page), not decoration on top of a business
+hierarchy unrelated to any specific application. Plus three more real
+requirements surfaced in the same conversation: (1) every node needs real
+source/timestamp/collector provenance and the graph needs an active
+"keep it up to date" mechanism; (2) State/Transition need to distinguish
+already-built behavior from planned-but-not-yet-built, so a coverage/
+test-strategy consumer never mistakes one for the other; (3) this model
+needs to drive real test-design/release/coverage reporting, reachable by
+anyone, not just via MCP. A 4th item (linking State/Transition to real
+components/DB tables, one Transition changing multiple tables at once)
+was explicitly deferred to a future conversation — discussion only, no
+schema changes, per the user's own choice.
+
+**Part A — the real backbone**: two new closed-ontology labels, `Intent`
+(the atomic, informal "what should happen" statement — Transition/
+Requirement/AcceptanceCriterion/TestDesign all `TRACES_TO` it, a real
+hub) and `TestDesign` (one per Intent, `COVERS` its AcceptanceCriteria,
+names real test-design techniques, `PRODUCES` TestCases). Added to
+`structural_validation.py`'s `KNOWN_LABELS` (51 now, was 49) — easy to
+miss, would otherwise make Layer 2 reject every Intent/TestDesign node
+outright. Proven with a real, hand-authored login-page state machine
+(`demo_data/login_example.py`): 7 States, 10 Transitions (9
+`implementation_status: 'implemented'`, 1 deliberately `'planned'` — 2FA
+enrollment, which gets a real Intent+Requirement but genuinely no
+TestDesign/TestCase, proving the distinction item 2 asked for). Every
+node gets a real first `:Revision` via `metis_mcp/temporal.py`'s
+`record_revision()` (item 1's provenance half) — not just a static
+timestamp. `TestCase.type` is now a real 6-value taxonomy (`unit`,
+`integration`, `api_functional`, `web_functional`, `e2e`, `performance`),
+replacing the old `functional`/`smoke`/`performance` set.
+`pyramid_gap_check.py` prefers the real `.type` when set, falling back to
+its old id-prefix heuristic only for untyped legacy data (`test_suite_
+connector.py`'s already-ingested TestCases never set `.type` — the
+fallback exists specifically so their real coverage signal doesn't
+regress). `planned` Transitions are excluded outright from coverage-gap
+computation in `pyramid_gap_check.py`/`dq_metrics.py`/`quality_report.py`
+— a not-yet-built Transition with zero tests isn't a gap.
+
+**Real bug found and fixed while building this**: `pyramid_gap_check.py`'s
+first draft still required exact repo:path co-location even when a real
+`.type` was set, so real-typed TestCases in a different path (e.g.
+`tests/` vs `src/`) never matched — caught by testing against the real
+login example, not assumed. Fixed to scope real-typed matches to the
+whole repo, keeping the exact-path heuristic only for the untyped
+fallback. **A second real bug**: `login_example.py`'s own node/
+relationship counts didn't include the real `:Revision` nodes
+`record_revision` creates (they write directly, bypassing the counting
+helpers) — `test_generate_reported_total_matches_real_graph_count` caught
+the mismatch for real. **A third**: the existing synthetic layer's own
+Guard-counting query used a bare `'demo:'` id prefix, which accidentally
+also matched `login_example.py`'s own Transitions (`demo:login:
+transition:...` also starts with `'demo:'`), double-counting its Guards —
+narrowed to the synthetic layer's actual `'demo:transition:'` prefix.
+
+**Part B — reporting** (item 3): new `metis_generate_test_design_report`
+MCP tool (12th tool now) — real per-Requirement/AcceptanceCriterion
+breakdown of which technique(s) and TestCase(s) exist, reusing `quality_
+report.py`'s existing `resolve_scope()` unchanged. Also a browsable
+`test-design-report.html` Site page (`site_renderer.py`, wired into
+`render_site()`) — "anyone can go and check this model" meant a URL, not
+just an MCP call. Real, disclosed data-quality finding hit rendering
+this: 2 real AcceptanceCriterion nodes have `text IS NULL` — shown as
+"(no text recorded)" rather than crashing.
+
+**Part C — staleness + drift detection** (item 1's "keep it up to date"
+half): new `metis_mcp/graph_sync.py`. `check_staleness()` — real
+days-since-last-update per `Episode.source_connector` (handles the
+real, pre-existing inconsistency that some connectors write `t_recorded`
+as a Cypher `datetime()` and demo_data writes it as a Python ISO string —
+normalizes both, doesn't error on the mix). `sync_and_detect_drift()` —
+re-runs a connector's own real entrypoint, then reuses `record_revision`'s
+already-existing changed-fields diff (no new diffing logic) to detect
+real drift, writing a real `SpecDriftDetected` Episode when found — the
+concrete thing `dq_metrics.py`'s DQ-014 has said "never created" since
+Session 4. **DQ-014 is now real** (was hardcoded to always return `None`
+even though it already queried for these episodes). Proof-wired through
+one real connector end-to-end (`test_suite_connector.py`) with a genuine
+two-run drift scenario (a real temp test file citing a real Constitution
+tag, then edited to cite a nonexistent one — flips it from linked to
+orphan, a real `triage_reason` property ADD, correctly detected).
+**Real, disclosed scope**: the other 9 connectors aren't wired through
+this yet — mechanical follow-up, not a redesign, since the mechanism
+itself is connector-agnostic. New `metis-graph-sync` Helm chart component
+(`values.yaml` + `Dockerfile.graph-sync`), reusing the existing generic
+CronJob template `guardrail-corpus-runner` already proved — `helm lint`/
+`helm template` validated for real, but **not live-deployed** this
+session (the only reachable cluster is Docker Desktop's, the exact target
+Session 9's own Podman decision said to move away from).
+
+**Real bug found in a test fixture, not the code**: `test_dq_metrics.py`'s
+own new DQ-014 test initially omitted the real `job_id` property Episode
+requires (a real schema-01 existence constraint) — caught immediately by
+the real constraint rejecting the write, not a silent pass. **Another**:
+that same test's fixture nodes weren't cleaned up per-test (this file
+only calls its shared `_cleanup()` once at the very end), so they leaked
+into `test_compute_quality_score_partial_when_some_components_missing`'s
+expected-`None` assertion for the `currency` component — fixed with
+self-contained cleanup. **A third, broader one**: `test_dq_metrics.py`
+never wiped demo data at all before this session — harmless when DQ-014
+always returned `None` regardless of graph state, but now that it reads
+real `Endpoint`/`Table` counts, leftover demo data (300 Endpoints, 150
+Tables) would have silently changed its answer. Fixed by wiping demo data
+in `_setup()`, same discipline Session 7 already established for
+`test_demo_data.py`.
+
+**Part D**: component/DB-table/multi-state-change-per-transition modeling
+— explicitly not designed or built this session, per the user's own
+choice. Revisit as a real follow-up conversation, not silently assumed
+solved by anything above.
+
+Verified for real at default scale (`factor=1.0`, seed 42): **53,097
+nodes / 64,607 relationships**. All 45 real regression test files green
+(43 existing + `test_login_example.py` + `test_graph_sync.py`, both new).
+`helm lint`/`helm template` clean on the updated chart.
+
 ## Session 9 addendum — fixed a real ontology bug: VERIFIES targets AcceptanceCriterion, not Requirement
 
 User correction, stated directly: a TestCase should VERIFY exactly one
@@ -715,7 +1249,7 @@ python3 -m venv .venv
 .venv/bin/python3 test_config_manager.py      # 4 tests, no external dependency
 .venv/bin/python3 test_classification_gate.py  # 8 tests, no external dependency
 .venv/bin/python3 test_ears_checker.py          # 7 tests, no external dependency
-.venv/bin/python3 test_e2e.py                  # real MCP client, 11 tools (graph.backend: local by default)
+.venv/bin/python3 test_e2e.py                  # real MCP client, 12 tools (graph.backend: local by default)
 
 # Everything else (Phases 1-9) needs a running Neo4j + mock Athena Postgres.
 # Podman, not Docker (Session 9): identical Dockerfile-compatible build/run
@@ -756,7 +1290,7 @@ export METIS_NEO4J_PASSWORD=metis-dev-pass METIS_ATHENA_PASSWORD=athena-mock-pas
 .venv/bin/python3 test_requirement_quality.py          # 7 tests -- CONST-047 deterministic checks
 .venv/bin/python3 test_temporal.py                     # 7 tests -- §5.4 + Layer 10 rollback
 .venv/bin/python3 test_layer8_heuristics.py            # 6 tests -- Layer 8 (REQ-METIS-GRD-08)
-.venv/bin/python3 test_dq_metrics.py                   # 22 tests -- full DQ-001..022 + composite score
+.venv/bin/python3 test_dq_metrics.py                   # 23 tests -- full DQ-001..023 + composite score
 .venv/bin/python3 test_mcp_contracts.py                # 1 test -- CONST-062, real MCP subprocess
 .venv/bin/python3 test_manifest_validator.py           # 5 tests -- connector manifest schema validation
 .venv/bin/python3 test_token_optimization.py           # 11 tests -- §9.1 Caveman/Headroom/Cache-Aligner
@@ -770,6 +1304,9 @@ export METIS_NEO4J_PASSWORD=metis-dev-pass METIS_ATHENA_PASSWORD=athena-mock-pas
 .venv/bin/python3 test_cost_gate.py                    # 6 tests, no external dependency -- COST-08
 .venv/bin/python3 test_academy.py                      # 7 tests -- §12 Academy content-assembly
 .venv/bin/python3 test_site_and_pptx_renderers.py      # 3 tests -- §12.5 Site + §4.6.1 PPTX renderers
+# Session 10 addendum -- Intent/TestDesign backbone + staleness/drift detection:
+.venv/bin/python3 test_login_example.py                # 7 tests -- real login-page Intent/TestDesign backbone
+.venv/bin/python3 test_graph_sync.py                   # 3 tests -- staleness + drift detection (2 proof connectors as of Session 11)
 ```
 
 LLM-calling test files (real, costed, deliberately excluded from the list

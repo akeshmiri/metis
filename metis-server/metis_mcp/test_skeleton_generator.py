@@ -65,30 +65,24 @@ class TransitionDetail:
     transition_id: str
     from_state: str
     to_state: str
-    trigger_id: str
-    trigger_name: str
+    trigger: str
     guard_expression: str
 
 
 def _fetch_transition_detail(session, transition_id: str) -> TransitionDetail | None:
     rec = session.run(
         """
-        MATCH (t:Transition {id: $id})-[:FROM_STATE]->(from:State),
-              (t)-[:TO_STATE]->(to:State),
-              (t)-[:ON_TRIGGER]->(trig:Trigger),
-              (t)-[:WHEN_GUARD]->(g:Guard)
+        MATCH (from:State)-[:WHEN]->(t:Transition {id: $id})-[:THEN]->(to:State)
         RETURN from.id AS from_state, to.id AS to_state,
-               trig.id AS trigger_id, coalesce(trig.name, trig.id) AS trigger_name,
-               g.expression AS guard_expression
+               t.trigger AS trigger, t.guard_expression AS guard_expression
         """,
         id=transition_id,
     ).single()
-    if rec is None:
+    if rec is None or rec["trigger"] is None or rec["guard_expression"] is None:
         return None
     return TransitionDetail(
         transition_id=transition_id, from_state=rec["from_state"], to_state=rec["to_state"],
-        trigger_id=rec["trigger_id"], trigger_name=rec["trigger_name"],
-        guard_expression=rec["guard_expression"],
+        trigger=rec["trigger"], guard_expression=rec["guard_expression"],
     )
 
 
@@ -98,11 +92,11 @@ def _resolves_completeness_gap(session, detail: TransitionDetail) -> bool:
     that pair isn't currently reported by check_completeness()."""
     rec = session.run(
         """
-        MATCH (t:Transition)-[:FROM_STATE]->(s:State {id: $from_state}),
-              (t)-[:ON_TRIGGER]->(trig:Trigger {id: $trigger_id})
+        MATCH (s:State {id: $from_state})-[:WHEN]->(t:Transition)
+        WHERE t.trigger = $trigger
         RETURN count(t) AS c
         """,
-        from_state=detail.from_state, trigger_id=detail.trigger_id,
+        from_state=detail.from_state, trigger=detail.trigger,
     ).single()
     return bool(rec) and rec["c"] == 1
 
@@ -116,9 +110,9 @@ def _skeleton_code(detail: TransitionDetail, test_type: str, fn_name: str) -> st
     # TODO(body-fill): construct real fixture putting the system under test
     #                   into state '{detail.from_state}'.
 
-    # Act: fire trigger '{detail.trigger_name}' ({detail.trigger_id})
+    # Act: fire trigger '{detail.trigger}'
     # TODO(body-fill): invoke the real implementing behavior for trigger
-    #                   '{detail.trigger_name}' while guard "{detail.guard_expression}" holds.
+    #                   '{detail.trigger}' while guard "{detail.guard_expression}" holds.
 
     # Assert: system transitions to state '{detail.to_state}'
     # TODO(body-fill): assert the system is now in state '{detail.to_state}',
@@ -131,10 +125,10 @@ def _generate_one(session, detail: TransitionDetail, test_type: str, closes_gap:
     fn_name = f"test_{detail.transition_id.replace(':', '_').replace('-', '_')}_{test_type}"
     return {
         "test_type": test_type,
-        "fixtures": [f"state_fixture__{detail.from_state}", f"trigger_fixture__{detail.trigger_id}"],
+        "fixtures": [f"state_fixture__{detail.from_state}", f"trigger_fixture__{detail.trigger}"],
         "assertions_targeted": [
             f"transitions from '{detail.from_state}' to '{detail.to_state}' when "
-            f"'{detail.trigger_name}' fires and guard \"{detail.guard_expression}\" holds",
+            f"'{detail.trigger}' fires and guard \"{detail.guard_expression}\" holds",
             f"remains in '{detail.from_state}' if guard \"{detail.guard_expression}\" does not hold",
         ],
         "skeleton_code": _skeleton_code(detail, test_type, fn_name),
@@ -166,7 +160,7 @@ def propose_test_skeletons(session, transition_id: str) -> dict:
             "transition_id": transition_id,
             "applicable": False,
             "reason": f"Transition '{transition_id}' has implementing_method_id but its "
-                      f"State/Trigger/Guard structure is incomplete -- cannot template a skeleton.",
+                      f"State/trigger/guard_expression data is incomplete -- cannot template a skeleton.",
             "skeleton": None,
             "requires_human_review": True,
         }

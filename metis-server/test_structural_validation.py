@@ -3,7 +3,9 @@ Tests for Layer 2 structural validation (REQ-METIS-GRD-02) -- each test is
 written against a specific behavior, not generic code coverage, matching
 test_classification_gate.py's convention.
 """
-from metis_mcp.structural_validation import StructuralValidator, KNOWN_LABELS
+from metis_mcp.structural_validation import (
+    StructuralValidator, KNOWN_LABELS, validate_relationship, ALLOWED_RELATIONSHIPS,
+)
 
 
 def _validator(known_episodes=frozenset()):
@@ -87,7 +89,49 @@ def test_all_schema_labels_are_in_known_labels():
     assert "Repository" in KNOWN_LABELS
     assert "Class" in KNOWN_LABELS
     assert "Method" in KNOWN_LABELS
-    assert len(KNOWN_LABELS) == 51  # Session 10: +Intent, +TestDesign
+    assert len(KNOWN_LABELS) == 45  # Session 10: +Intent/+TestDesign (51);
+    # Session 11: -CopilotSession/-Prompt/-GeneratedCode/-AIDecision/
+    # -HumanReview/-Cache, GeneratedTest kept (51 - 6 = 45);
+    # Session 12: -TestRun/+TestCycle (net 0), +TestExecution,
+    # +ApplicationConfiguration (45 + 2 = 47);
+    # Session 13: -Trigger/-Guard, folded into Transition properties (47 - 2 = 45)
+    assert "CopilotSession" not in KNOWN_LABELS
+    assert "Cache" not in KNOWN_LABELS
+    assert "TestRun" not in KNOWN_LABELS
+    assert "TestCycle" in KNOWN_LABELS
+    assert "TestExecution" in KNOWN_LABELS
+    assert "ApplicationConfiguration" in KNOWN_LABELS
+    assert "GeneratedTest" in KNOWN_LABELS
+    assert "Trigger" not in KNOWN_LABELS
+    assert "Guard" not in KNOWN_LABELS
+
+
+def test_known_good_relationship_triple_is_accepted():
+    result = validate_relationship("AcceptanceCriterion", "VALIDATES", "Transition")
+    assert result.valid
+    assert result.reasons == []
+
+
+def test_invented_relationship_triple_is_rejected_with_specific_reason():
+    result = validate_relationship("State", "EXECUTES", "TestCase")
+    assert not result.valid
+    assert any("Unknown relationship '(State)-[:EXECUTES]->(TestCase)'" in r for r in result.reasons)
+
+
+def test_has_revision_accepted_from_any_real_label_but_only_to_revision():
+    assert validate_relationship("Requirement", "HAS_REVISION", "Revision").valid
+    assert validate_relationship("Database", "HAS_REVISION", "Revision").valid
+    bad = validate_relationship("Requirement", "HAS_REVISION", "Episode")
+    assert not bad.valid
+    assert any("must target 'Revision'" in r for r in bad.reasons)
+
+
+def test_removed_transition_traces_to_intent_edge_is_no_longer_allowed():
+    """Session 13 removed this exact edge -- a real regression check that
+    it doesn't silently creep back into ALLOWED_RELATIONSHIPS."""
+    assert ("Transition", "TRACES_TO", "Intent") not in ALLOWED_RELATIONSHIPS
+    result = validate_relationship("Transition", "TRACES_TO", "Intent")
+    assert not result.valid
 
 
 if __name__ == "__main__":

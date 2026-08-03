@@ -1,6 +1,6 @@
 """
 CONST-062 (docs/metis-gap-remediation.md §7): real contract tests for
-metis_mcp/server.py's 11 MCP tool handlers against
+metis_mcp/server.py's 12 MCP tool handlers against
 mcp-contracts/metis-mcp-tool-contracts.json's real input/output JSON
 schemas -- spawned as a real subprocess over the real MCP protocol (same
 approach as test_e2e.py), not a mock of the handler functions.
@@ -13,7 +13,7 @@ Phase 0 dogfooding stand-in (see its own module docstring, and
 QUICKSTART.md's "Isn't: the production server"), and several of its
 adaptations were already disclosed there (metis_impact_analysis,
 metis_propose_test_skeleton/metis_submit_episode). Running this test for
-real against the actual local-backend server shows EVERY one of the 11
+real against the actual local-backend server shows EVERY one of the 12
 tools currently deviates from the full production contract shape in some
 way -- most of that deviation was NOT previously disclosed anywhere. This
 test file is the accurate, current record of exactly which tool deviates
@@ -118,6 +118,12 @@ CASES = {
         "Same real gap as metis_generate_quality_report: graph.backend=local returns the "
         "honest {adapted, note} response, omitting the contract's required fields.",
     ),
+    "metis_generate_test_design_report": (
+        {"scope": {"project_wide": True}}, False,
+        "Same real gap as metis_generate_quality_report: graph.backend=local returns the "
+        "honest {adapted, note} response, omitting the contract's required fields "
+        "(scope_description/requirements/total_acceptance_criteria/etc.).",
+    ),
 }
 
 
@@ -137,7 +143,7 @@ async def _run() -> dict:
     return results
 
 
-def test_all_eleven_tools_match_their_documented_conformance_state():
+def test_all_twelve_tools_match_their_documented_conformance_state():
     contracts = load_contracts()
     outputs = asyncio.run(_run())
     assert set(outputs.keys()) == set(CASES.keys()), "server tool set no longer matches CASES"
@@ -163,7 +169,7 @@ def test_all_eleven_tools_match_their_documented_conformance_state():
 
 
 if __name__ == "__main__":
-    tests = [test_all_eleven_tools_match_their_documented_conformance_state]
+    tests = [test_all_twelve_tools_match_their_documented_conformance_state]
     failures = 0
     for t in tests:
         try:

@@ -185,9 +185,10 @@ def format_changelog_plain_language(entries: list[ChangelogEntry]) -> str:
 
 def assemble_content(session, kind: str, **kwargs) -> dict:
     """REQ-METIS-ACD-07's single content-assembly stage. `kind` is one of:
-    'academy_page', 'quality_summary', 'changelog'. Both metis_mcp/
-    site_renderer.py and metis_mcp/pptx_renderer.py call this same
-    function -- they differ only in their final rendering step."""
+    'academy_page', 'quality_summary', 'changelog', 'test_design_report'
+    (Session 10). Both metis_mcp/site_renderer.py and metis_mcp/
+    pptx_renderer.py call this same function -- they differ only in their
+    final rendering step."""
     if kind == "academy_page":
         page_id = kwargs["page_id"]
         return {
@@ -202,4 +203,8 @@ def assemble_content(session, kind: str, **kwargs) -> dict:
     if kind == "changelog":
         entries = generate_changelog(session, kwargs["entity_ids"], kwargs.get("since_revision", 1))
         return {"kind": "changelog", "entries": entries, "plain_language": format_changelog_plain_language(entries)}
+    if kind == "test_design_report":
+        from metis_mcp.quality_report import build_test_design_report
+        report = build_test_design_report(session, kwargs["scope"])
+        return {"kind": "test_design_report", **report}
     raise ValueError(f"Unknown content kind '{kind}' -- not a fabricated fallback, a real error.")

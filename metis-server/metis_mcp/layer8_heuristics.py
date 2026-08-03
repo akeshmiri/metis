@@ -122,6 +122,63 @@ def check_orphan_claims(session) -> LayerFinding:
     )
 
 
+def check_testcycle_completeness(session) -> LayerFinding:
+    """Session 11 (item 2)/Session 12 -- not one of REQ-METIS-GRD-08's
+    original four Layer 8 checks (kept out of run_layer8's aggregate below
+    for that reason), but the same reusable LayerFinding shape. TestRun was
+    renamed to TestCycle in Session 12, and per-case EXECUTES moved down to
+    the new TestExecution node -- a TestCycle with no TestExecution at all,
+    no PART_OF->TestSuite edge, or a run_type='regression' TestCycle with no
+    TRACES_TO->Release edge is a cycle that can't be pinned to what it
+    actually validated -- exactly the "coverage claim with no real evidence
+    behind it" CONST-005a already names. Target: 0."""
+    rows = session.run(
+        """
+        MATCH (tc:TestCycle)
+        WHERE NOT EXISTS { MATCH (:TestExecution)-[:PART_OF]->(tc) }
+           OR NOT EXISTS { MATCH (tc)-[:PART_OF]->(:TestSuite) }
+           OR (tc.run_type = 'regression' AND NOT EXISTS { MATCH (tc)-[:TRACES_TO]->(:Release) })
+        RETURN tc.id AS id
+        """
+    ).data()
+    total = session.run("MATCH (tc:TestCycle) RETURN count(tc) AS c").single()["c"]
+    flagged = [row["id"] for row in rows]
+    return LayerFinding(
+        check="testcycle_completeness", flagged_ids=flagged, total=total,
+        rate=round(len(flagged) / total, 3) if total else None,
+    )
+
+
+def check_transition_ac_coverage(session) -> LayerFinding:
+    """Session 13 -- not one of REQ-METIS-GRD-08's original four Layer 8
+    checks (kept out of run_layer8's aggregate below for that reason), but
+    the same reusable LayerFinding shape: an `implemented` Transition with
+    no AcceptanceCriterion-[:VALIDATES]->Transition edge has real behavior
+    that nothing actually validates -- a coverage claim (or, here, the
+    absence of one) with no real evidence behind it, same CONST-005a
+    rationale check_testcycle_completeness already uses. `planned`
+    Transitions are deliberately excluded -- unbuilt behavior correctly
+    has no AC yet (Session 10's whole distinction between "not built" and
+    "built with a real coverage gap"), so a planned Transition isn't a
+    gap here, it just isn't in scope yet. Target: 0."""
+    rows = session.run(
+        """
+        MATCH (t:Transition)
+        WHERE t.implementation_status = 'implemented'
+          AND NOT EXISTS { MATCH (:AcceptanceCriterion)-[:VALIDATES]->(t) }
+        RETURN t.id AS id
+        """
+    ).data()
+    total = session.run(
+        "MATCH (t:Transition) WHERE t.implementation_status = 'implemented' RETURN count(t) AS c"
+    ).single()["c"]
+    flagged = [row["id"] for row in rows]
+    return LayerFinding(
+        check="transition_ac_coverage", flagged_ids=flagged, total=total,
+        rate=round(len(flagged) / total, 3) if total else None,
+    )
+
+
 def run_layer8(session, write_vagueness_flags: bool = False) -> dict:
     """REQ-METIS-GRD-08's full aggregate -- all 4 real sub-checks in one call."""
     findings = [

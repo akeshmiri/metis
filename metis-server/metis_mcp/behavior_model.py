@@ -20,12 +20,18 @@ mismatch is a real disagreement between spec and code, surfaced the same
 way as any other contradiction (CONST-046/049) -- never silently resolved
 toward either side.
 
-Entities/relationships (schema-01 already declares State/Transition/Guard/
-Trigger as real labels):
-  (:Transition)-[:FROM_STATE]->(:State)
-  (:Transition)-[:TO_STATE]->(:State)
-  (:Transition)-[:ON_TRIGGER]->(:Trigger)
-  (:Transition)-[:WHEN_GUARD]->(:Guard {expression})
+Entities/relationships (schema-01 declares State/Transition as real
+labels; Trigger/Guard were removed as separate node types in a later
+session -- both are attributes of exactly one Transition, not their own
+entities, so they live as plain properties on Transition instead).
+WHEN/THEN (renamed from FROM_STATE/TO_STATE, then LAUNCHES/LANDS_IN, in a
+later session -- mirrors the Given/When/Then shape a Transition already
+structurally is: the State it's reached from is the implicit "Given",
+WHEN it fires is this edge, THEN this State results is the other) read
+as one continuous forward path, State to State, through the Transition --
+not two edges both originating at the Transition:
+  (:State)-[:WHEN]->(:Transition)-[:THEN]->(:State)
+  (:Transition {trigger, guard_expression})
 
 Per CONST-049: a determinism/completeness violation is surfaced as a
 Disputed-adjacent flag on the affected nodes (lifecycle_state='Disputed',
@@ -123,6 +129,89 @@ def guards_conflict(guard_a: str, guard_b: str) -> tuple[bool, str]:
     return False, f"'{guard_a}' and '{guard_b}' are provably mutually exclusive on '{var_a}'."
 
 
+def _guard_coverage_gap(guards: list[str]) -> str | None:
+    """The completeness-side sibling of guards_conflict()'s atomicity
+    check: given guard expressions that all share the same (from_state,
+    trigger), returns a gap-description string if they do NOT jointly
+    cover the full range of their variable, or None if they do. Reuses
+    the same interval representation guards_conflict() builds -- checking
+    for a GAP is the natural complement of checking for an OVERLAP. Same
+    fail-closed discipline: an unparseable guard, or guards on different
+    variables, is flagged as unverifiable, never assumed complete."""
+    parsed = [(g, _parse_guard(g)) for g in guards]
+    unparseable = [g for g, p in parsed if p is None]
+    if unparseable:
+        return (f"guard(s) not simple threshold expressions this checker can verify as jointly "
+                 f"exhaustive: {unparseable} -- flagged conservatively, not assumed complete")
+    variables = {p[0] for _, p in parsed}
+    if len(variables) > 1:
+        return f"guards reference different variables ({sorted(variables)}) -- cannot verify joint completeness"
+    var = next(iter(variables))
+    intervals = sorted(
+        (_interval_for(op, num) for _, (_, op, num) in parsed),
+        key=lambda b: (b.lower, 0 if b.lower_inclusive else 1),
+    )
+    frontier, frontier_inclusive = float("-inf"), True
+    for iv in intervals:
+        gap = iv.lower > frontier or (
+            iv.lower == frontier and not frontier_inclusive and not iv.lower_inclusive
+        )
+        if gap:
+            return f"gap in guard coverage for '{var}' around {frontier} -- a real input there matches no transition"
+        if (iv.upper, iv.upper_inclusive) > (frontier, frontier_inclusive):
+            frontier, frontier_inclusive = iv.upper, iv.upper_inclusive
+    if frontier != float("inf"):
+        return f"no guard covers '{var}' above {frontier} -- a real input there matches no transition"
+    return None
+
+
+@dataclass
+class GuardCoverageGap:
+    from_state: str
+    trigger: str
+    transition_ids: list[str]
+    guards: list[str]
+    reason: str
+
+
+def check_guard_completeness(session) -> list[GuardCoverageGap]:
+    """Not one of CONST-048/049's original determinism/completeness
+    checks -- a real, requested extension: for every (from_state,
+    trigger) with >=2 real Transitions, verifies their guards jointly
+    cover the whole domain, not just that they don't overlap
+    (check_determinism's job). A real input matching none of the guards
+    would silently match no transition at all -- undefined behavior
+    that's currently invisible anywhere in the graph. Only ever checks
+    groups of >=2 -- a lone transition's guard has nothing to jointly
+    cover WITH, and "does every state/trigger have a transition at all"
+    is check_completeness()'s job, not this one's."""
+    rows = session.run(
+        """
+        MATCH (s:State)-[:WHEN]->(t:Transition)
+        WHERE t.trigger IS NOT NULL AND t.guard_expression IS NOT NULL
+        RETURN s.id AS from_state, t.trigger AS trigger, t.id AS transition_id,
+               t.guard_expression AS guard
+        """
+    ).data()
+
+    groups: dict[tuple, list[dict]] = {}
+    for row in rows:
+        groups.setdefault((row["from_state"], row["trigger"]), []).append(row)
+
+    findings = []
+    for (from_state, trigger), members in groups.items():
+        if len(members) < 2:
+            continue
+        reason = _guard_coverage_gap([m["guard"] for m in members])
+        if reason:
+            findings.append(GuardCoverageGap(
+                from_state=from_state, trigger=trigger,
+                transition_ids=[m["transition_id"] for m in members],
+                guards=[m["guard"] for m in members], reason=reason,
+            ))
+    return findings
+
+
 def load_transition(session, transition_id: str, source_episode_id: str, from_state: str,
                      to_state: str, trigger: str, guard_expression: str,
                      implementing_method_id: str | None = None,
@@ -144,16 +233,14 @@ def load_transition(session, transition_id: str, source_episode_id: str, from_st
             """
             MERGE (from:State {id: $from_state}) ON CREATE SET from.source_episode_id = $episode
             MERGE (to:State {id: $to_state}) ON CREATE SET to.source_episode_id = $episode
-            MERGE (trig:Trigger {id: $trigger}) ON CREATE SET trig.source_episode_id = $episode
-            MERGE (g:Guard {expression: $guard_expression}) ON CREATE SET g.source_episode_id = $episode, g.id = $transition_id + '-guard'
             MERGE (t:Transition {id: $transition_id})
             SET t.source_episode_id = $episode,
+                t.trigger = $trigger,
+                t.guard_expression = $guard_expression,
                 t.implementing_method_id = $implementing_method_id,
                 t.performance_sla_critical = $performance_sla_critical
-            MERGE (t)-[:FROM_STATE]->(from)
-            MERGE (t)-[:TO_STATE]->(to)
-            MERGE (t)-[:ON_TRIGGER]->(trig)
-            MERGE (t)-[:WHEN_GUARD]->(g)
+            MERGE (from)-[:WHEN]->(t)
+            MERGE (t)-[:THEN]->(to)
             """,
             transition_id=transition_id, episode=source_episode_id, from_state=from_state,
             to_state=to_state, trigger=trigger, guard_expression=guard_expression,
@@ -168,13 +255,11 @@ def check_determinism(session, state_id: str) -> DeterminismResult:
     State should fire on the same Trigger with overlapping Guards."""
     rows = session.run(
         """
-        MATCH (t1:Transition)-[:FROM_STATE]->(s:State {id: $state_id})
-        MATCH (t1)-[:ON_TRIGGER]->(trig:Trigger)
-        MATCH (t1)-[:WHEN_GUARD]->(g1:Guard)
-        MATCH (t2:Transition)-[:FROM_STATE]->(s), (t2)-[:ON_TRIGGER]->(trig), (t2)-[:WHEN_GUARD]->(g2:Guard)
-        WHERE t1.id < t2.id
-        RETURN t1.id AS t1_id, t2.id AS t2_id, trig.id AS trigger_id,
-               g1.expression AS g1_expr, g2.expression AS g2_expr
+        MATCH (s:State {id: $state_id})-[:WHEN]->(t1:Transition)
+        MATCH (s)-[:WHEN]->(t2:Transition)
+        WHERE t1.id < t2.id AND t1.trigger = t2.trigger
+        RETURN t1.id AS t1_id, t2.id AS t2_id, t1.trigger AS trigger_id,
+               t1.guard_expression AS g1_expr, t2.guard_expression AS g2_expr
         """,
         state_id=state_id,
     ).data()
@@ -216,12 +301,13 @@ def check_completeness(session) -> list[CompletenessGap]:
     Transition set (not an externally-imposed list)."""
     gaps = session.run(
         """
-        MATCH (trig:Trigger)
+        MATCH (any:Transition) WHERE any.trigger IS NOT NULL
+        WITH DISTINCT any.trigger AS trigger
         MATCH (s:State)
         WHERE NOT EXISTS {
-            MATCH (t:Transition)-[:FROM_STATE]->(s), (t)-[:ON_TRIGGER]->(trig)
+            MATCH (s)-[:WHEN]->(t:Transition) WHERE t.trigger = trigger
         }
-        RETURN s.id AS state_id, trig.id AS trigger_id
+        RETURN s.id AS state_id, trigger AS trigger_id
         ORDER BY state_id, trigger_id
         """
     ).data()
@@ -233,17 +319,18 @@ def check_reachability(session, initial_state_id: str) -> list[str]:
     directed path of Transitions. Returns the ids of unreachable States.
 
     Implemented as one real Cypher query to fetch the actual (from, to)
-    edge pairs, then BFS in Python -- not an undirected Cypher variable-
-    length pattern: FROM_STATE and TO_STATE point in opposite directions
-    relative to the State nodes (State<-FROM_STATE-Transition-TO_STATE->
-    State), so an undirected multi-hop pattern would treat a transition's
-    direction as reversible and over-report reachability. This keeps
-    directionality correct while still being a deterministic graph
-    algorithm, not LLM judgment, per §9's allocation."""
+    edge pairs, then BFS in Python, rather than a Cypher variable-length
+    path pattern -- WHEN/THEN both point forward (State ->
+    Transition -> State), so a directed multi-hop pattern would be valid
+    here, but per-edge fetch + Python BFS is kept for one real reason
+    beyond directionality: it lets the algorithm report the FULL set of
+    unreachable states in one pass, where a Cypher shortestPath/reachability
+    pattern would need a separate query per candidate state. Deterministic
+    graph algorithm either way, not LLM judgment, per §9's allocation."""
     all_states = {r["id"] for r in session.run("MATCH (s:State) RETURN s.id AS id").data()}
     edges = session.run(
         """
-        MATCH (t:Transition)-[:FROM_STATE]->(a:State), (t)-[:TO_STATE]->(b:State)
+        MATCH (a:State)-[:WHEN]->(t:Transition)-[:THEN]->(b:State)
         RETURN a.id AS from_id, b.id AS to_id
         """
     ).data()

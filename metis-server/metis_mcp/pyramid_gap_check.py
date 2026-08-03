@@ -117,23 +117,31 @@ def check_pyramid_gaps(session, transition_id: str) -> PyramidGapResult:
     coverage = {layer: False for layer in LAYERS}
     covering: dict = {layer: [] for layer in LAYERS}
 
-    # unit: real TestCase.type == 'unit' when set, else the original
+    # unit: real TestCase.type == 'unit' ANYWHERE in the same repo (the
+    # real property is authoritative, not scoped to an exact path -- a
+    # real project may keep unit tests in a tests/unit/ folder separate
+    # from src/), OR -- only for untyped legacy data -- the original
     # id-prefix heuristic (exact same repo:path as the implementing Method).
     unit_prefix = f"{repo}:{path}:"
+    repo_prefix = f"{repo}:"
     for r in session.run(
-        "MATCH (tc:TestCase) WHERE tc.id STARTS WITH $prefix "
-        "AND (tc.type = 'unit' OR tc.type IS NULL) RETURN tc.id AS id",
-        prefix=unit_prefix,
+        "MATCH (tc:TestCase) WHERE "
+        "(tc.type = 'unit' AND tc.id STARTS WITH $repo_prefix) OR "
+        "(tc.type IS NULL AND tc.id STARTS WITH $unit_prefix) "
+        "RETURN tc.id AS id",
+        repo_prefix=repo_prefix, unit_prefix=unit_prefix,
     ):
         coverage["unit"] = True
         covering["unit"].append(r["id"])
 
-    # integration: real TestCase.type == 'integration' when set, else the
-    # original heuristic (same repo, different path -- coarse, disclosed above).
-    repo_prefix = f"{repo}:"
+    # integration: real TestCase.type == 'integration' anywhere in the
+    # repo, OR -- untyped legacy data only -- same repo, different path
+    # (coarse, disclosed above).
     for r in session.run(
-        "MATCH (tc:TestCase) WHERE tc.id STARTS WITH $repo_prefix AND NOT tc.id STARTS WITH $unit_prefix "
-        "AND (tc.type = 'integration' OR tc.type IS NULL) RETURN tc.id AS id",
+        "MATCH (tc:TestCase) WHERE "
+        "(tc.type = 'integration' AND tc.id STARTS WITH $repo_prefix) OR "
+        "(tc.type IS NULL AND tc.id STARTS WITH $repo_prefix AND NOT tc.id STARTS WITH $unit_prefix) "
+        "RETURN tc.id AS id",
         repo_prefix=repo_prefix, unit_prefix=unit_prefix,
     ):
         coverage["integration"] = True

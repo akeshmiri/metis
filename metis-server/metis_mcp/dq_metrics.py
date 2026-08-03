@@ -38,7 +38,10 @@ with a `note` explaining exactly what real mechanism is missing:
 from dataclasses import dataclass, field
 
 from metis_mcp.ears_checker import check_ears_conformance
-from metis_mcp.layer8_heuristics import check_vagueness, check_circular_traceability
+from metis_mcp.layer8_heuristics import (
+    check_vagueness, check_circular_traceability, check_testcycle_completeness,
+    check_transition_ac_coverage,
+)
 
 
 @dataclass
@@ -295,13 +298,31 @@ def dq_013(session) -> Metric:
 # ---------------- Dimension 6 -- Currency ----------------
 
 def dq_014(session) -> Metric:
-    count = session.run(
+    """Session 10: real for the first time -- metis_mcp/graph_sync.py's
+    sync_and_detect_drift() now genuinely creates SpecDriftDetected
+    episodes (a connector re-run whose entities' properties changed since
+    last sync). Real, disclosed narrowing of "episodes open": no
+    open/resolved status is tracked on these episodes (same real gap
+    DQ-011 already discloses for ContradictionDetected) -- every
+    SpecDriftDetected episode found is counted as open. Formula is exactly
+    the doc's own: count(SpecDriftDetected episodes) / count(Endpoint or
+    Table entities) -- still None when the denominator is 0 (no real
+    Endpoint/Table entities exist), same as before."""
+    drift_count = session.run(
         "MATCH (e:Episode) WHERE e.episode_type = 'SpecDriftDetected' RETURN count(e) AS c"
     ).single()["c"]
-    endpoints = session.run("MATCH (e:Endpoint) RETURN count(e) AS c").single()["c"]
-    return Metric("DQ-014", "Spec-vs-deployed drift rate", None, "<= 2%", None,
-                  f"No SpecDriftDetected episode is ever created (found {count}), and no real "
-                  f":Endpoint entity exists yet ({endpoints}) -- not computable.")
+    denominator = session.run(
+        "MATCH (e) WHERE e:Endpoint OR e:Table RETURN count(e) AS c"
+    ).single()["c"]
+    if denominator == 0:
+        return Metric("DQ-014", "Spec-vs-deployed drift rate", None, "<= 2%", None,
+                      f"{drift_count} SpecDriftDetected episode(s) exist, but no real Endpoint/"
+                      f"Table entity exists yet -- rate not computable (zero denominator).")
+    value = round(drift_count / denominator, 4)
+    return Metric("DQ-014", "Spec-vs-deployed drift rate", value, "<= 2%", value <= 0.02,
+                  f"{drift_count} SpecDriftDetected episode(s) / {denominator} real Endpoint+Table "
+                  f"entities. 'Open' isn't tracked as a real status on these episodes (same gap "
+                  f"DQ-011 discloses) -- every one found is counted as open.")
 
 
 def dq_015(session) -> Metric:
@@ -349,19 +370,16 @@ def dq_016(session) -> Metric:
 # ---------------- Dimension 8 -- Traceability Integrity ----------------
 
 def dq_017(session) -> Metric:
-    """Real, disclosed narrowing of the doc's formula: no connector or demo
-    generator anywhere in this codebase ever creates a TestRun->TestCase
-    edge (verified by grep -- demo_data.py's only TestRun edge is
-    TestRun-[:PRODUCES]->Defect), so 'unbroken path to >=1 Approved
-    TestRun' cannot be computed as literally specified. What's real and
-    checkable today is the Requirement-[:HAS_AC]->AcceptanceCriterion
-    <-[:VERIFIES]-TestCase chain -- VERIFIES targets AcceptanceCriterion,
-    never Requirement directly (Requirement<-VERIFIES-TestCase with no
-    HAS_AC in between is the exact anti-pattern metis_mcp/
-    layer8_heuristics.py's DQ-018 check already flags as suspicious). This
-    metric measures the real AC-mediated chain, and says so, rather than
-    inventing a TestRun-linkage edge type that doesn't exist anywhere in
-    this system."""
+    """Session 11, item 2 made a real TestRun-[:EXECUTES]->TestCase edge
+    exist for the first time; Session 12 renamed TestRun to TestCycle and
+    moved EXECUTES down to the new per-case TestExecution node
+    (demo_data/generate_demo_data.py's TestCycle/TestExecution block) --
+    this now checks the doc's actual formula (unbroken path to >=1
+    execution within a 'regression'-type TestCycle) when at least one such
+    edge exists anywhere in the graph, and falls back to the prior
+    AC-mediated-only chain (no TestExecution requirement) when it doesn't
+    -- so this metric doesn't hard-break for a graph state (e.g. a fresh
+    dogfooding-only instance) that predates this linkage."""
     approved_in_release = session.run(
         "MATCH (r:Requirement)-[:TRACES_TO]->(:Release) WHERE r.lifecycle_state = 'Approved' "
         "RETURN count(DISTINCT r) AS c"
@@ -370,20 +388,35 @@ def dq_017(session) -> Metric:
         return Metric("DQ-017", "End-to-end chain completeness", None, "100% for anything shipped",
                        None, "No Approved Requirement is linked to a Release via TRACES_TO -- "
                              "not computable (this platform has no real Release-linkage data yet).")
-    complete = session.run(
-        """
-        MATCH (r:Requirement)-[:TRACES_TO]->(:Release) WHERE r.lifecycle_state = 'Approved'
-        MATCH (r)-[:HAS_AC]->(:AcceptanceCriterion)<-[:VERIFIES]-(:TestCase)
-        RETURN count(DISTINCT r) AS c
-        """
-    ).single()["c"]
+    has_execution_edges = session.run(
+        "MATCH (:TestExecution)-[:EXECUTES]->(:TestCase) RETURN count(*) > 0 AS any"
+    ).single()["any"]
+    if has_execution_edges:
+        complete = session.run(
+            """
+            MATCH (r:Requirement)-[:TRACES_TO]->(:Release) WHERE r.lifecycle_state = 'Approved'
+            MATCH (r)-[:HAS_AC]->(:AcceptanceCriterion)<-[:VERIFIES]-(:TestCase)
+                  <-[:EXECUTES]-(:TestExecution)-[:PART_OF]->(tc:TestCycle {run_type: 'regression'})
+            RETURN count(DISTINCT r) AS c
+            """
+        ).single()["c"]
+        note_suffix = ("real Requirement->AC->TestCase->TestExecution->regression-TestCycle chain "
+                        "(DQ-017's originally-specified formula, now computable).")
+    else:
+        complete = session.run(
+            """
+            MATCH (r:Requirement)-[:TRACES_TO]->(:Release) WHERE r.lifecycle_state = 'Approved'
+            MATCH (r)-[:HAS_AC]->(:AcceptanceCriterion)<-[:VERIFIES]-(:TestCase)
+            RETURN count(DISTINCT r) AS c
+            """
+        ).single()["c"]
+        note_suffix = ("AC-mediated chain only -- no TestExecution->TestCase edge exists anywhere "
+                        "in this graph yet, so the doc's literal 'Approved TestRun' formula "
+                        "falls back to the weaker chain.")
     value = round(complete / approved_in_release, 4)
     return Metric("DQ-017", "End-to-end chain completeness", value, "100% for anything shipped",
                   value == 1.0, f"{complete}/{approved_in_release} Approved+Released Requirement(s) "
-                                 f"have >=1 AcceptanceCriterion with a real VERIFIES edge from a "
-                                 f"TestCase -- narrowed to the AC-mediated chain since no "
-                                 f"TestRun-linkage edge exists anywhere in this codebase yet "
-                                 f"(see docstring).")
+                                 f"have a {note_suffix}")
 
 
 def dq_018(session) -> Metric:
@@ -450,9 +483,36 @@ def dq_022(session) -> Metric:
                   f"({row['pass_rate']}, min required {row['min_pass_rate']}).")
 
 
+def dq_023(session) -> Metric:
+    """Session 11, item 2 made this real (TestRun carrying EXECUTES/
+    PART_OF/TRACES_TO edges); Session 12 renamed TestRun to TestCycle and
+    moved per-case EXECUTES down to the new TestExecution node (see
+    demo_data/generate_demo_data.py's TestCycle/TestExecution block)."""
+    result = check_testcycle_completeness(session)
+    return Metric("DQ-023", "TestCycle completeness (TestExecution/TestSuite/Release linkage)",
+                  float(len(result.flagged_ids)), "0", len(result.flagged_ids) == 0,
+                  f"{len(result.flagged_ids)} TestCycle(s) flagged: {result.flagged_ids[:5]}"
+                  + ("..." if len(result.flagged_ids) > 5 else ""))
+
+
+def dq_024(session) -> Metric:
+    """Session 13: every `implemented` Transition must have real
+    AcceptanceCriterion coverage (AcceptanceCriterion-[:VALIDATES]->
+    Transition) -- an implemented behavior with nothing actually validating
+    it is exactly the kind of unverified claim CONST-005a already flags.
+    `planned` Transitions are excluded (Session 10's own distinction --
+    unbuilt behavior correctly has no AC yet)."""
+    result = check_transition_ac_coverage(session)
+    return Metric("DQ-024", "Implemented-Transition AcceptanceCriterion coverage",
+                  float(len(result.flagged_ids)), "0", len(result.flagged_ids) == 0,
+                  f"{len(result.flagged_ids)} implemented Transition(s) with no validating "
+                  f"AcceptanceCriterion: {result.flagged_ids[:5]}"
+                  + ("..." if len(result.flagged_ids) > 5 else ""))
+
+
 ALL_METRIC_FNS = [dq_001, dq_003, dq_004, dq_005, dq_006, dq_007, dq_008, dq_009, dq_010,
                    dq_011, dq_012, dq_013, dq_014, dq_015, dq_016, dq_017, dq_018, dq_019,
-                   dq_020, dq_021, dq_022]
+                   dq_020, dq_021, dq_022, dq_023, dq_024]
 
 
 def compute_all_metrics(session) -> dict:

@@ -1,0 +1,17 @@
+FROM python:3.13-slim
+WORKDIR /app
+COPY pyproject.toml requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+COPY metis_mcp/ ./metis_mcp/
+COPY connectors/ ./connectors/
+COPY guardrails/ ./guardrails/
+# main()'s proof-wired connectors/test_suite_connector.py call ingests
+# this repo's own real test_*.py files (that's the actual, real source
+# data this connector reads) -- they have to be in the image for that to
+# mean anything, same as corpus/*.md is real content, not a placeholder.
+COPY test_*.py ./
+# Consistent with Dockerfile.mcp-server/Dockerfile.ingestion-worker/
+# Dockerfile.guardrail-corpus-runner -- runs non-root.
+RUN useradd --create-home --uid 10001 metis
+USER 10001
+CMD ["python3", "-m", "metis_mcp.graph_sync"]

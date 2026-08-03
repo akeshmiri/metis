@@ -217,3 +217,33 @@ components:
       - name: adversarial-corpus
         mountPath: /etc/metis/adversarial-injection-corpus.json
         subPath: adversarial-injection-corpus.json
+
+  # Session 10: real staleness + drift detection (metis_mcp/graph_sync.py),
+  # same generic CronJob template as guardrail-corpus-runner above -- no
+  # new Kubernetes YAML. Real, disclosed scope: proof-wired through one
+  # connector (test-suite-ingest) in main(); the mechanism itself is
+  # connector-agnostic, so wiring the rest is mechanical follow-up, not a
+  # redesign (see metis_mcp/graph_sync.py's own module docstring). NOT
+  # live-deployed-and-fired this session -- the only reachable cluster
+  # right now is Docker Desktop's, the exact target the Session 9 Podman
+  # decision said future cluster work should move away from. helm lint/
+  # helm template validate this for real; live CronJob-firing verification
+  # needs a kind/minikube-with-podman cluster, a separate setup task.
+  metis-graph-sync:
+    enabled: true
+    kind: cronjob
+    schedule: "0 4 * * *"  # daily -- cheap to run (one real connector, this
+                            # repo's own test files), and staleness/drift
+                            # are meant to be caught quickly, not quarterly
+                            # like the adversarial corpus (CONST-058).
+    imageOverride:
+      name: "metis-graph-sync"
+    useDefault:
+      env: true
+    resources:
+      requests:
+        memory: 256Mi
+        cpu: 100m
+      limits:
+        memory: 512Mi
+        cpu: 500m

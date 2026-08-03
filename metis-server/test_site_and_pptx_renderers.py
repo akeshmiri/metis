@@ -7,12 +7,14 @@ import os
 import shutil
 import sys
 import tempfile
+from pathlib import Path
 
 from neo4j import GraphDatabase
 from pptx import Presentation
 
-from metis_mcp.site_renderer import render_site
+from metis_mcp.site_renderer import render_site, render_test_design_report
 from metis_mcp.pptx_renderer import render_quality_deck
+from demo_data.generate_demo_data import generate, wipe_demo_data, Scale
 
 NEO4J_URI = os.environ.get("METIS_NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.environ.get("METIS_NEO4J_USER", "neo4j")
@@ -65,6 +67,26 @@ def test_render_site_index_links_resolve_to_real_files():
         for path in result["academy_pages"]:
             rel = "academy/" + os.path.basename(path)
             assert rel in index_content
+
+
+def test_render_test_design_report_shows_real_login_example_techniques():
+    """Session 10: 'anyone can go and check this model' -- the Site page,
+    not just the MCP tool, must show real technique names from the real
+    Intent/TestDesign backbone."""
+    wipe_demo_data(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
+    generate(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, scale=Scale(factor=0.05), seed=7)
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            with _session() as s:
+                path = render_test_design_report(Path(d), session=s,
+                                                  scope={"requirement_id": "demo:login:requirement:t3-lockout"})
+            assert os.path.isfile(path)
+            with open(path, encoding="utf-8") as f:
+                content = f.read()
+            assert "Boundary Value Analysis" in content
+            assert "unit" in content and "api_functional" in content
+    finally:
+        wipe_demo_data(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
 
 
 def test_render_quality_deck_produces_a_real_reopenable_pptx():

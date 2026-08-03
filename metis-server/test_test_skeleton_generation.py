@@ -81,13 +81,14 @@ def test_real_method_with_no_functional_or_unit_coverage_reports_real_gaps():
     with _session() as s:
         result = check_pyramid_gaps(s, "pgc-test-transition-functional-gap")
     assert result.determinable
-    assert result.coverage["functional"] is False
+    assert result.coverage["api_functional"] is False
+    assert result.coverage["web_functional"] is False
     assert result.coverage["unit"] is False
     # 119 other real TestCase nodes exist under repo 'metis-server:' at other
     # paths (including real performance-type ones from perf/locustfile.py) --
     # a real (if coarse) integration-layer signal, not fabricated.
     assert result.coverage["integration"] is True
-    assert "functional" in result.gaps
+    assert "api_functional" in result.gaps  # the one functional-gap slot, untyped default
     assert "unit" in result.gaps
     assert "performance" not in result.gaps, "not SLA-critical -- performance isn't a relevant layer"
 
@@ -98,19 +99,24 @@ def test_performance_sla_critical_with_isolated_method_has_no_coverage_anywhere(
     with _session() as s:
         result = check_pyramid_gaps(s, "pgc-test-transition-perf-critical")
     assert result.performance_sla_critical
-    assert result.coverage == {"unit": False, "integration": False, "functional": False, "performance": False}
-    assert set(result.gaps) == {"unit", "integration", "functional", "performance"}
+    assert result.coverage == {
+        "unit": False, "integration": False, "api_functional": False,
+        "web_functional": False, "e2e": False, "performance": False,
+    }
+    assert set(result.gaps) == {"unit", "integration", "api_functional", "e2e", "performance"}
 
 
-def test_propose_test_skeletons_generates_only_for_functional_and_performance():
+def test_propose_test_skeletons_generates_only_for_api_functional_and_performance():
     with _session() as s:
         result = propose_test_skeletons(s, "pgc-test-transition-perf-critical")
     assert result["applicable"]
     assert result["requires_human_review"] is True
     generated_types = {sk["test_type"] for sk in result["skeletons"]}
-    # unit is also a real gap for this Method, but Stage 3 never generates for it.
+    # unit and e2e are also real gaps for this Method, but Stage 3 never
+    # auto-generates skeletons for either.
     assert "unit" not in generated_types
-    assert "functional" in generated_types
+    assert "e2e" not in generated_types
+    assert "api_functional" in generated_types
     assert "performance" in generated_types
     for sk in result["skeletons"]:
         assert "TODO(body-fill)" in sk["skeleton_code"]
@@ -124,7 +130,7 @@ def test_generated_skeleton_flags_const050_completeness_gap_closure():
     generated test must be flagged as closing that gap."""
     with _session() as s:
         result = propose_test_skeletons(s, "pgc-test-transition-functional-gap")
-        functional_sk = next(sk for sk in result["skeletons"] if sk["test_type"] == "functional")
+        functional_sk = next(sk for sk in result["skeletons"] if sk["test_type"] == "api_functional")
         assert functional_sk["closes_completeness_gap"] is True
 
         # Add a real sibling Transition on the identical (state, trigger) pair --
@@ -133,7 +139,7 @@ def test_generated_skeleton_flags_const050_completeness_gap_closure():
         load_transition(s, "pgc-test-transition-sibling", "pgc-test-episode",
                          "pgc-test-A", "pgc-test-E", "pgc-test-trig2", "false")
         result2 = propose_test_skeletons(s, "pgc-test-transition-functional-gap")
-        functional_sk2 = next(sk for sk in result2["skeletons"] if sk["test_type"] == "functional")
+        functional_sk2 = next(sk for sk in result2["skeletons"] if sk["test_type"] == "api_functional")
         assert functional_sk2["closes_completeness_gap"] is False
 
 

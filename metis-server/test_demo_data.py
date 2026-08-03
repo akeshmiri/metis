@@ -50,9 +50,12 @@ def test_no_relationship_points_at_a_nonexistent_node():
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
     try:
         with driver.session() as s:
+            # Guard used to be excepted here (its nodes weren't is_demo_data-
+            # tagged) -- it's a plain Transition property now, nothing left
+            # to except.
             dangling = s.run(
                 "MATCH (a {is_demo_data: true})-[r]->(b) "
-                "WHERE b.is_demo_data IS NULL AND NOT b:Guard "
+                "WHERE b.is_demo_data IS NULL "
                 "RETURN count(r) AS c"
             ).single()["c"]
         assert dangling == 0

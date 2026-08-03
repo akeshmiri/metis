@@ -133,10 +133,15 @@ def _score_security(session, requirement_ids: list | None) -> list[Metric]:
     and Constraint carry no real edge to any Requirement anywhere in this
     codebase (verified by grep), so only Requirement.risk_tag/
     corroboration_count is computable per-scope -- disclosed narrowing,
-    same discipline dq_017 already uses for its own TestRun/TestCase gap.
-    SEC-02 (open high/critical Defects) is honestly None -- no TestRun->
-    TestCase edge exists anywhere in this codebase, so Defect nodes can't
-    be traced back to a Requirement scope."""
+    same discipline dq_017 uses for its own TestExecution/TestCase gap.
+    SEC-02 (open high/critical Defects, scoped) is real as of Session 11:
+    Defect<-[:PRODUCES]-TestExecution-[:EXECUTES]->TestCase-[:VERIFIES]->
+    AcceptanceCriterion<-[:HAS_AC]-Requirement traces a Defect back to a
+    Requirement scope (Session 12 renamed TestRun to TestCycle and moved
+    both PRODUCES and EXECUTES down to the new per-case TestExecution node
+    -- demo_data/generate_demo_data.py's TestCycle/TestExecution block) --
+    falls back to None when no such edge exists yet (e.g. a
+    pre-Session-11 graph)."""
     if requirement_ids is None:
         rows = session.run(
             "MATCH (r:Requirement) WHERE r.risk_tag = 'High' RETURN r.corroboration_count AS cc"
@@ -162,10 +167,44 @@ def _score_security(session, requirement_ids: list | None) -> list[Metric]:
                         f"{compliant}/{len(rows)} Risk=High Requirement(s) in scope carry >=2 "
                         f"corroborating sources (GRD-04).")
 
-    sec02 = Metric("SEC-02", "Open high/critical Defects (scoped)", None, "0", None,
-                    "Not computable: no TestRun->TestCase edge exists anywhere in this codebase "
-                    "(dq_017's own documented gap), so Defect nodes cannot be traced back to a "
-                    "Requirement scope -- disclosed, not fabricated.")
+    if requirement_ids is not None and not requirement_ids:
+        sec02 = Metric("SEC-02", "Open high/critical Defects (scoped)", None, "0", None,
+                        "No Requirement in scope.")
+    else:
+        has_execs = session.run(
+            "MATCH (:TestExecution)-[:EXECUTES]->(:TestCase) RETURN count(*) > 0 AS any"
+        ).single()["any"]
+        if not has_execs:
+            sec02 = Metric("SEC-02", "Open high/critical Defects (scoped)", None, "0", None,
+                            "Not computable: no TestExecution->TestCase edge exists anywhere in this "
+                            "codebase yet, so Defect nodes cannot be traced back to a Requirement "
+                            "scope -- disclosed, not fabricated.")
+        elif requirement_ids is None:
+            open_defects = session.run(
+                """
+                MATCH (d:Defect)<-[:PRODUCES]-(:TestExecution)-[:EXECUTES]->(:TestCase)-[:VERIFIES]->
+                      (:AcceptanceCriterion)<-[:HAS_AC]-(:Requirement)
+                WHERE d.severity IN ['high', 'critical'] AND d.jira_status <> 'Done'
+                RETURN count(DISTINCT d) AS c
+                """
+            ).single()["c"]
+            sec02 = Metric("SEC-02", "Open high/critical Defects (scoped)", float(open_defects), "0",
+                            open_defects == 0, f"{open_defects} open high/critical Defect(s) traced to "
+                            f"scope via Defect<-PRODUCES-TestExecution-EXECUTES->TestCase-VERIFIES->"
+                            f"AC<-HAS_AC-Requirement.")
+        else:
+            open_defects = session.run(
+                """
+                MATCH (d:Defect)<-[:PRODUCES]-(:TestExecution)-[:EXECUTES]->(:TestCase)-[:VERIFIES]->
+                      (:AcceptanceCriterion)<-[:HAS_AC]-(req:Requirement)
+                WHERE req.id IN $ids AND d.severity IN ['high', 'critical'] AND d.jira_status <> 'Done'
+                RETURN count(DISTINCT d) AS c
+                """, ids=requirement_ids,
+            ).single()["c"]
+            sec02 = Metric("SEC-02", "Open high/critical Defects (scoped)", float(open_defects), "0",
+                            open_defects == 0, f"{open_defects} open high/critical Defect(s) traced to "
+                            f"scope via Defect<-PRODUCES-TestExecution-EXECUTES->TestCase-VERIFIES->"
+                            f"AC<-HAS_AC-Requirement.")
     return [sec01, sec02]
 
 
@@ -271,3 +310,76 @@ def build_release_report(session, release_id: str) -> dict:
     report["changelog"] = format_changelog_plain_language(entries)
     report["recommendation"] = recommendation
     return report
+
+
+def build_test_design_report(session, scope: dict) -> dict:
+    """Session 10: the real Intent/TestDesign backbone made queryable as a
+    report -- per scoped Requirement, its AcceptanceCriteria, which real
+    test-design technique(s) covered each one, and which TestCases (with
+    real 6-level `.type`) resulted. Reuses resolve_scope() unchanged.
+
+    Requirements with no AcceptanceCriterion/TestDesign at all (the bulk
+    synthetic/grounded layers, which predate this session's backbone) show
+    up with an empty acceptance_criteria list -- an honest, real "not
+    covered by this backbone yet" signal, not an error."""
+    scope_result = resolve_scope(session, scope)
+    ids = scope_result.requirement_ids
+    if ids is not None and not ids:
+        return {
+            "scope_description": scope_result.scope_description, "requirements": [],
+            "total_acceptance_criteria": 0, "acceptance_criteria_with_test_design": 0,
+            "techniques_used": [],
+        }
+
+    where_clause = "WHERE r.id IN $ids " if ids is not None else ""
+    rows = session.run(
+        f"MATCH (r:Requirement) {where_clause}"
+        "OPTIONAL MATCH (r)-[:HAS_AC]->(ac:AcceptanceCriterion) "
+        "OPTIONAL MATCH (td:TestDesign)-[:COVERS]->(ac) "
+        "OPTIONAL MATCH (td)-[:PRODUCES]->(tc:TestCase) "
+        "RETURN r.id AS req_id, r.text AS req_text, ac.id AS ac_id, ac.text AS ac_text, "
+        "td.id AS design_id, td.techniques AS techniques, tc.id AS tc_id, tc.type AS tc_type",
+        ids=ids,
+    ).data()
+
+    reqs: dict = {}
+    for row in rows:
+        req = reqs.setdefault(row["req_id"], {
+            "requirement_id": row["req_id"], "text": row["req_text"], "acceptance_criteria": {},
+        })
+        if row["ac_id"] is None:
+            continue
+        ac = req["acceptance_criteria"].setdefault(row["ac_id"], {
+            "ac_id": row["ac_id"], "text": row["ac_text"], "test_design": None, "test_cases": [],
+        })
+        if row["design_id"] is not None:
+            ac["test_design"] = {"design_id": row["design_id"], "techniques": row["techniques"] or []}
+        if row["tc_id"] is not None:
+            entry = {"test_case_id": row["tc_id"], "type": row["tc_type"]}
+            if entry not in ac["test_cases"]:
+                ac["test_cases"].append(entry)
+
+    result_requirements = []
+    for req in reqs.values():
+        acs = list(req["acceptance_criteria"].values())
+        result_requirements.append({
+            "requirement_id": req["requirement_id"], "text": req["text"],
+            "acceptance_criteria": acs,
+            "ac_count": len(acs),
+            "ac_with_test_design_count": sum(1 for a in acs if a["test_design"] is not None),
+        })
+
+    total_acs = sum(r["ac_count"] for r in result_requirements)
+    covered_acs = sum(r["ac_with_test_design_count"] for r in result_requirements)
+    techniques_used = sorted({
+        t for r in result_requirements for a in r["acceptance_criteria"]
+        if a["test_design"] for t in a["test_design"]["techniques"]
+    })
+
+    return {
+        "scope_description": scope_result.scope_description,
+        "requirements": result_requirements,
+        "total_acceptance_criteria": total_acs,
+        "acceptance_criteria_with_test_design": covered_acs,
+        "techniques_used": techniques_used,
+    }

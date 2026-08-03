@@ -84,16 +84,10 @@ CREATE CONSTRAINT transition_source_episode_required IF NOT EXISTS FOR (n:Transi
 CREATE INDEX transition_lifecycle_state IF NOT EXISTS FOR (n:Transition) ON (n.lifecycle_state);
 CREATE INDEX transition_t_valid IF NOT EXISTS FOR (n:Transition) ON (n.t_valid);
 CREATE INDEX transition_t_invalid IF NOT EXISTS FOR (n:Transition) ON (n.t_invalid);
-CREATE CONSTRAINT guard_id_unique IF NOT EXISTS FOR (n:Guard) REQUIRE n.id IS UNIQUE;
-CREATE CONSTRAINT guard_source_episode_required IF NOT EXISTS FOR (n:Guard) REQUIRE n.source_episode_id IS NOT NULL;
-CREATE INDEX guard_lifecycle_state IF NOT EXISTS FOR (n:Guard) ON (n.lifecycle_state);
-CREATE INDEX guard_t_valid IF NOT EXISTS FOR (n:Guard) ON (n.t_valid);
-CREATE INDEX guard_t_invalid IF NOT EXISTS FOR (n:Guard) ON (n.t_invalid);
-CREATE CONSTRAINT trigger_id_unique IF NOT EXISTS FOR (n:Trigger) REQUIRE n.id IS UNIQUE;
-CREATE CONSTRAINT trigger_source_episode_required IF NOT EXISTS FOR (n:Trigger) REQUIRE n.source_episode_id IS NOT NULL;
-CREATE INDEX trigger_lifecycle_state IF NOT EXISTS FOR (n:Trigger) ON (n.lifecycle_state);
-CREATE INDEX trigger_t_valid IF NOT EXISTS FOR (n:Trigger) ON (n.t_valid);
-CREATE INDEX trigger_t_invalid IF NOT EXISTS FOR (n:Trigger) ON (n.t_invalid);
+// Trigger/Guard removed as separate node types in a later session -- both
+// are attributes of exactly one Transition (trigger, guard_expression
+// properties), not their own entities. See docs/
+// metis-ontology-specification.md for the authoritative rationale.
 CREATE CONSTRAINT action_id_unique IF NOT EXISTS FOR (n:Action) REQUIRE n.id IS UNIQUE;
 CREATE CONSTRAINT action_source_episode_required IF NOT EXISTS FOR (n:Action) REQUIRE n.source_episode_id IS NOT NULL;
 CREATE INDEX action_lifecycle_state IF NOT EXISTS FOR (n:Action) ON (n.lifecycle_state);
@@ -146,11 +140,6 @@ CREATE CONSTRAINT kafkatopic_source_episode_required IF NOT EXISTS FOR (n:KafkaT
 CREATE INDEX kafkatopic_lifecycle_state IF NOT EXISTS FOR (n:KafkaTopic) ON (n.lifecycle_state);
 CREATE INDEX kafkatopic_t_valid IF NOT EXISTS FOR (n:KafkaTopic) ON (n.t_valid);
 CREATE INDEX kafkatopic_t_invalid IF NOT EXISTS FOR (n:KafkaTopic) ON (n.t_invalid);
-CREATE CONSTRAINT cache_id_unique IF NOT EXISTS FOR (n:Cache) REQUIRE n.id IS UNIQUE;
-CREATE CONSTRAINT cache_source_episode_required IF NOT EXISTS FOR (n:Cache) REQUIRE n.source_episode_id IS NOT NULL;
-CREATE INDEX cache_lifecycle_state IF NOT EXISTS FOR (n:Cache) ON (n.lifecycle_state);
-CREATE INDEX cache_t_valid IF NOT EXISTS FOR (n:Cache) ON (n.t_valid);
-CREATE INDEX cache_t_invalid IF NOT EXISTS FOR (n:Cache) ON (n.t_invalid);
 CREATE CONSTRAINT externalsystem_id_unique IF NOT EXISTS FOR (n:ExternalSystem) REQUIRE n.id IS UNIQUE;
 CREATE CONSTRAINT externalsystem_source_episode_required IF NOT EXISTS FOR (n:ExternalSystem) REQUIRE n.source_episode_id IS NOT NULL;
 CREATE INDEX externalsystem_lifecycle_state IF NOT EXISTS FOR (n:ExternalSystem) ON (n.lifecycle_state);
@@ -205,11 +194,30 @@ CREATE CONSTRAINT automationscript_source_episode_required IF NOT EXISTS FOR (n:
 CREATE INDEX automationscript_lifecycle_state IF NOT EXISTS FOR (n:AutomationScript) ON (n.lifecycle_state);
 CREATE INDEX automationscript_t_valid IF NOT EXISTS FOR (n:AutomationScript) ON (n.t_valid);
 CREATE INDEX automationscript_t_invalid IF NOT EXISTS FOR (n:AutomationScript) ON (n.t_invalid);
-CREATE CONSTRAINT testrun_id_unique IF NOT EXISTS FOR (n:TestRun) REQUIRE n.id IS UNIQUE;
-CREATE CONSTRAINT testrun_source_episode_required IF NOT EXISTS FOR (n:TestRun) REQUIRE n.source_episode_id IS NOT NULL;
-CREATE INDEX testrun_lifecycle_state IF NOT EXISTS FOR (n:TestRun) ON (n.lifecycle_state);
-CREATE INDEX testrun_t_valid IF NOT EXISTS FOR (n:TestRun) ON (n.t_valid);
-CREATE INDEX testrun_t_invalid IF NOT EXISTS FOR (n:TestRun) ON (n.t_invalid);
+// Session 12: TestRun renamed to TestCycle (a cycle is the batch/container;
+// per-case results now live on the new TestExecution node below -- a real
+// test-management-tool shape, TestRun/Cycle -> many TestExecutions, not one
+// flat status property for the whole batch).
+CREATE CONSTRAINT testcycle_id_unique IF NOT EXISTS FOR (n:TestCycle) REQUIRE n.id IS UNIQUE;
+CREATE CONSTRAINT testcycle_source_episode_required IF NOT EXISTS FOR (n:TestCycle) REQUIRE n.source_episode_id IS NOT NULL;
+CREATE INDEX testcycle_lifecycle_state IF NOT EXISTS FOR (n:TestCycle) ON (n.lifecycle_state);
+CREATE INDEX testcycle_t_valid IF NOT EXISTS FOR (n:TestCycle) ON (n.t_valid);
+CREATE INDEX testcycle_t_invalid IF NOT EXISTS FOR (n:TestCycle) ON (n.t_invalid);
+// TestExecution: one real per-TestCase result within a TestCycle (id,
+// source_episode_id, executed_at, result).
+CREATE CONSTRAINT testexecution_id_unique IF NOT EXISTS FOR (n:TestExecution) REQUIRE n.id IS UNIQUE;
+CREATE CONSTRAINT testexecution_source_episode_required IF NOT EXISTS FOR (n:TestExecution) REQUIRE n.source_episode_id IS NOT NULL;
+CREATE INDEX testexecution_lifecycle_state IF NOT EXISTS FOR (n:TestExecution) ON (n.lifecycle_state);
+CREATE INDEX testexecution_t_valid IF NOT EXISTS FOR (n:TestExecution) ON (n.t_valid);
+CREATE INDEX testexecution_t_invalid IF NOT EXISTS FOR (n:TestExecution) ON (n.t_invalid);
+// ApplicationConfiguration: a component-version snapshot a TestExecution ran
+// against (id, source_episode_id only -- the actual versions live on its
+// outgoing INCLUDES_VERSION edges to real Service nodes, not node properties).
+CREATE CONSTRAINT applicationconfiguration_id_unique IF NOT EXISTS FOR (n:ApplicationConfiguration) REQUIRE n.id IS UNIQUE;
+CREATE CONSTRAINT applicationconfiguration_source_episode_required IF NOT EXISTS FOR (n:ApplicationConfiguration) REQUIRE n.source_episode_id IS NOT NULL;
+CREATE INDEX applicationconfiguration_lifecycle_state IF NOT EXISTS FOR (n:ApplicationConfiguration) ON (n.lifecycle_state);
+CREATE INDEX applicationconfiguration_t_valid IF NOT EXISTS FOR (n:ApplicationConfiguration) ON (n.t_valid);
+CREATE INDEX applicationconfiguration_t_invalid IF NOT EXISTS FOR (n:ApplicationConfiguration) ON (n.t_invalid);
 CREATE CONSTRAINT defect_id_unique IF NOT EXISTS FOR (n:Defect) REQUIRE n.id IS UNIQUE;
 CREATE CONSTRAINT defect_source_episode_required IF NOT EXISTS FOR (n:Defect) REQUIRE n.source_episode_id IS NOT NULL;
 CREATE INDEX defect_lifecycle_state IF NOT EXISTS FOR (n:Defect) ON (n.lifecycle_state);
@@ -244,36 +252,19 @@ CREATE INDEX logs_t_valid IF NOT EXISTS FOR (n:Logs) ON (n.t_valid);
 CREATE INDEX logs_t_invalid IF NOT EXISTS FOR (n:Logs) ON (n.t_invalid);
 
 // ---- AI layer ----
-CREATE CONSTRAINT copilotsession_id_unique IF NOT EXISTS FOR (n:CopilotSession) REQUIRE n.id IS UNIQUE;
-CREATE CONSTRAINT copilotsession_source_episode_required IF NOT EXISTS FOR (n:CopilotSession) REQUIRE n.source_episode_id IS NOT NULL;
-CREATE INDEX copilotsession_lifecycle_state IF NOT EXISTS FOR (n:CopilotSession) ON (n.lifecycle_state);
-CREATE INDEX copilotsession_t_valid IF NOT EXISTS FOR (n:CopilotSession) ON (n.t_valid);
-CREATE INDEX copilotsession_t_invalid IF NOT EXISTS FOR (n:CopilotSession) ON (n.t_invalid);
-CREATE CONSTRAINT prompt_id_unique IF NOT EXISTS FOR (n:Prompt) REQUIRE n.id IS UNIQUE;
-CREATE CONSTRAINT prompt_source_episode_required IF NOT EXISTS FOR (n:Prompt) REQUIRE n.source_episode_id IS NOT NULL;
-CREATE INDEX prompt_lifecycle_state IF NOT EXISTS FOR (n:Prompt) ON (n.lifecycle_state);
-CREATE INDEX prompt_t_valid IF NOT EXISTS FOR (n:Prompt) ON (n.t_valid);
-CREATE INDEX prompt_t_invalid IF NOT EXISTS FOR (n:Prompt) ON (n.t_invalid);
-CREATE CONSTRAINT generatedcode_id_unique IF NOT EXISTS FOR (n:GeneratedCode) REQUIRE n.id IS UNIQUE;
-CREATE CONSTRAINT generatedcode_source_episode_required IF NOT EXISTS FOR (n:GeneratedCode) REQUIRE n.source_episode_id IS NOT NULL;
-CREATE INDEX generatedcode_lifecycle_state IF NOT EXISTS FOR (n:GeneratedCode) ON (n.lifecycle_state);
-CREATE INDEX generatedcode_t_valid IF NOT EXISTS FOR (n:GeneratedCode) ON (n.t_valid);
-CREATE INDEX generatedcode_t_invalid IF NOT EXISTS FOR (n:GeneratedCode) ON (n.t_invalid);
+// Session 11, item 5: CopilotSession/Prompt/GeneratedCode/AIDecision/
+// HumanReview removed by explicit user decision -- pure LLM-session/demo
+// filler, zero relationships anywhere in this codebase (verified by grep
+// before removal); keeping ephemeral LLM/Copilot session data in a graph
+// meant to be a global, persistent source of truth is counterproductive.
+// GeneratedTest stays -- metis_mcp/test_skeleton_generator.py genuinely
+// uses it for REQ-METIS-BM-03 (AI-proposed test provenance until it
+// converges with a real TestCase), unlike the 5 removed above.
 CREATE CONSTRAINT generatedtest_id_unique IF NOT EXISTS FOR (n:GeneratedTest) REQUIRE n.id IS UNIQUE;
 CREATE CONSTRAINT generatedtest_source_episode_required IF NOT EXISTS FOR (n:GeneratedTest) REQUIRE n.source_episode_id IS NOT NULL;
 CREATE INDEX generatedtest_lifecycle_state IF NOT EXISTS FOR (n:GeneratedTest) ON (n.lifecycle_state);
 CREATE INDEX generatedtest_t_valid IF NOT EXISTS FOR (n:GeneratedTest) ON (n.t_valid);
 CREATE INDEX generatedtest_t_invalid IF NOT EXISTS FOR (n:GeneratedTest) ON (n.t_invalid);
-CREATE CONSTRAINT aidecision_id_unique IF NOT EXISTS FOR (n:AIDecision) REQUIRE n.id IS UNIQUE;
-CREATE CONSTRAINT aidecision_source_episode_required IF NOT EXISTS FOR (n:AIDecision) REQUIRE n.source_episode_id IS NOT NULL;
-CREATE INDEX aidecision_lifecycle_state IF NOT EXISTS FOR (n:AIDecision) ON (n.lifecycle_state);
-CREATE INDEX aidecision_t_valid IF NOT EXISTS FOR (n:AIDecision) ON (n.t_valid);
-CREATE INDEX aidecision_t_invalid IF NOT EXISTS FOR (n:AIDecision) ON (n.t_invalid);
-CREATE CONSTRAINT humanreview_id_unique IF NOT EXISTS FOR (n:HumanReview) REQUIRE n.id IS UNIQUE;
-CREATE CONSTRAINT humanreview_source_episode_required IF NOT EXISTS FOR (n:HumanReview) REQUIRE n.source_episode_id IS NOT NULL;
-CREATE INDEX humanreview_lifecycle_state IF NOT EXISTS FOR (n:HumanReview) ON (n.lifecycle_state);
-CREATE INDEX humanreview_t_valid IF NOT EXISTS FOR (n:HumanReview) ON (n.t_valid);
-CREATE INDEX humanreview_t_invalid IF NOT EXISTS FOR (n:HumanReview) ON (n.t_invalid);
 
 // ---- Governance layer ----
 CREATE CONSTRAINT constitution_id_unique IF NOT EXISTS FOR (n:Constitution) REQUIRE n.id IS UNIQUE;

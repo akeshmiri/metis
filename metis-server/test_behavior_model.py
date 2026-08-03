@@ -15,6 +15,7 @@ from neo4j import GraphDatabase
 
 from metis_mcp.behavior_model import (
     load_transition, check_determinism, check_completeness, check_reachability, guards_conflict,
+    check_guard_completeness,
 )
 
 NEO4J_URI = os.environ.get("METIS_NEO4J_URI", "bolt://localhost:7687")
@@ -34,19 +35,17 @@ def _session():
 def _cleanup():
     # Real bug caught before ever running this: the original single WHERE
     # clause mixed OR/AND without parens -- Cypher's AND binds tighter than
-    # OR, so it parsed as "match every :State/:Transition/:Guard node in
-    # the whole database, regardless of id prefix" and would have deleted
-    # unrelated data. Split into one explicitly-scoped statement per label.
+    # OR, so it parsed as "match every :State/:Transition node in the whole
+    # database, regardless of id prefix" and would have deleted unrelated
+    # data. Split into one explicitly-scoped statement per label.
+    # Trigger/Guard no longer exist as separate node types (folded into
+    # Transition.trigger/guard_expression properties) -- nothing left to
+    # clean up for them; deleting the Transition node is enough.
     with _session() as s:
-        for label in ("State", "Transition", "Trigger"):
+        for label in ("State", "Transition"):
             s.execute_write(lambda tx, lbl=label: tx.run(
                 f"MATCH (n:{lbl}) WHERE n.id STARTS WITH 'bm-test-' DETACH DELETE n"
             ).consume())
-        # Guard nodes are keyed by expression text, not a bm-test- prefixed
-        # id -- sweep any left with no remaining Transition pointing at them.
-        s.execute_write(lambda tx: tx.run(
-            "MATCH (g:Guard) WHERE NOT (g)<-[:WHEN_GUARD]-() DETACH DELETE g"
-        ).consume())
         s.execute_write(lambda tx: tx.run(
             "MATCH (e:Episode {id: 'bm-test-episode'}) DETACH DELETE e"
         ).consume())
@@ -83,6 +82,51 @@ def _load_real_lifecycle_state_machine():
         s.execute_write(lambda tx: tx.run(
             "MERGE (s:State {id: 'bm-test-Disputed'}) SET s.source_episode_id = 'bm-test-episode'"
         ).consume())
+
+
+def _load_guard_completeness_fixture():
+    """A real, deliberate coverage gap: severity >= 0.9 and severity < 0.5
+    leave [0.5, 0.9) uncovered -- a real input with severity=0.7 would
+    match neither transition, ever. Kept in its own (from_state, trigger)
+    group (bm-test-severity_check), separate from
+    _load_real_lifecycle_state_machine()'s own real, already-complete
+    reviewer_decision group, so this doesn't perturb that fixture's own
+    determinism assertions."""
+    with _session() as s:
+        load_transition(s, "bm-test-t-gap-high", "bm-test-episode", "bm-test-Draft", "bm-test-Approved",
+                         "bm-test-severity_check", "severity >= 0.9")
+        load_transition(s, "bm-test-t-gap-low", "bm-test-episode", "bm-test-Draft", "bm-test-Rejected",
+                         "bm-test-severity_check", "severity < 0.5")
+
+
+def test_guard_completeness_finds_a_real_gap():
+    """The completeness-side sibling of the determinism test below: proves
+    check_guard_completeness catches a real hole between two guards, not
+    just overlaps between them."""
+    _cleanup()
+    _seed_episode()
+    _load_guard_completeness_fixture()
+    with _session() as s:
+        findings = check_guard_completeness(s)
+    gap = next((f for f in findings if f.trigger == "bm-test-severity_check"), None)
+    assert gap is not None, "expected a real coverage gap between severity 0.5 and 0.9"
+    assert "gap" in gap.reason.lower()
+    assert set(gap.transition_ids) == {"bm-test-t-gap-high", "bm-test-t-gap-low"}
+
+
+def test_guard_completeness_does_not_flag_a_real_jointly_exhaustive_group():
+    """Reuses _load_real_lifecycle_state_machine()'s own real
+    reviewer_decision group (confidence >= 0.9 / >= 0.6 / < 0.6, which
+    jointly span the whole real line even though >= 0.9 and >= 0.6
+    deliberately overlap for the determinism tests) -- proves the checker
+    isn't just flagging every multi-guard group, same discipline
+    test_determinism_check_does_not_flag_the_mutually_exclusive_pair uses."""
+    _cleanup()
+    _seed_episode()
+    _load_real_lifecycle_state_machine()
+    with _session() as s:
+        findings = check_guard_completeness(s)
+    assert not any(f.trigger == "bm-test-reviewer_decision" for f in findings)
 
 
 def test_guards_conflict_detects_real_overlapping_thresholds():

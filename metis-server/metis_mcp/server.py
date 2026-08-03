@@ -1,7 +1,7 @@
 """
 Métis MCP server -- dogfooding pilot, stdio transport.
 
-Implements the 11 tools from metis-mcp-tool-contracts.json against the
+Implements the 12 tools from metis-mcp-tool-contracts.json against the
 LocalGraphStore (this platform's own real REQ-METIS-*/CONST-*/DQ-*/AF-*/BS-*
 corpus). This is the fastest honest path to testing on Claude first, per
 §11.5 of the master spec -- stdio transport needs no OAuth2, no Streamable
@@ -34,12 +34,13 @@ contract, rather than silently pretending it's identical:
 CONST-062 (docs/metis-gap-remediation.md §7) requires real contract tests
 against metis-mcp-tool-contracts.json -- test_mcp_contracts.py is that
 test, and building it surfaced more than the three adaptations above:
-**every one of the 11 tools currently deviates from the full production
-contract shape in some way** when run against this Phase 0 server (the two
-newest, metis_generate_quality_report/metis_generate_release_report, need
-the real Requirement/Service/Release ontology graph.backend=neo4j
-provides -- same "adapted" pattern as metis_propose_test_skeleton/
-metis_submit_episode already used against a text-only corpus). Most of
+**every one of the 12 tools currently deviates from the full production
+contract shape in some way** when run against this Phase 0 server (the
+three newest, metis_generate_quality_report/metis_generate_release_report/
+metis_generate_test_design_report, need the real Requirement/Service/
+Release/Intent/TestDesign ontology graph.backend=neo4j provides -- same
+"adapted" pattern as metis_propose_test_skeleton/metis_submit_episode
+already used against a text-only corpus). Most of
 that (metis_explain_decision/metis_explain_answer's decisions[]/sources[]
 shape, metis_get_context's graded-fact/pinned-context shape which needs
 §8.1/§8.2 -- not yet built, metis_get_traceability's chain[] shape and
@@ -337,7 +338,8 @@ def metis_submit_episode(episode_type: str, payload: dict, source_ref: str) -> d
 def metis_quality_score(scope: str = "all", include_trend: bool = False) -> dict:
     """
     graph.backend=neo4j: the real §3.1 weighted composite quality_score,
-    plus the full DQ-001..DQ-022 breakdown (REQ-METIS-DQ-01), computed
+    plus the full DQ-001..DQ-023 breakdown (REQ-METIS-DQ-01; DQ-023 is a
+    Session 11 addition beyond the spec doc's original 22), computed
     against the actual production ontology -- metis_mcp/dq_metrics.py.
     graph.backend=local: falls back to the dogfooding corpus's structural
     orphan-rate proxy (no Requirement/AcceptanceCriterion/TestCase
@@ -421,6 +423,41 @@ def metis_generate_release_report(release_id: str) -> dict:
     from metis_mcp.quality_report import build_release_report
     with store.session() as session:
         return build_release_report(session, release_id)
+
+
+@mcp.tool()
+def metis_generate_test_design_report(scope: dict) -> dict:
+    """
+    Session 10: the real Intent/TestDesign backbone (State/Transition ->
+    Intent -> Requirement/AcceptanceCriterion, Intent -> TestDesign ->
+    TestCase) made queryable as a report -- for the scoped Requirement(s),
+    every AcceptanceCriterion, which real test-design technique(s)
+    (Boundary Value Analysis, Equivalence Partitioning, State Transition
+    Testing, Decision Table Testing, etc.) covered it, and which real
+    TestCases (with real `.type`) resulted.
+
+    `scope`: same real contract shape as metis_generate_quality_report --
+    exactly one of {"requirement_id": ...}, {"service_id": ...},
+    {"release_id": ...}, {"project_wide": true}.
+
+    Requirements outside the Intent/TestDesign backbone (the bulk
+    synthetic/grounded layers, which predate it) show up with an empty
+    acceptance_criteria list -- an honest "not covered by this backbone
+    yet" signal, not an error.
+
+    graph.backend=local returns an honest not-applicable response.
+    """
+    if _graph_backend != "neo4j":
+        return {
+            "adapted": True,
+            "note": "metis_generate_test_design_report needs the real production ontology "
+                    "(Requirement/Intent/TestDesign + real TRACES_TO/COVERS structure) that "
+                    "only graph.backend: neo4j provides -- not applicable against the "
+                    "dogfooding corpus's LocalGraphStore.",
+        }
+    from metis_mcp.quality_report import build_test_design_report
+    with store.session() as session:
+        return build_test_design_report(session, scope)
 
 
 def main():

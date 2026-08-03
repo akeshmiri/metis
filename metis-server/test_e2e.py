@@ -35,7 +35,7 @@ async def main():
             print(f"Server exposes {len(tools.tools)} tools:")
             for t in tools.tools:
                 print(f"  - {t.name}")
-            assert len(tools.tools) == 11, f"expected 11 tools, got {len(tools.tools)}"
+            assert len(tools.tools) == 12, f"expected 12 tools, got {len(tools.tools)}"
 
             print("\n--- metis_get_context('CONST-047') ---")
             r = await session.call_tool("metis_get_context", {"anchor": "CONST-047"})

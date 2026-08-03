@@ -872,6 +872,139 @@
           }
         }
       }
+    },
+    "metis_generate_test_design_report": {
+      "description": "Session 10: the real Intent/TestDesign backbone (State/Transition -> Intent -> Requirement/AcceptanceCriterion, Intent -> TestDesign -> TestCase) made queryable as a report -- per scoped Requirement, its AcceptanceCriteria, which real test-design technique(s) covered each one, and which real TestCases (with real 6-level .type) resulted. Read-only, pure aggregation over already-computed data -- no new LLM calls.",
+      "input": {
+        "type": "object",
+        "required": [
+          "scope"
+        ],
+        "properties": {
+          "scope": {
+            "$ref": "#/$defs/scope"
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "required": [
+          "scope_description",
+          "requirements",
+          "total_acceptance_criteria",
+          "acceptance_criteria_with_test_design",
+          "techniques_used"
+        ],
+        "properties": {
+          "scope_description": {
+            "type": "string"
+          },
+          "requirements": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "requirement_id",
+                "text",
+                "acceptance_criteria",
+                "ac_count",
+                "ac_with_test_design_count"
+              ],
+              "properties": {
+                "requirement_id": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "acceptance_criteria": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "ac_id",
+                      "text",
+                      "test_design",
+                      "test_cases"
+                    ],
+                    "properties": {
+                      "ac_id": {
+                        "type": "string"
+                      },
+                      "text": {
+                        "type": "string"
+                      },
+                      "test_design": {
+                        "type": [
+                          "object",
+                          "null"
+                        ],
+                        "properties": {
+                          "design_id": {
+                            "type": "string"
+                          },
+                          "techniques": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "description": "null when this AcceptanceCriterion isn't covered by the real Intent/TestDesign backbone yet (Session 10) -- an honest gap, not an error."
+                      },
+                      "test_cases": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "test_case_id": {
+                              "type": "string"
+                            },
+                            "type": {
+                              "type": [
+                                "string",
+                                "null"
+                              ],
+                              "enum": [
+                                "unit",
+                                "integration",
+                                "api_functional",
+                                "web_functional",
+                                "e2e",
+                                "performance",
+                                null
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "ac_count": {
+                  "type": "integer"
+                },
+                "ac_with_test_design_count": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "total_acceptance_criteria": {
+            "type": "integer"
+          },
+          "acceptance_criteria_with_test_design": {
+            "type": "integer"
+          },
+          "techniques_used": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Distinct real test-design techniques found across the scope (e.g. 'Boundary Value Analysis', 'State Transition Testing')."
+          }
+        }
+      }
     }
   },
   "$defs": {

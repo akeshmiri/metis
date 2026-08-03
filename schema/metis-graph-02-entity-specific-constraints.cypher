@@ -138,6 +138,53 @@ FOR (x:ExternalAPISpec) REQUIRE x.registry_source IS NOT NULL;
 //     edge, already used for PullRequest->Commit/TestRun->Defect).
 //   TestCase -[:VERIFIES]-> AcceptanceCriterion is unchanged from
 //     Session 9 -- unrelated to this addition.
+//
+// Session 11 additions -- real TestRun modeling (item 2) and Table/Database
+// linkage (item 3), both previously undeclared/dangling:
+//   TestRun -[:EXECUTES]-> TestCase (the spec always named this edge; no
+//     connector or generator ever created it before Session 11).
+//   TestRun -[:PART_OF]-> TestSuite (genuinely new -- mirrors the existing
+//     TestCase -[:PART_OF]-> TestSuite edge, made real the same session).
+//   TestRun -[:TRACES_TO]-> Release (reuses the existing generic TRACES_TO
+//     edge, only for run_type='regression' TestRuns).
+//   Database -[:HAS]-> Table (the spec always named this edge; the whole
+//     Architecture layer had zero internal relationships before this).
+//
+// Session 12: TestRun renamed to TestCycle (a batch/container); per-case
+// results moved to the new TestExecution node --
+//   TestExecution -[:PART_OF]-> TestCycle (reuses PART_OF, same as
+//     TestCase -[:PART_OF]-> TestSuite).
+//   TestExecution -[:EXECUTES]-> TestCase (moved down from TestCycle --
+//     an execution executes a case, not a whole cycle in aggregate).
+//   TestExecution -[:PRODUCES]-> Defect (moved down from TestCycle --
+//     reuses the existing PRODUCES edge, a Defect comes from a specific
+//     failing execution, not the cycle abstractly).
+//   TestExecution -[:RAN_AGAINST]-> ApplicationConfiguration (genuinely
+//     new -- which component-version snapshot this execution ran against).
+//   ApplicationConfiguration -[:INCLUDES_VERSION {version}]-> Service
+//     (genuinely new -- reuses the real Service label from Session 11
+//     instead of inventing a new "component" label; version lives on the
+//     edge, not a node property, so each version stays independently
+//     queryable/traceable).
+//
+// Session 13: Transition-[:TRACES_TO]->Intent (Session 10) is REMOVED --
+// superseded by AcceptanceCriterion-[:VALIDATES]->Transition (genuinely
+// new), the only bridge from the Intent/Requirement/TestDesign backbone
+// to real State/Transition behavior now. Trigger/Guard removed as
+// separate node types entirely (both were attributes of exactly one
+// Transition, not their own entities) -- ON_TRIGGER/WHEN_GUARD no longer
+// exist; see docs/metis-ontology-specification.md, the new authoritative
+// per-label/per-relationship reference every future ontology change must
+// be checked against (schema-01/02 + structural_validation.py's
+// KNOWN_LABELS/ALLOWED_RELATIONSHIPS + this doc, kept in sync together).
+// FROM_STATE/TO_STATE (both Transition->State) renamed to LAUNCHES/
+// LANDS_IN, then to WHEN (State->Transition, direction reversed) / THEN
+// (Transition->State, unchanged) -- reads as one continuous forward path,
+// State-[:WHEN]->Transition-[:THEN]->State, mirroring the Given/When/Then
+// shape a Transition already structurally is (the State it's reached
+// from is the implicit Given). Neither FROM_STATE nor TO_STATE ever had
+// a real relationship-property index (an oversight); WHEN/THEN get one,
+// closing that gap at the same time.
 
 CREATE INDEX rel_t_valid IF NOT EXISTS FOR ()-[r:HAS_AC]-() ON (r.t_valid);
 CREATE INDEX rel_t_invalid IF NOT EXISTS FOR ()-[r:HAS_AC]-() ON (r.t_invalid);
@@ -147,6 +194,14 @@ CREATE INDEX rel_verifies_t_valid IF NOT EXISTS FOR ()-[r:VERIFIES]-() ON (r.t_v
 CREATE INDEX rel_produces_t_valid IF NOT EXISTS FOR ()-[r:PRODUCES]-() ON (r.t_valid);
 CREATE INDEX rel_traces_to_t_valid IF NOT EXISTS FOR ()-[r:TRACES_TO]-() ON (r.t_valid);
 CREATE INDEX rel_covers_t_valid IF NOT EXISTS FOR ()-[r:COVERS]-() ON (r.t_valid);
+CREATE INDEX rel_executes_t_valid IF NOT EXISTS FOR ()-[r:EXECUTES]-() ON (r.t_valid);
+CREATE INDEX rel_part_of_t_valid IF NOT EXISTS FOR ()-[r:PART_OF]-() ON (r.t_valid);
+CREATE INDEX rel_has_t_valid IF NOT EXISTS FOR ()-[r:HAS]-() ON (r.t_valid);
+CREATE INDEX rel_ran_against_t_valid IF NOT EXISTS FOR ()-[r:RAN_AGAINST]-() ON (r.t_valid);
+CREATE INDEX rel_includes_version_t_valid IF NOT EXISTS FOR ()-[r:INCLUDES_VERSION]-() ON (r.t_valid);
+CREATE INDEX rel_validates_t_valid IF NOT EXISTS FOR ()-[r:VALIDATES]-() ON (r.t_valid);
+CREATE INDEX rel_when_t_valid IF NOT EXISTS FOR ()-[r:WHEN]-() ON (r.t_valid);
+CREATE INDEX rel_then_t_valid IF NOT EXISTS FOR ()-[r:THEN]-() ON (r.t_valid);
 
 // Every relationship of these types also carries: created_by (human|ai_decision
 // node ref), created_at, confidence (§7.1's edge-level confidence, distinct

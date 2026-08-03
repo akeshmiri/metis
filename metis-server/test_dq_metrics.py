@@ -19,6 +19,7 @@ from metis_mcp.dq_metrics import (
 )
 from metis_mcp.behavior_model import load_transition
 from guardrails.corpus_runner import record_run_episode
+from demo_data.generate_demo_data import wipe_demo_data
 
 NEO4J_URI = os.environ.get("METIS_NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.environ.get("METIS_NEO4J_USER", "neo4j")
@@ -35,6 +36,12 @@ def _session():
 
 
 def _setup():
+    # Session 10: DQ-014 now genuinely computes from real Endpoint/Table
+    # counts -- demo data left loaded by another test file (real
+    # Endpoint(300)/Table(150) nodes) would silently change this global
+    # metric's denominator. Same test-isolation discipline Session 7
+    # already established for test_demo_data.py's own tests.
+    wipe_demo_data(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
     with _session() as s:
         s.execute_write(lambda tx: tx.run(
             "MERGE (e:Episode {id: 'dqm-test-episode'}) "
@@ -210,6 +217,38 @@ def test_dq014_honestly_not_computable():
         assert dq_014(s).value is None
 
 
+def test_dq014_real_once_a_real_spec_drift_episode_and_endpoint_exist():
+    """Session 10: metis_mcp/graph_sync.py now genuinely creates
+    SpecDriftDetected episodes -- this proves DQ-014 actually computes
+    from them instead of always reporting None. Self-contained cleanup
+    (unlike this file's other tests) since this file only calls the
+    shared _cleanup() once at the very end of the whole run -- leaving
+    these nodes in place would change DQ-014's real value (and therefore
+    the composite score's 'currency' component) for every test that runs
+    after this one in the same process, including
+    test_compute_quality_score_partial_when_some_components_missing."""
+    with _session() as s:
+        s.execute_write(lambda tx: tx.run(
+            "MERGE (e:Endpoint {id: 'dqm-test-endpoint'}) SET e.source_episode_id = 'dqm-test-episode'"
+        ).consume())
+        s.execute_write(lambda tx: tx.run(
+            "MERGE (e:Episode {id: 'dqm-test-drift-episode'}) "
+            "SET e.t_recorded = datetime(), e.source_connector = 'graph-sync', "
+            "e.job_id = 'dqm-test-drift-episode', e.unit_id = 'dqm-test-drift-episode', "
+            "e.checkpoint_status = 'complete', "
+            "e.episode_type = 'SpecDriftDetected', e.drifted_connector = 'dqm-test-connector', "
+            "e.drifted_entity_count = 1"
+        ).consume())
+        try:
+            m = dq_014(s)
+            assert m.value == 1.0  # 1 SpecDriftDetected episode / 1 real Endpoint
+            assert m.target_met is False  # 100% is well above the <= 2% target
+        finally:
+            s.execute_write(lambda tx: tx.run(
+                "MATCH (n) WHERE n.id IN ['dqm-test-endpoint', 'dqm-test-drift-episode'] DETACH DELETE n"
+            ).consume())
+
+
 def test_dq016_now_real_via_sleep_time_consolidation():
     with _session() as s:
         m = dq_016(s)
@@ -255,11 +294,14 @@ def test_dq022_false_acceptance_rate_from_real_episode():
     assert m.target_met is True
 
 
-def test_compute_all_metrics_returns_all_22():
+def test_compute_all_metrics_returns_all_24():
+    # Session 11, item 2 added DQ-023 (TestCycle completeness, renamed from
+    # TestRun in Session 12). Session 13 added DQ-024 (implemented-
+    # Transition AcceptanceCriterion coverage).
     with _session() as s:
         result = compute_all_metrics(s)
-    assert len(result) == 22
-    assert set(result.keys()) == {f"DQ-{i:03d}" for i in range(1, 23)}
+    assert len(result) == 24
+    assert set(result.keys()) == {f"DQ-{i:03d}" for i in range(1, 25)}
 
 
 def test_compute_quality_score_partial_when_some_components_missing():

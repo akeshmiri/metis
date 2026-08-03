@@ -80,9 +80,10 @@ from neo4j import GraphDatabase
 
 from demo_data import vocab
 from demo_data import metis_grounded
+from demo_data import login_example
 from metis_mcp.confidence_tiering import ConfidenceTiering
 from metis_mcp.ears_checker import check_ears_conformance
-from metis_mcp.behavior_model import load_transition, check_determinism, check_completeness, check_reachability
+from metis_mcp.temporal import record_revision
 
 DEMO_TAG = "is_demo_data"
 BATCH_SIZE = 500
@@ -445,6 +446,22 @@ def generate(neo4j_uri: str, neo4j_user: str, neo4j_password: str,
             for rel_type, count in grounded["relationships"].items():
                 counters.add_rels(rel_type, count)
 
+            # ---------- Login example: the real Intent/TestDesign backbone proof ----------
+            # Session 10: one real, hand-authored state machine (not scaled
+            # by `scale.factor`, a fixed example) demonstrating State/
+            # Transition -> Intent -> {Requirement, AcceptanceCriterion},
+            # Intent -> TestDesign -> TestCase end to end -- see
+            # demo_data/login_example.py.
+            progress("Login example (real Intent/TestDesign backbone, 16 implemented + 1 planned transition)...")
+            login = login_example.build_login_example(
+                session, r, episode, DEMO_TAG, _batch_merge_nodes, _batch_merge_rels, _edge_props,
+                _iso, _rand_past_datetime,
+            )
+            for label, count in login["nodes"].items():
+                counters.add_nodes(label, count)
+            for rel_type, count in login["relationships"].items():
+                counters.add_rels(rel_type, count)
+
             constraints = [{"id": f"demo:constraint:{i}", "source_episode_id": episode(),
                              "text": f"The {vocab.pick(r, vocab.SERVICES)} service must respond within {r.choice([100,200,500])}ms.",
                              DEMO_TAG: True} for i in range(scale.n(200))]
@@ -512,11 +529,46 @@ def generate(neo4j_uri: str, neo4j_user: str, neo4j_password: str,
                           "name": f"{vocab.pick(r, vocab.SERVICES)}-db", DEMO_TAG: True} for i in range(scale.n(15))]
             _batch_merge_nodes(session, "Database", databases)
             counters.add_nodes("Database", len(databases))
+            # Session 11, item 3: real revision history on every Database
+            # write -- the prerequisite for staleness to mean anything for
+            # this label. metis_mcp/graph_sync.py's check_staleness already
+            # works per Episode.source_connector for ANY label; it had
+            # nothing to read here before because Database/Table never had
+            # any revision history at all.
+            for db in databases:
+                record_revision(session, db["id"], {"name": db["name"]}, db["source_episode_id"])
+            counters.add_nodes("Revision", len(databases))
+            counters.add_rels("HAS_REVISION", len(databases))
 
             tables = [{"id": f"demo:table:{i}", "source_episode_id": episode(),
-                       "name": f"{vocab.pick(r, vocab.NOUNS).replace(' ', '_')}s", DEMO_TAG: True} for i in range(scale.n(150))]
-            _batch_merge_nodes(session, "Table", tables)
+                       "name": f"{vocab.pick(r, vocab.NOUNS).replace(' ', '_')}s",
+                       "_database": r.choice(databases)["id"] if databases else None, DEMO_TAG: True}
+                      for i in range(scale.n(150))]
+            _batch_merge_nodes(session, "Table",
+                                [{k: v for k, v in t.items() if k != "_database"} for t in tables])
             counters.add_nodes("Table", len(tables))
+            for tb in tables:
+                record_revision(session, tb["id"], {"name": tb["name"]}, tb["source_episode_id"])
+            counters.add_nodes("Revision", len(tables))
+            counters.add_rels("HAS_REVISION", len(tables))
+
+            # record_revision's real :Revision nodes don't carry is_demo_data
+            # (same real gap login_example.py's own Revision nodes hit in
+            # Session 10) -- tag them here in one pass so wipe_demo_data and
+            # the no-dangling-relationship invariant both hold.
+            session.execute_write(lambda tx: tx.run(
+                "MATCH (n) WHERE n.id STARTS WITH 'demo:database:' OR n.id STARTS WITH 'demo:table:' "
+                "MATCH (n)-[:HAS_REVISION]->(rev:Revision) "
+                f"SET rev.{DEMO_TAG} = true"
+            ).consume())
+
+            # Database-[:HAS]->Table (Session 11, item 3) -- the spec has
+            # always named this edge; the whole Architecture layer had zero
+            # internal relationships before this.
+            has_table_pairs = [{"from": t["_database"], "to": t["id"], "props": {}}
+                                for t in tables if t["_database"]]
+            _batch_merge_rels(session, "Database", "Table", "HAS", has_table_pairs)
+            counters.add_rels("HAS", len(has_table_pairs))
 
             columns = [{"id": f"demo:column:{i}", "source_episode_id": episode(),
                         "name": r.choice(["id", "created_at", "status", "amount", "customer_id", "updated_at"]),
@@ -524,7 +576,11 @@ def generate(neo4j_uri: str, neo4j_user: str, neo4j_password: str,
             _batch_merge_nodes(session, "Column", columns)
             counters.add_nodes("Column", len(columns))
 
-            for label, count in (("KafkaTopic", 40), ("Cache", 30), ("ExternalSystem", 40)):
+            # "Cache" removed (Session 11, item 5) -- see the AI-layer removal
+            # note further down for the full rationale; Cache itself modeled
+            # infrastructure caching tech, not an LLM session, but the user
+            # confirmed removing it anyway.
+            for label, count in (("KafkaTopic", 40), ("ExternalSystem", 40)):
                 rows = [{"id": f"demo:{label.lower()}:{i}", "source_episode_id": episode(),
                          "name": f"{vocab.pick(r, vocab.SERVICES)}-{label.lower()}-{i}", DEMO_TAG: True}
                         for i in range(scale.n(count))]
@@ -686,18 +742,106 @@ def generate(neo4j_uri: str, neo4j_user: str, neo4j_password: str,
             _batch_merge_nodes(session, "TestSuite", test_suites)
             counters.add_nodes("TestSuite", len(test_suites))
 
+            # Real TestCase->TestSuite membership (Session 11, item 2) -- the
+            # spec has always called for TestCase-[:PART_OF]->TestSuite, but
+            # TestSuite had zero relationships at all before this.
+            testcase_by_suite: dict[str, list[str]] = {}
+            part_of_suite_pairs = []
+            if test_suites:
+                for tc in testcases:
+                    suite_id = r.choice(test_suites)["id"]
+                    testcase_by_suite.setdefault(suite_id, []).append(tc["id"])
+                    part_of_suite_pairs.append({"from": tc["id"], "to": suite_id, "props": {}})
+            _batch_merge_rels(session, "TestCase", "TestSuite", "PART_OF", part_of_suite_pairs)
+            counters.add_rels("PART_OF", len(part_of_suite_pairs))
+
             automation_scripts = [{"id": f"demo:automationscript:{i}", "source_episode_id": episode(),
                                     "path": f"tests/{vocab.pick(r, vocab.SERVICES)}/test_{i}.py", DEMO_TAG: True}
                                    for i in range(scale.n(400))]
             _batch_merge_nodes(session, "AutomationScript", automation_scripts)
             counters.add_nodes("AutomationScript", len(automation_scripts))
 
-            test_runs = [{"id": f"demo:testrun:{i}", "source_episode_id": episode(),
-                          "status": r.choice(["passed", "passed", "passed", "failed"]),
-                          "ran_at": _iso(_rand_past_datetime(r, 90)), DEMO_TAG: True}
-                         for i in range(scale.n(800))]
-            _batch_merge_nodes(session, "TestRun", test_runs)
-            counters.add_nodes("TestRun", len(test_runs))
+            # ---------- Application configuration pool (Session 12) ----------
+            # Real component-version snapshots a TestExecution can have run
+            # against -- reuses the existing Service label (Session 11)
+            # instead of inventing a new "component" node; the actual
+            # versions live on each config's own INCLUDES_VERSION edges, not
+            # a flat property blob, so they stay independently
+            # queryable/traceable back to a real Service.
+            app_configs = [{"id": f"demo:appconfig:{i}", "source_episode_id": episode(), DEMO_TAG: True}
+                           for i in range(scale.n(40))]
+            _batch_merge_nodes(session, "ApplicationConfiguration", app_configs)
+            counters.add_nodes("ApplicationConfiguration", len(app_configs))
+
+            includes_version_pairs = []
+            for cfg in app_configs:
+                n_components = min(len(services), r.randint(3, 8))
+                for svc in (r.sample(services, n_components) if services else []):
+                    version = f"{r.randint(1,4)}.{r.randint(0,20)}.{r.randint(0,9)}"
+                    includes_version_pairs.append({"from": cfg["id"], "to": svc["id"],
+                                                    "props": {"version": version}})
+            _batch_merge_rels(session, "ApplicationConfiguration", "Service", "INCLUDES_VERSION",
+                               includes_version_pairs)
+            counters.add_rels("INCLUDES_VERSION", len(includes_version_pairs))
+
+            # ---------- TestCycle (renamed from TestRun, Session 12) ----------
+            # A TestCycle is the batch/container; per-case results now live on
+            # the new TestExecution node below -- a real test-management-tool
+            # shape (TestRun/Cycle -> many TestExecutions), not one flat
+            # status property for a whole batch of 3-25 TestCases.
+            RUN_TYPES = ["ci", "ci", "ci", "smoke", "nightly", "regression"]
+            test_cycles = [{"id": f"demo:testcycle:{i}", "source_episode_id": episode(),
+                            "ran_at": _iso(_rand_past_datetime(r, 90)),
+                            "run_type": r.choice(RUN_TYPES), DEMO_TAG: True}
+                           for i in range(scale.n(800))]
+            _batch_merge_nodes(session, "TestCycle", test_cycles)
+            counters.add_nodes("TestCycle", len(test_cycles))
+
+            # Real TestExecution per (TestCycle, TestCase) pair (Session 12)
+            # -- previously one flat status property covered a whole batch;
+            # now each case gets its own real result/time, plus which real
+            # component-version snapshot it ran against. This is the concrete
+            # gap dq_017/quality_report.py's SEC-02 have disclosed since
+            # Sessions 4/8 ("no TestRun->TestCase edge exists anywhere in
+            # this codebase") -- made real (Session 11) and per-case-accurate
+            # (Session 12) here.
+            suites_with_cases = [sid for sid, tcs in testcase_by_suite.items() if tcs]
+            cycle_part_of_suite = []
+            executions = []
+            execution_part_of_cycle = []
+            execution_executes_testcase = []
+            execution_ran_against = []
+            RESULTS = ["passed", "passed", "passed", "passed", "failed", "blocked"]
+            for cycle in test_cycles:
+                if not suites_with_cases:
+                    break
+                suite_id = r.choice(suites_with_cases)
+                cycle_part_of_suite.append({"from": cycle["id"], "to": suite_id, "props": {}})
+                candidates = testcase_by_suite[suite_id]
+                n_exec = min(len(candidates), r.randint(3, 25))
+                for j, tc_id in enumerate(r.sample(candidates, n_exec)):
+                    exec_id = f"{cycle['id']}:exec:{j}"
+                    executions.append({
+                        "id": exec_id, "source_episode_id": cycle["source_episode_id"],
+                        "executed_at": _iso(_rand_past_datetime(r, 90)),
+                        "result": r.choice(RESULTS), DEMO_TAG: True,
+                    })
+                    execution_part_of_cycle.append({"from": exec_id, "to": cycle["id"], "props": {}})
+                    execution_executes_testcase.append({"from": exec_id, "to": tc_id, "props": {}})
+                    if app_configs:
+                        execution_ran_against.append(
+                            {"from": exec_id, "to": r.choice(app_configs)["id"], "props": {}})
+            _batch_merge_nodes(session, "TestExecution", executions)
+            counters.add_nodes("TestExecution", len(executions))
+            _batch_merge_rels(session, "TestCycle", "TestSuite", "PART_OF", cycle_part_of_suite)
+            counters.add_rels("PART_OF", len(cycle_part_of_suite))
+            _batch_merge_rels(session, "TestExecution", "TestCycle", "PART_OF", execution_part_of_cycle)
+            counters.add_rels("PART_OF", len(execution_part_of_cycle))
+            _batch_merge_rels(session, "TestExecution", "TestCase", "EXECUTES", execution_executes_testcase)
+            counters.add_rels("EXECUTES", len(execution_executes_testcase))
+            _batch_merge_rels(session, "TestExecution", "ApplicationConfiguration", "RAN_AGAINST",
+                               execution_ran_against)
+            counters.add_rels("RAN_AGAINST", len(execution_ran_against))
 
             defects = [{"id": f"demo:defect:{i}", "source_episode_id": episode(),
                         "summary": vocab.pick(r, vocab.DEFECT_SUMMARIES),
@@ -707,9 +851,16 @@ def generate(neo4j_uri: str, neo4j_user: str, neo4j_password: str,
                        for i in range(scale.n(500))]
             _batch_merge_nodes(session, "Defect", defects)
             counters.add_nodes("Defect", len(defects))
-            produces_defects = [{"from": test_runs[i % len(test_runs)]["id"], "to": d["id"], "props": {}}
-                                 for i, d in enumerate(defects)]
-            _batch_merge_rels(session, "TestRun", "Defect", "PRODUCES", produces_defects)
+            # Defects are PRODUCES'd by a specific FAILED TestExecution
+            # (Session 12 -- moved down from the whole TestCycle, since a
+            # defect comes from a specific failing case result, not the
+            # batch abstractly). Falls back to any execution if fewer real
+            # failures exist than Defects need.
+            failed_executions = [e for e in executions if e["result"] == "failed"]
+            producing_pool = failed_executions or executions
+            produces_defects = ([{"from": producing_pool[i % len(producing_pool)]["id"], "to": d["id"], "props": {}}
+                                 for i, d in enumerate(defects)] if producing_pool else [])
+            _batch_merge_rels(session, "TestExecution", "Defect", "PRODUCES", produces_defects)
             counters.add_rels("PRODUCES", len(produces_defects))
 
             # ---------- Operations layer ----------
@@ -719,6 +870,18 @@ def generate(neo4j_uri: str, neo4j_user: str, neo4j_password: str,
                         "released_at": _iso(_rand_past_datetime(r)), DEMO_TAG: True} for i in range(scale.n(40))]
             _batch_merge_nodes(session, "Release", releases)
             counters.add_nodes("Release", len(releases))
+
+            # Regression TestCycles trace to the Release they validated
+            # (Session 11, item 2; TestRun renamed to TestCycle in Session
+            # 12) -- reuses the same generic TRACES_TO edge every other
+            # backbone link in this generator already uses, not a new
+            # relationship type.
+            regression_cycles = [c for c in test_cycles if c["run_type"] == "regression"]
+            regression_release_traces = ([{"from": c["id"], "to": r.choice(releases)["id"],
+                                            "props": _edge_props(r, _rand_past_datetime(r))}
+                                           for c in regression_cycles] if releases else [])
+            _batch_merge_rels(session, "TestCycle", "Release", "TRACES_TO", regression_release_traces)
+            counters.add_rels("TRACES_TO", len(regression_release_traces))
 
             # Requirement -> Release TRACES_TO: only "shipped" Requirements
             # (Jira Done + auto_write confidence) get linked -- an
@@ -759,19 +922,19 @@ def generate(neo4j_uri: str, neo4j_user: str, neo4j_password: str,
             _batch_merge_nodes(session, "Logs", logs)
             counters.add_nodes("Logs", len(logs))
 
-            # ---------- Behavior layer (with a REAL determinism ambiguity) ----------
-            progress("Behavior layer (State/Transition/Guard/Trigger, real determinism check)...")
-            n_states = scale.n(80)
-            state_names = [f"demo:state:{i}" for i in range(n_states)]
-            state_rows = [{"id": s, "source_episode_id": episode(), DEMO_TAG: True} for s in state_names]
-            _batch_merge_nodes(session, "State", state_rows)
-            counters.add_nodes("State", len(state_rows))
-
-            triggers = [{"id": f"demo:trigger:{i}", "source_episode_id": episode(),
-                        "name": vocab.pick(r, vocab.TRIGGERS), DEMO_TAG: True} for i in range(scale.n(100))]
-            _batch_merge_nodes(session, "Trigger", triggers)
-            counters.add_nodes("Trigger", len(triggers))
-
+            # ---------- Behavior-adjacent filler (Action/Event/Workflow) ----------
+            # Session 11, item 1: State/Transition/Trigger must model ONLY real
+            # application behaviour -- the generic index-ring State/Transition/
+            # Trigger/Guard generator that used to live here (80 States wired
+            # state[i]->state[i+1] with no relation to any real application)
+            # was pure count-padding, not app behaviour, and has been removed.
+            # demo_data/login_example.py (a real, hand-authored login-page
+            # state machine) is now the sole source of State/Transition/Trigger
+            # data in this generator. Action/Event/Workflow are separate labels
+            # not covered by that rule and were already independently dangling
+            # (no relationships to State/Transition either before or after this
+            # change) -- left as-is, out of scope for this pass.
+            progress("Action/Event/Workflow (independent filler, unrelated to State/Transition)...")
             actions = [{"id": f"demo:action:{i}", "source_episode_id": episode(),
                        "name": f"{vocab.pick(r, vocab.ACTIONS)}_{vocab.pick(r, vocab.NOUNS).replace(' ', '_')}",
                        DEMO_TAG: True} for i in range(scale.n(150))]
@@ -789,93 +952,28 @@ def generate(neo4j_uri: str, neo4j_user: str, neo4j_password: str,
             _batch_merge_nodes(session, "Workflow", workflows)
             counters.add_nodes("Workflow", len(workflows))
 
-            # Real Transitions via the real loader, including one deliberately
-            # ambiguous pair per state-group so the real determinism checker
-            # has something genuine to catch. A fraction carry a real
-            # implementing_method_id (metis_mcp/temporal.py-adjacent
-            # Pyramid-Gap Check hook) drawn from the same real Method pool
-            # above, so Stage 3 tooling has real signal against demo data too.
-            n_transitions = scale.n(300)
-            demo_episode = episode_ids[0]
-            transitions_created = 0
+            # No generic Transitions/States/Guards/determinism-check run here
+            # anymore -- see comment above. disputed_from_determinism stays 0;
+            # login_example.py's own state machine is real and unambiguous by
+            # design (Session 10), so there's nothing left in this generator to
+            # exercise the determinism checker's "disputed" path against.
             disputed_from_determinism = 0
-            all_methods_flat = methods
-            for i in range(n_transitions):
-                from_state = state_names[i % n_states]
-                to_state = state_names[(i + 1) % n_states]
-                trig = f"demo:trigger:{i % max(1, len(triggers))}"
-                impl_method = r.choice(all_methods_flat)["id"] if all_methods_flat and r.random() < 0.5 else None
-                perf_critical = r.random() < 0.1
-                if i % 25 == 0 and i + 1 < n_transitions:
-                    # Deliberate real ambiguity: same trigger, overlapping guards.
-                    load_transition(session, f"demo:transition:{i}", demo_episode, from_state, to_state,
-                                     trig, "confidence >= 0.9", implementing_method_id=impl_method,
-                                     performance_sla_critical=perf_critical)
-                    load_transition(session, f"demo:transition:{i}-dup", demo_episode, from_state, to_state,
-                                     trig, "confidence >= 0.6")
-                    transitions_created += 2
-                else:
-                    load_transition(session, f"demo:transition:{i}", demo_episode, from_state, to_state,
-                                     trig, f"confidence >= {round(r.uniform(0.5, 0.95), 2)}",
-                                     implementing_method_id=impl_method, performance_sla_critical=perf_critical)
-                    transitions_created += 1
-            counters.add_nodes("Transition", transitions_created)
-
-            for s in state_names[:min(n_states, 40)]:
-                result = check_determinism(session, s)
-                disputed_from_determinism += len(result.findings)
-            check_completeness(session)
-            check_reachability(session, state_names[0])
-
-            # Tag demo States/Transitions/Guards/Triggers for clean wipe (load_transition
-            # doesn't set is_demo_data -- do it here in one pass).
-            session.execute_write(lambda tx: tx.run(
-                "MATCH (n) WHERE n.id STARTS WITH 'demo:transition:' OR n.id STARTS WITH 'demo:state:' "
-                f"SET n.{DEMO_TAG} = true"
-            ).consume())
-            session.execute_write(lambda tx: tx.run(
-                f"MATCH (n:Guard)<-[:WHEN_GUARD]-(t:Transition) WHERE t.id STARTS WITH 'demo:' SET n.{DEMO_TAG} = true"
-            ).consume())
-            guard_count = session.run(
-                "MATCH (g:Guard)<-[:WHEN_GUARD]-(t:Transition) WHERE t.id STARTS WITH 'demo:' RETURN count(DISTINCT g) AS c"
-            ).single()["c"]
-            counters.add_nodes("Guard", guard_count)
 
             # ---------- AI layer ----------
-            progress("AI layer (CopilotSession/Prompt/GeneratedCode/GeneratedTest/AIDecision/HumanReview)...")
-            sessions_ai = [{"id": f"demo:copilotsession:{i}", "source_episode_id": episode(),
-                           "started_at": _iso(_rand_past_datetime(r, 60)), DEMO_TAG: True}
-                          for i in range(scale.n(100))]
-            _batch_merge_nodes(session, "CopilotSession", sessions_ai)
-            counters.add_nodes("CopilotSession", len(sessions_ai))
-
-            prompts = [{"id": f"demo:prompt:{i}", "source_episode_id": episode(),
-                       "text": f"Generate a test for {vocab.pick(r, vocab.NOUNS)} {vocab.pick(r, vocab.ACTIONS)}",
-                       DEMO_TAG: True} for i in range(scale.n(250))]
-            _batch_merge_nodes(session, "Prompt", prompts)
-            counters.add_nodes("Prompt", len(prompts))
-
-            gen_code = [{"id": f"demo:generatedcode:{i}", "source_episode_id": episode(), DEMO_TAG: True}
-                       for i in range(scale.n(150))]
-            _batch_merge_nodes(session, "GeneratedCode", gen_code)
-            counters.add_nodes("GeneratedCode", len(gen_code))
-
-            gen_test = [{"id": f"demo:generatedtest:{i}", "source_episode_id": episode(), DEMO_TAG: True}
-                       for i in range(scale.n(150))]
-            _batch_merge_nodes(session, "GeneratedTest", gen_test)
-            counters.add_nodes("GeneratedTest", len(gen_test))
-
-            ai_decisions = [{"id": f"demo:aidecision:{i}", "source_episode_id": episode(),
-                            "decision": r.choice(["auto_write", "quarantine", "rejected"]), DEMO_TAG: True}
-                           for i in range(scale.n(200))]
-            _batch_merge_nodes(session, "AIDecision", ai_decisions)
-            counters.add_nodes("AIDecision", len(ai_decisions))
-
-            human_reviews = [{"id": f"demo:humanreview:{i}", "source_episode_id": episode(),
-                             "decision": r.choice(["approved", "rejected", "needs_changes"]), DEMO_TAG: True}
-                            for i in range(scale.n(150))]
-            _batch_merge_nodes(session, "HumanReview", human_reviews)
-            counters.add_nodes("HumanReview", len(human_reviews))
+            # Session 11, item 5: the LLM-session-tracking layer (CopilotSession/
+            # Prompt/GeneratedCode/AIDecision/HumanReview -- pure demo filler,
+            # zero relationships to anything, confirmed by grep across the whole
+            # codebase before removal) has been removed by explicit user
+            # decision: keeping ephemeral LLM/Copilot session data in a graph
+            # meant to be a global, persistent source of truth is
+            # counterproductive. GeneratedTest is NOT removed -- unlike the
+            # other 5, metis_mcp/test_skeleton_generator.py genuinely uses it
+            # for REQ-METIS-BM-03 (AI-proposed test provenance until it
+            # converges with a real TestCase); the demo-filler GeneratedTest
+            # rows that used to be generated here (dangling, no transition_id,
+            # easily confused with the real ones) are removed along with the
+            # rest of this block, but the label itself and its schema
+            # constraints remain.
 
         summary = {
             "run_id": run_id,
@@ -892,6 +990,8 @@ def generate(neo4j_uri: str, neo4j_user: str, neo4j_password: str,
             "grounded_requirements_with_real_implementing_method": grounded["grounded_requirements_with_real_implementing_method"],
             "grounded_confluence_docs": grounded["grounded_confluence_docs"],
             "grounded_tags_with_no_paraphrase": grounded["tags_with_no_paraphrase"],
+            "login_example_requirements_written": login["requirements_written"],
+            "login_example_planned_transitions": login["planned_transitions"],
         }
         return summary
     finally:
@@ -957,6 +1057,9 @@ def main():
           f"{summary['grounded_requirements_written']} real grounded Requirement(s) "
           f"({summary['grounded_requirements_with_real_implementing_method']} with a real implementing Method), "
           f"{summary['grounded_confluence_docs']} real Confluence doc(s).", file=sys.stderr)
+    print(f"Login example: {summary['login_example_requirements_written']} real Requirement(s) via the "
+          f"Intent/TestDesign backbone ({summary['login_example_planned_transitions']} planned, "
+          f"deliberately no TestDesign/TestCase).", file=sys.stderr)
     print(f"Skipped {summary['requirement_candidates_skipped_non_ears_or_rejected']} requirement candidate(s) "
           f"(non-EARS-conformant or below the real Rejected-tier confidence threshold) -- "
           f"matching real Layer 2/3 behavior, not written.", file=sys.stderr)
