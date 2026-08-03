@@ -201,6 +201,140 @@ created). Re-verified: full 45-file regression suite green, live graph
 shows 17 real `WHEN`/17 real `THEN` edges, 0 `LAUNCHES`/`LANDS_IN`/
 `FROM_STATE`/`TO_STATE` anywhere.
 
+**Round 6 — `functional_areas`, same session**: an optional string-array
+property, real and requested, added to the whole backbone + behavior-
+model chain (`Intent`, `Requirement`, `AcceptanceCriterion`,
+`TestDesign`, `TestCase`, `State`, `Transition`) so a one-line query
+finds everything in a named functional area (`MATCH (t:Transition)
+WHERE 'login' IN t.functional_areas RETURN t`). Property, not a node --
+matches this project's existing `Goal.domain` precedent for lightweight
+domain tagging, not a rich referenceable entity (disclosed escalation
+path if that changes: promote to a real `FunctionalArea` node later, not
+built preemptively). All 17 real login-example Transitions tagged for
+real (`"login"` plus a specific sub-flow: `"login-successful"` for
+`t1`/`t1b`-`t1e`, `"login-failed"` for `t2a`-`t2d`/`t3`, `"password-
+reset"`/`"session-management"`/`"account-recovery"`/`"2fa"` for the
+rest) -- every downstream Intent/Requirement/AcceptanceCriterion(s)/
+TestDesign/TestCase(s) spawned from a Transition inherits its same tags.
+`State` is the one real wrinkle: shared across multiple Transitions
+(`LoggedOut` alone is touched by 5, across 5 different sub-flows), so its
+`functional_areas` is a real Python-side union built during the main
+loop and SET once at the end, not per-transition (which would have
+silently kept only the last transition's tags). Two new regression tests
+in `test_login_example.py` prove both the one-line query returns exactly
+the right, disjoint Transition sets and the union logic is real (`Logged
+Out` ends up tagged with all 6 real areas that touch it). `docs/
+metis-ontology-specification.md` documents this as a new cross-cutting
+section. Full 45-file regression suite green.
+
+**Round 7 — demo generator reset: focus on login + metis, minimal gap-fill
+instead of a large synthetic company, same session**: user request,
+verbatim: "reset Demo data generation to focus only on login and metis,
+fill the gaps but remove the need for large amount of data" plus a
+standing-practice instruction to wipe+regenerate demo data after any
+graph-impacting change going forward, without being asked each time.
+Since Session 6, `demo_data/generate_demo_data.py` had generated a large,
+fully-fictional ~50-Goal/~5,000-Requirement synthetic company (~40,000-
+50,000 nodes at `factor=1.0`) to simulate "production scale." By Session
+13, the two REAL sources -- `demo_data/login_example.py` (hand-authored
+login state machine) and `demo_data/metis_grounded.py` (75 real
+Requirements grounded in this repo's own `corpus/*.md`) -- had become the
+actually valuable part of the dataset; the large synthetic layer around
+them was pure volume with no traceability value of its own.
+
+**Two real, load-bearing findings from reading the old generator before
+touching it, both confirmed live, not assumed:**
+1. The old Architecture layer's `Service.owner_team` was set from
+   `vocab.SERVICES` (fictional company service names -- "payments,"
+   "fraud-detection," etc.), which had never shared a single value with
+   any real `Goal.domain` (only `metis_grounded.py`'s real 18 subsystem
+   prefixes ever populate that property). `test_demo_data.py`'s own
+   `test_goals_carry_domain_and_some_requirements_trace_to_a_release`
+   already checks for this join -- a real, previously-latent bug the old
+   generator's large synthetic Business layer happened to paper over by
+   giving `Service.owner_team` SOME `Goal.domain`-shaped string, just
+   never the real one.
+2. `Requirement-[:TRACES_TO]->Release` only ever existed via the old
+   synthetic layer's "shipped" (Jira `Done` + `auto_write`-confidence)
+   Requirements -- removing that layer removes the only source of this
+   edge unless a real substitute exists.
+
+**Fixed by keying the new gap-fill layer to the real 18
+`metis_grounded.GROUNDED_GOALS` domain prefixes instead of a second,
+disconnected fictional vocabulary**: the new Architecture layer's Service
+pool is one Service per real prefix, `owner_team = prefix.lower()` --
+genuinely equal to `metis_grounded.py`'s own real `Goal.domain` value, not
+just shaped like it. Release linkage now traces a subset of
+`metis_grounded.py`'s own real `Requirement`s that already carry
+`jira_status: 'Done'` (written by that module already, nothing new) to a
+small new `Release` pool.
+
+**Removed entirely**: the large synthetic Business layer (Goal ->
+Capability -> Epic -> Feature -> Requirement, the 50-150-per-Goal target
+loop, the EARS-pattern-cycling text generator), the `vocab.SERVICES`-keyed
+Architecture layer, the per-service Implementation layer (Repository/
+Class/Method pool sized only to give the synthetic Requirements something
+to `IMPLEMENTS` -- with the synthetic Requirements gone, that pool had no
+purpose; `login_example.py`/`metis_grounded.py` already create/reuse their
+own real, much smaller Class/Method data), the synthetic per-Goal/Feature
+Confluence-episode block (`metis_grounded.py` already creates real
+Confluence episodes from this repo's own README/PLAN/CLAUDE.md/docs/*.md
+-- no need for a second, fabricated source), and `Action`/`Event`/
+`Workflow` (zero relationships to anything, confirmed by Session 11's own
+grep and never revisited -- pure count-padding, dropped rather than
+shrunk). `login_example.py` and `metis_grounded.py` themselves were **not
+modified** -- both already real, already correctly scaled, and the whole
+point of this reset.
+
+**Added**: a small, coherent gap-fill layer (order of 10s per label, not
+1,000s) covering the ontology labels neither real source touches --
+Governance (`Constitution`/`ExternalAPISpec`/`Constraint`/`BusinessRule`/
+`MicroRequirement`), Architecture (`Service`/`API`/`Endpoint`/`Database`
+`-[:HAS]->Table` with real `record_revision()` calls/`Column`/
+`KafkaTopic`/`ExternalSystem`/`ApplicationConfiguration`
+`-[:INCLUDES_VERSION]->Service`), VCS (`PullRequest`
+`-[:PRODUCES]->Commit`/`Branch`), Testing bulk (`TestSuite`/`TestCycle`/
+`TestExecution`/`AutomationScript` -- built AROUND the real `TestCase`
+pool `login_example.py`/`metis_grounded.py` already wrote, queried back
+from the graph, never a new fabricated `TestCase` pool), and Operations
+(`Release`/`Incident`/`Alert`/`Metrics`/`Logs`/`Defect`, `Defect`
+`PRODUCES`'d from real failed `TestExecution`s). `vocab.py` is kept (still
+used for realistic Table/Defect/Incident/PR text) but no longer drives
+Service/domain identity. `Scale`/`factor` is preserved exactly, now
+scaling only this small gap-fill layer -- `login_example.py`/
+`metis_grounded.py` always write their full real content regardless of
+`factor`, same as before.
+
+**Verified live, not assumed**: full regeneration at default scale
+(`factor=1.0`, seed 42) now produces **1,238 nodes / 1,554 relationships**
+across 41 distinct labels and 17 distinct relationship types (was ~63,710
+demo nodes under the old generator, confirmed by wiping it before this
+change) -- comfortably clears `test_generate_spans_many_labels_and_
+relationship_types`'s `>=30` labels / `>=8` relationship-types thresholds
+without padding. All 7 `test_demo_data.py` tests pass, including both
+previously-fragile ones (`test_goals_carry_domain_and_some_requirements_
+trace_to_a_release`'s `Service.owner_team = Goal.domain` join now
+genuinely resolves; `Requirement-[:TRACES_TO]->Release` edges now exist
+for real). `test_login_example.py`'s full 9 tests pass unmodified,
+confirming `login_example.py` still integrates cleanly with the smaller
+`generate()`. `metis_generate_quality_report`'s `service_id` scope was
+spot-checked directly against a real new Service id
+(`demo:service:acd`) and correctly resolved, via the real `Service.
+owner_team = Goal.domain` join, to all 9 real ACD-domain grounded
+Requirements. Full 43-file deterministic regression suite green (0
+failures). No schema changes were needed -- this was a generator-only
+reset; every label/relationship type reused is already in the closed
+ontology `structural_validation.py`/the ontology spec doc define.
+
+**Standing practice adopted going forward** (the request's second,
+durable instruction, not a one-time action): after any change that
+touches the graph (schema, generator, or ontology), wipe + regenerate
+demo data and re-run the affected tests as a normal part of finishing the
+change -- without waiting to be asked each time. This was already the de
+facto pattern for the last several rounds of Session 13's own work
+(Rounds 1-6 above); this makes it an explicit, standing convention rather
+than an implicit habit.
+
 ## Session 12 addendum — TestRun renamed to TestCycle; real per-case TestExecution; ApplicationConfiguration for release-report version tracking
 
 User correction to Session 11's TestRun model, stated directly: a "run"

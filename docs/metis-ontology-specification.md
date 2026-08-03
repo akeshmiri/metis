@@ -125,6 +125,36 @@ exactly the kind of gap explicit states were introduced to catch (e.g.
 `Failed1`-`Failed4`→`LoggedIn` all share a target State; validating the
 State alone would make all four look covered by testing just one).
 
+## Cross-cutting: `functional_areas`
+
+An optional string-array property, real and requested, available on
+`Intent`, `Requirement`, `AcceptanceCriterion`, `TestDesign`, `TestCase`,
+`State`, and `Transition` — the whole backbone + behavior-model chain one
+real scenario (e.g. `demo_data/login_example.py`) touches. Lets a
+one-line query pull everything belonging to a named functional area,
+without a new node type or relationship:
+
+```cypher
+MATCH (t:Transition) WHERE 'login' IN t.functional_areas RETURN t
+MATCH (n) WHERE 'login-successful' IN n.functional_areas RETURN n
+```
+
+Array-valued because one node can genuinely belong to more than one area
+at once — e.g. `t3-lockout` is both `"login"` (the coarse area) and
+`"login-failed"` (the specific sub-flow). A `State` shared across
+multiple Transitions (e.g. `LoggedOut`, touched by `t1`/`t2a`/`t4`/`t7`/
+`t8`) gets the real *union* of every Transition's tags that touches it,
+not just whichever one happened to write last.
+
+**Property, not a node, by design**: this is a lightweight
+classification, not a rich, independently-referenceable entity (no
+description, no owner, no sub-structure) — matching this project's
+existing precedent for domain/category tagging (`Goal.domain` is a plain
+property, not a node). If a functional area later needs its own metadata
+or a queryable "list every area that exists," promoting it to a real
+`FunctionalArea` node is the natural escalation — not something built
+preemptively here.
+
 ## Business layer
 
 The requirements hierarchy — real, human-authored specification content,

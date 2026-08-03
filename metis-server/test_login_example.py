@@ -170,6 +170,62 @@ def test_real_revision_history_exists_for_login_example_nodes():
     assert chain[0].source_episode_id
 
 
+def test_functional_areas_one_line_query_finds_the_right_transitions():
+    """Real, requested extension: a one-line query by functional area must
+    find exactly the right Transitions -- login-successful (t1, t1b-e) and
+    login-failed (t2a-d, t3) are disjoint, real sets, not overlapping."""
+    _generate_once()
+    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    try:
+        with driver.session() as s:
+            successful = {r["id"] for r in s.run(
+                "MATCH (t:Transition) WHERE 'login-successful' IN t.functional_areas "
+                "RETURN t.id AS id"
+            ).data()}
+            failed = {r["id"] for r in s.run(
+                "MATCH (t:Transition) WHERE 'login-failed' IN t.functional_areas "
+                "RETURN t.id AS id"
+            ).data()}
+    finally:
+        driver.close()
+    assert successful == {
+        "demo:login:transition:t1-valid-login",
+        "demo:login:transition:t1b-valid-login-after-1-failure",
+        "demo:login:transition:t1c-valid-login-after-2-failures",
+        "demo:login:transition:t1d-valid-login-after-3-failures",
+        "demo:login:transition:t1e-valid-login-after-4-failures",
+    }
+    assert failed == {
+        "demo:login:transition:t2a-invalid-login-attempt-1",
+        "demo:login:transition:t2b-invalid-login-attempt-2",
+        "demo:login:transition:t2c-invalid-login-attempt-3",
+        "demo:login:transition:t2d-invalid-login-attempt-4",
+        "demo:login:transition:t3-lockout",
+    }
+    assert successful.isdisjoint(failed)
+
+
+def test_functional_areas_on_a_shared_state_is_a_real_union():
+    """LoggedOut is touched by 5 different Transitions across 5 different
+    sub-flows (login-successful via t1, login-failed via t2a, password-reset
+    via t4, session-management via t7, account-recovery via t8) -- its
+    functional_areas must be the real union of all of them, not just
+    whichever Transition happened to write last."""
+    _generate_once()
+    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    try:
+        with driver.session() as s:
+            rec = s.run(
+                "MATCH (s:State {id: 'demo:login:state:LoggedOut'}) RETURN s.functional_areas AS areas"
+            ).single()
+    finally:
+        driver.close()
+    assert set(rec["areas"]) == {
+        "login", "login-successful", "login-failed",
+        "password-reset", "session-management", "account-recovery",
+    }
+
+
 if __name__ == "__main__":
     if not NEO4J_PASSWORD:
         print("METIS_NEO4J_PASSWORD is not set.", file=sys.stderr)
