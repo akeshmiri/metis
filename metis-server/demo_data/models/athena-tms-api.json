@@ -1,0 +1,405 @@
+{
+  "id": "athena-tms-api",
+  "states": [
+    {
+      "id": "Ready",
+      "name": "Ready",
+      "surface": "api",
+      "is_initial": true
+    },
+    {
+      "id": "Created201",
+      "name": "Created201",
+      "surface": "api",
+      "is_initial": false
+    },
+    {
+      "id": "NoContent204",
+      "name": "NoContent204",
+      "surface": "api",
+      "is_initial": false
+    },
+    {
+      "id": "Ok200",
+      "name": "Ok200",
+      "surface": "api",
+      "is_initial": false
+    },
+    {
+      "id": "AlreadyReported208",
+      "name": "AlreadyReported208",
+      "surface": "api",
+      "is_initial": false
+    }
+  ],
+  "transitions": [
+    {
+      "id": "org.catools.athena.tms.rest.controller.ItemController.saveOrUpdate:org.springframework.http.ResponseEntity(org.catools.athena.model.tms.ItemDto)::POST->Created201",
+      "source": "Ready",
+      "trigger": "POST /item",
+      "target": "Created201",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.ItemController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /item/{id}",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.ItemController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /item/{id}",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.ItemController.search:org.springframework.http.ResponseEntity(java.lang.String)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /item",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.ItemController.search:org.springframework.http.ResponseEntity(java.lang.String)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /item",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.ItemTypeController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /itemType/{id}",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.ItemTypeController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /itemType/{id}",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.ItemTypeController.search:org.springframework.http.ResponseEntity(java.lang.String)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /itemType",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.ItemTypeController.search:org.springframework.http.ResponseEntity(java.lang.String)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /itemType",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.ItemTypeController.saveOrUpdate:org.springframework.http.ResponseEntity(org.catools.athena.model.tms.ItemTypeDto)::POST->Created201",
+      "source": "Ready",
+      "trigger": "POST /itemType",
+      "target": "Created201",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.PriorityController.saveOrUpdate:org.springframework.http.ResponseEntity(org.catools.athena.model.tms.PriorityDto)::POST->Created201",
+      "source": "Ready",
+      "trigger": "POST /priority",
+      "target": "Created201",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.PriorityController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /priority/{id}",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.PriorityController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /priority/{id}",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.PriorityController.search:org.springframework.http.ResponseEntity(java.lang.String)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /priority",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.PriorityController.search:org.springframework.http.ResponseEntity(java.lang.String)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /priority",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.StatusController.saveOrUpdate:org.springframework.http.ResponseEntity(org.catools.athena.model.tms.StatusDto)::POST->Created201",
+      "source": "Ready",
+      "trigger": "POST /status",
+      "target": "Created201",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.StatusController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /status/{id}",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.StatusController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /status/{id}",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.StatusController.search:org.springframework.http.ResponseEntity(java.lang.String)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /status",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.StatusController.search:org.springframework.http.ResponseEntity(java.lang.String)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /status",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.StatusTransitionController.save:org.springframework.http.ResponseEntity(java.lang.String,org.catools.athena.model.tms.StatusTransitionDto)::POST->AlreadyReported208",
+      "source": "Ready",
+      "trigger": "POST /transition",
+      "target": "AlreadyReported208",
+      "guard": "entityFromDB.isPresent()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.StatusTransitionController.save:org.springframework.http.ResponseEntity(java.lang.String,org.catools.athena.model.tms.StatusTransitionDto)::POST->Created201",
+      "source": "Ready",
+      "trigger": "POST /transition",
+      "target": "Created201",
+      "guard": "NOT (entityFromDB.isPresent())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.StatusTransitionController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /transition/{id}",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.StatusTransitionController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /transition/{id}",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.StatusTransitionController.getAllByItemCode:org.springframework.http.ResponseEntity(java.lang.String)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /transitions",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.StatusTransitionController.getAllByItemCode:org.springframework.http.ResponseEntity(java.lang.String)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /transitions",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.SyncInfoController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /syncInfo/{id}",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.SyncInfoController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /syncInfo/{id}",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.SyncInfoController.search:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String,java.lang.String)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /syncInfo",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.SyncInfoController.search:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String,java.lang.String)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /syncInfo",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.SyncInfoController.saveOrUpdate:org.springframework.http.ResponseEntity(org.catools.athena.model.tms.SyncInfoDto)::POST->Created201",
+      "source": "Ready",
+      "trigger": "POST /syncInfo",
+      "target": "Created201",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.TestCycleController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /cycle/{id}",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.TestCycleController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /cycle/{id}",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.TestCycleController.search:org.springframework.http.ResponseEntity(java.lang.String)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /cycle",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.TestCycleController.search:org.springframework.http.ResponseEntity(java.lang.String)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /cycle",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.TestCycleController.findLastByPattern:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String,java.lang.String)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /cycleByPattern",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.TestCycleController.findLastByPattern:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String,java.lang.String)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /cycleByPattern",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.TestCycleController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.tms.TestCycleDto)::POST->Created201",
+      "source": "Ready",
+      "trigger": "POST /cycle",
+      "target": "Created201",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.TestExecutionController.getSummary:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.Integer)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /summary",
+      "target": "Ok200",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.TestExecutionController.getTrend:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.Integer)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /trend",
+      "target": "Ok200",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.TestExecutionController.getAll:org.springframework.http.ResponseEntity(int,int,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /all",
+      "target": "Ok200",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.TestExecutionController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /execution/{id}",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.TestExecutionController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /execution/{id}",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.TestExecutionController.getAll:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /executions",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.TestExecutionController.getAll:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /executions",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.tms.rest.controller.TestExecutionController.saveOrUpdate:org.springframework.http.ResponseEntity(java.lang.String,org.catools.athena.model.tms.TestExecutionDto)::POST->Created201",
+      "source": "Ready",
+      "trigger": "POST /execution",
+      "target": "Created201",
+      "guard": "",
+      "implementation_status": "implemented"
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "zdr": {
+    "confirmed": false,
+    "confirmed_date": null,
+    "confirmed_by": null,
+    "note": "REPLACE: why this value, and when it was last reviewed"
+  },
+  "models": {
+    "extraction": "REPLACE: model name",
+    "judge": "REPLACE: model name"
+  },
+  "corpus": {
+    "glob": "/absolute/path/to/metis-server/corpus/*.md"
+  },
+  "graph": {
+    "backend": "REPLACE: local | neo4j",
+    "neo4j": {
+      "uri": "REPLACE: bolt://localhost:7687",
+      "user": "REPLACE: neo4j",
+      "password": "REPLACE: Neo4j password"
+    }
+  },
+  "repositories": [
+    {
+      "name": "REPLACE: repository or service name",
+      "classification": "REPLACE: public_internal | confidential | restricted",
+      "note": "REPLACE: why this classification"
+    }
+  ],
+  "connectors": {
+    "application_code": {
+      "athena": {
+        "host": "localhost",
+        "port": 5432,
+        "dbname": "athena",
+        "user": "athena",
+        "password_env": "METIS_ATHENA_PASSWORD"
+      }
+    }
+  },
+  "server": {
+    "transport": "REPLACE: stdio | streamable-http",
+    "public_url": "REPLACE: optional Atlas/MCP HTTP URL"
+  },
+  "atlas": {
+    "endpoint_url": "REPLACE: optional HTTP endpoint for Atlas",
+    "auth_token": "REPLACE: optional HTTP bearer token for Atlas",
+    "timeout_seconds": 30
+  },
+  "security": {
+    "jwt_secret": "REPLACE: generate a local development secret of at least 32 bytes"
+  },
+  "token_optimization": {
+    "headroom_enabled": false
+  }
+}

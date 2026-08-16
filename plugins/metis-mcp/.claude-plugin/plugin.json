@@ -1,0 +1,13 @@
+{
+  "name": "metis-mcp",
+  "description": "Registers the Métis MCP server. Provides traceability, coverage and impact analysis, quality/release/test-design reporting, two-stage intake mining that derives Requirements and AcceptanceCriteria from any Episode's raw content, and runtime skill discovery via metis_list_skills. Requires a running Métis server and a ~/.metis/config.json; see metis-server/QUICKSTART.md.",
+  "version": "0.1.0",
+  "keywords": [
+    "mcp",
+    "requirements",
+    "traceability",
+    "knowledge-graph",
+    "quality-engineering",
+    "metis"
+  ]
+}

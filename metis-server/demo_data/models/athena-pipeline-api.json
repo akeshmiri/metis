@@ -1,0 +1,221 @@
+{
+  "id": "athena-pipeline-api",
+  "states": [
+    {
+      "id": "Ready",
+      "name": "Ready",
+      "surface": "api",
+      "is_initial": true
+    },
+    {
+      "id": "Ok200",
+      "name": "Ok200",
+      "surface": "api",
+      "is_initial": false
+    },
+    {
+      "id": "NoContent204",
+      "name": "NoContent204",
+      "surface": "api",
+      "is_initial": false
+    },
+    {
+      "id": "Created201",
+      "name": "Created201",
+      "surface": "api",
+      "is_initial": false
+    },
+    {
+      "id": "AlreadyReported208",
+      "name": "AlreadyReported208",
+      "surface": "api",
+      "is_initial": false
+    }
+  ],
+  "transitions": [
+    {
+      "id": "org.catools.athena.pipeline.rest.controller.PipelineController.getSummary:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.Integer)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /pipeline/summary",
+      "target": "Ok200",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.pipeline.rest.controller.PipelineController.getTrend:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.Integer)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /pipeline/trend",
+      "target": "Ok200",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.pipeline.rest.controller.PipelineController.getAll:org.springframework.http.ResponseEntity(int,int,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /pipeline/all",
+      "target": "Ok200",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.pipeline.rest.controller.PipelineController.getLastPipeline:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /pipeline",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.pipeline.rest.controller.PipelineController.getLastPipeline:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /pipeline",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.pipeline.rest.controller.PipelineController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /pipeline/{id}",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.pipeline.rest.controller.PipelineController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /pipeline/{id}",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.pipeline.rest.controller.PipelineController.updateEndDate:org.springframework.http.ResponseEntity(java.lang.Long,java.time.Instant)::PUT->Ok200",
+      "source": "Ready",
+      "trigger": "PUT /pipeline",
+      "target": "Ok200",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.pipeline.rest.controller.PipelineController.saveOrUpdate:org.springframework.http.ResponseEntity(org.catools.athena.model.pipeline.PipelineDto)::POST->Created201",
+      "source": "Ready",
+      "trigger": "POST /pipeline",
+      "target": "Created201",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.pipeline.rest.controller.PipelineExecutionController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.pipeline.PipelineExecutionDto)::POST->Created201",
+      "source": "Ready",
+      "trigger": "POST /execution",
+      "target": "Created201",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.pipeline.rest.controller.PipelineExecutionController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /execution/{id}",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.pipeline.rest.controller.PipelineExecutionController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /execution/{id}",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.pipeline.rest.controller.PipelineExecutionStatusController.getAll:org.springframework.http.ResponseEntity()::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /execution_statuses",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.pipeline.rest.controller.PipelineExecutionStatusController.getAll:org.springframework.http.ResponseEntity()::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /execution_statuses",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.pipeline.rest.controller.PipelineExecutionStatusController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /execution_status/{id}",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.pipeline.rest.controller.PipelineExecutionStatusController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /execution_status/{id}",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.pipeline.rest.controller.PipelineExecutionStatusController.getByName:org.springframework.http.ResponseEntity(java.lang.String)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /execution_status",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.pipeline.rest.controller.PipelineExecutionStatusController.getByName:org.springframework.http.ResponseEntity(java.lang.String)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /execution_status",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.pipeline.rest.controller.PipelineExecutionStatusController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.pipeline.PipelineExecutionStatusDto)::POST->AlreadyReported208",
+      "source": "Ready",
+      "trigger": "POST /execution_status",
+      "target": "AlreadyReported208",
+      "guard": "executionStatusFromDb.isPresent()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.pipeline.rest.controller.PipelineExecutionStatusController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.pipeline.PipelineExecutionStatusDto)::POST->Created201",
+      "source": "Ready",
+      "trigger": "POST /execution_status",
+      "target": "Created201",
+      "guard": "NOT (executionStatusFromDb.isPresent())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.pipeline.rest.controller.PipelineScenarioExecutionController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.pipeline.PipelineScenarioExecutionDto)::POST->Created201",
+      "source": "Ready",
+      "trigger": "POST /scenario",
+      "target": "Created201",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.pipeline.rest.controller.PipelineScenarioExecutionController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /scenario/{id}",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.pipeline.rest.controller.PipelineScenarioExecutionController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /scenario/{id}",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    }
+  ]
+}

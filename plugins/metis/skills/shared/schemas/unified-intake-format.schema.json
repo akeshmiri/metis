@@ -1,0 +1,835 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas.internal/schemas/unified-intake-format.schema.json",
+  "title": "Unified Intake Format (UIF) Schema",
+  "description": "Schema for unified extraction of FACTS and SPECIFICATIONS from all evidence sources",
+  "version": "1.0.0",
+  "type": "object",
+  "required": [
+    "uif_version",
+    "scope",
+    "metadata"
+  ],
+  "properties": {
+    "uif_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "scope": {
+      "type": "object",
+      "required": [
+        "primary_id",
+        "primary_type",
+        "source_system",
+        "created_at",
+        "last_updated_at",
+        "uif_generated_at"
+      ],
+      "properties": {
+        "primary_id": {
+          "type": "string"
+        },
+        "primary_type": {
+          "type": "string",
+          "enum": [
+            "epic",
+            "story",
+            "feature",
+            "task",
+            "page",
+            "test_case",
+            "defect"
+          ]
+        },
+        "secondary_id": {
+          "type": "string"
+        },
+        "source_system": {
+          "type": "string",
+          "enum": [
+            "jira",
+            "confluence",
+            "scale",
+            "code",
+            "swagger",
+            "database",
+            "athena",
+            "kubernetes",
+            "composite"
+          ]
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "last_updated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "uif_generated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    },
+    "metadata": {
+      "type": "object",
+      "required": [
+        "title",
+        "status"
+      ],
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/normalized_status"
+        },
+        "priority": {
+          "type": "string",
+          "enum": [
+            "critical",
+            "high",
+            "medium",
+            "low",
+            "optional"
+          ]
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "facts": {
+      "type": "object",
+      "properties": {
+        "observations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fact"
+          }
+        },
+        "measurements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fact"
+          }
+        },
+        "current_state": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fact"
+          }
+        },
+        "constraints": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fact"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "specifications": {
+      "type": "object",
+      "properties": {
+        "business_flows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/business_flow"
+          }
+        },
+        "acceptance_criteria": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/acceptance_criterion"
+          }
+        },
+        "business_rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "non_functional_requirements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nfr"
+          }
+        },
+        "deployment_model": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "api_contracts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/api_endpoint"
+      }
+    },
+    "data_model": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/data_entity"
+      }
+    },
+    "error_handling": {
+      "type": "object",
+      "properties": {
+        "error_scenarios": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/error_scenario"
+          }
+        },
+        "edge_cases": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/error_scenario"
+          }
+        },
+        "known_issues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "open_questions": {
+      "type": "object",
+      "properties": {
+        "ambiguities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "missing_requirements": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "conflicts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/conflict"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "traceability": {
+      "type": "object",
+      "required": [
+        "source_references"
+      ],
+      "properties": {
+        "source_references": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/source_reference"
+          },
+          "minItems": 1
+        },
+        "evidence_artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence_artifact"
+          }
+        },
+        "derivation_log": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/derivation_entry"
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "normalized_status": {
+      "type": "object",
+      "properties": {
+        "approval_state": {
+          "type": "string",
+          "enum": [
+            "draft",
+            "under_review",
+            "approved",
+            "rejected"
+          ]
+        },
+        "automation_status": {
+          "type": "string",
+          "enum": [
+            "not_started",
+            "ready_to_generate",
+            "generated",
+            "in_review",
+            "deployed",
+            "maintenance"
+          ]
+        },
+        "validation_status": {
+          "type": "string",
+          "enum": [
+            "not_validated",
+            "passing",
+            "failing",
+            "blocked_on_dependencies"
+          ]
+        },
+        "measurement_status": {
+          "type": "string",
+          "enum": [
+            "not_measured",
+            "in_progress",
+            "complete",
+            "outdated"
+          ]
+        },
+        "freshness_status": {
+          "type": "string",
+          "enum": [
+            "fresh",
+            "stale_1_week",
+            "stale_1_month",
+            "stale_3_months",
+            "archived"
+          ]
+        },
+        "summary_status": {
+          "type": "string",
+          "enum": [
+            "draft",
+            "active",
+            "completed",
+            "deferred",
+            "blocked"
+          ]
+        },
+        "last_status_update": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "status_owner": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "fact": {
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "name",
+        "source_ref"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "observation",
+            "measurement",
+            "current_state",
+            "constraint"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "value": {},
+        "unit": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "string",
+          "enum": [
+            "observed",
+            "inferred",
+            "assumed"
+          ]
+        },
+        "source_ref": {
+          "$ref": "#/$defs/source_reference"
+        },
+        "derived": {
+          "type": "boolean"
+        },
+        "validation_status": {
+          "type": "string",
+          "enum": [
+            "confirmed",
+            "needs_validation",
+            "contradicts_spec"
+          ]
+        },
+        "linked_facts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    },
+    "acceptance_criterion": {
+      "type": "object",
+      "required": [
+        "id",
+        "statement"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "requirement_id": {
+          "type": "string"
+        },
+        "statement": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "functional",
+            "performance",
+            "compliance",
+            "usability",
+            "compatibility"
+          ]
+        },
+        "priority": {
+          "type": "string",
+          "enum": [
+            "must_have",
+            "should_have",
+            "nice_to_have"
+          ]
+        },
+        "verification_method": {
+          "type": "string",
+          "enum": [
+            "automated",
+            "manual",
+            "observability",
+            "analytics"
+          ]
+        },
+        "test_case_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "automation_coverage": {
+          "type": "object",
+          "additionalProperties": false
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "covered",
+            "partial",
+            "uncovered",
+            "waived"
+          ]
+        },
+        "source_ref": {
+          "$ref": "#/$defs/source_reference"
+        },
+        "derived": {
+          "type": "boolean"
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "business_flow": {
+      "type": "object",
+      "required": [
+        "id",
+        "name"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "primary_actor": {
+          "type": "string"
+        },
+        "preconditions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "postconditions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "performance_targets": {
+          "type": "object",
+          "additionalProperties": false
+        },
+        "source_ref": {
+          "$ref": "#/$defs/source_reference"
+        },
+        "derived": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "nfr": {
+      "type": "object",
+      "required": [
+        "id",
+        "category",
+        "requirement"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "performance",
+            "scalability",
+            "reliability",
+            "security",
+            "maintainability",
+            "usability"
+          ]
+        },
+        "requirement": {
+          "type": "string"
+        },
+        "targets": {
+          "type": "object",
+          "additionalProperties": false
+        },
+        "measurement_method": {
+          "type": "string"
+        },
+        "current_measurement": {
+          "$ref": "#/$defs/fact"
+        },
+        "gap": {
+          "type": "string"
+        },
+        "source_ref": {
+          "$ref": "#/$defs/source_reference"
+        },
+        "derived": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "api_endpoint": {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "path"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "GET",
+            "POST",
+            "PUT",
+            "DELETE",
+            "PATCH"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "authentication": {
+          "type": "string"
+        },
+        "request": {
+          "type": "object",
+          "additionalProperties": false
+        },
+        "response": {
+          "type": "object",
+          "additionalProperties": false
+        },
+        "error_responses": {
+          "type": "array"
+        },
+        "source_ref": {
+          "$ref": "#/$defs/source_reference"
+        }
+      },
+      "additionalProperties": false
+    },
+    "data_entity": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "type"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "properties": {
+          "type": "array"
+        },
+        "relationships": {
+          "type": "array"
+        },
+        "source_ref": {
+          "$ref": "#/$defs/source_reference"
+        }
+      },
+      "additionalProperties": false
+    },
+    "error_scenario": {
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "name"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "error_scenario",
+            "edge_case"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "trigger": {
+          "type": "string"
+        },
+        "expected_behavior": {
+          "type": "string"
+        },
+        "source_ref": {
+          "$ref": "#/$defs/source_reference"
+        }
+      },
+      "additionalProperties": false
+    },
+    "source_reference": {
+      "type": "object",
+      "required": [
+        "source_system",
+        "source_id"
+      ],
+      "properties": {
+        "source_system": {
+          "type": "string"
+        },
+        "source_id": {
+          "type": "string"
+        },
+        "source_url": {
+          "type": "string"
+        },
+        "quote": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "string",
+          "enum": [
+            "direct",
+            "inferred",
+            "assumed"
+          ]
+        },
+        "extracted_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "extracted_by": {
+          "type": "string"
+        },
+        "fields_extracted": {
+          "type": "array"
+        }
+      },
+      "additionalProperties": false
+    },
+    "evidence_artifact": {
+      "type": "object",
+      "required": [
+        "artifact_path",
+        "artifact_type"
+      ],
+      "properties": {
+        "artifact_path": {
+          "type": "string"
+        },
+        "artifact_type": {
+          "type": "string"
+        },
+        "stored_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "scope": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "derivation_entry": {
+      "type": "object",
+      "required": [
+        "id",
+        "derived_item_id",
+        "derivation_method"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "derived_item_id": {
+          "type": "string"
+        },
+        "derivation_method": {
+          "type": "string"
+        },
+        "source_items": {
+          "type": "array"
+        },
+        "rule": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "conflict": {
+      "type": "object",
+      "required": [
+        "id",
+        "elements_in_conflict",
+        "description",
+        "sources"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "elements_in_conflict": {
+          "type": "array"
+        },
+        "description": {
+          "type": "string"
+        },
+        "sources": {
+          "type": "array"
+        },
+        "resolution_status": {
+          "type": "string"
+        },
+        "source_of_truth": {
+          "type": "string"
+        },
+        "added_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "assigned_to": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

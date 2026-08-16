@@ -1002,6 +1002,513 @@
               "type": "string"
             },
             "description": "Distinct real test-design techniques found across the scope (e.g. 'Boundary Value Analysis', 'State Transition Testing')."
+          },
+          "acceptance_criteria_by_lifecycle": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "orphan_acceptance_criteria": {
+            "type": "array"
+          },
+          "orphan_acceptance_criterion_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "condition_unit_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "metis_generate_transition_test_plan": {
+      "description": "Read-only State-Transition-ordered coverage and test plan. Joins Requirements, AcceptanceCriteria, TestCases, and pyramid gaps through the real Transition backbone; optional skeletons remain human-review-only.",
+      "input": {
+        "type": "object",
+        "required": [
+          "scope"
+        ],
+        "properties": {
+          "scope": {
+            "$ref": "#/$defs/transition_scope"
+          },
+          "include_skeletons": {
+            "type": "boolean",
+            "default": false
+          },
+          "order_by_state_sequence": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "required": [
+          "scope_kind",
+          "scope_description",
+          "ordered_by",
+          "summary",
+          "model_checks",
+          "transitions"
+        ],
+        "properties": {
+          "scope_kind": {
+            "type": "string"
+          },
+          "scope_description": {
+            "type": "string"
+          },
+          "ordered_by": {
+            "type": "string",
+            "enum": [
+              "state_transition_sequence",
+              "transition_id"
+            ]
+          },
+          "include_skeletons": {
+            "type": "boolean"
+          },
+          "summary": {
+            "type": "object",
+            "required": [
+              "total_transitions",
+              "implemented_transitions",
+              "planned_transitions",
+              "transitions_missing_requirements",
+              "transitions_missing_acceptance_criteria",
+              "acceptance_criteria_missing_test_cases",
+              "transitions_with_pyramid_gaps",
+              "transitions_with_unknown_condition_coverage"
+            ],
+            "properties": {
+              "total_transitions": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "implemented_transitions": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "planned_transitions": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "transitions_missing_requirements": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "transitions_missing_acceptance_criteria": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "acceptance_criteria_missing_test_cases": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "transitions_with_pyramid_gaps": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "transitions_with_unknown_condition_coverage": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "model_checks": {
+            "type": "array"
+          },
+          "transitions": {
+            "type": "array"
+          }
+        }
+      }
+    },
+    "metis_ingest_requirements": {
+      "description": "Atlas bridge (Phase D): lands the canonical {state_transition_map, intents, requirements, acceptance_criteria} bundle. Sole path Requirement/AcceptanceCriterion nodes are created from Atlas -- every entity still passes through the real guardrail stack (structural validation, confidence tiering, server-side EARS re-check) via submit_candidate. Requires graph.backend: neo4j; returns {adapted: true} against the dogfooding LocalGraphStore.",
+      "input": {
+        "type": "object",
+        "required": [
+          "payload"
+        ],
+        "properties": {
+          "payload": {
+            "type": "object",
+            "properties": {
+              "job_id": {
+                "type": "string"
+              },
+              "scope_id": {
+                "type": "string"
+              },
+              "state_transition_map": {
+                "type": "object"
+              },
+              "intents": {
+                "type": "array"
+              },
+              "requirements": {
+                "type": "array"
+              },
+              "acceptance_criteria": {
+                "type": "array"
+              },
+              "condition_coverage": {
+                "type": "object",
+                "description": "Validated condition-coverage artifact. Required when Requirements or Acceptance Criteria carry condition_unit_ids."
+              }
+            },
+            "required": [
+              "state_transition_map",
+              "intents",
+              "requirements",
+              "acceptance_criteria"
+            ]
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "state_machines_written": {
+            "type": "integer"
+          },
+          "states_written": {
+            "type": "integer"
+          },
+          "transitions_written": {
+            "type": "integer"
+          },
+          "evidence_links_recorded": {
+            "type": "integer"
+          },
+          "intents_written": {
+            "type": "integer"
+          },
+          "intents_rejected": {
+            "type": "integer"
+          },
+          "requirements_written": {
+            "type": "integer"
+          },
+          "requirements_quarantined": {
+            "type": "integer"
+          },
+          "requirements_rejected": {
+            "type": "integer"
+          },
+          "ac_written": {
+            "type": "integer"
+          },
+          "ac_rejected": {
+            "type": "integer"
+          },
+          "ac_skipped_no_requirement": {
+            "type": "integer"
+          },
+          "condition_coverage_status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "condition_units_covered": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "ears_disagreement": {
+            "type": "array"
+          },
+          "adapted": {
+            "type": "boolean"
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "state_machines_written",
+          "states_written",
+          "transitions_written",
+          "evidence_links_recorded",
+          "intents_written",
+          "requirements_written",
+          "requirements_quarantined",
+          "requirements_rejected",
+          "ac_written",
+          "ac_skipped_no_requirement"
+        ]
+      }
+    },
+    "metis_ingest_repository_analysis": {
+      "description": "Atlas bridge (Phase D): lands git-repository-analyzer's Repository/Epic/Defect/TestCase/Endpoint bundle. Never creates Requirement nodes -- inferred stories are formalized by requirement-analyzer and pushed separately via metis_ingest_requirements. Requires graph.backend: neo4j; returns {adapted: true} against the dogfooding LocalGraphStore.",
+      "input": {
+        "type": "object",
+        "required": [
+          "payload"
+        ],
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": [
+              "repo_key"
+            ],
+            "properties": {
+              "repo_key": {
+                "type": "string"
+              },
+              "repo_ref": {
+                "type": "string"
+              },
+              "job_id": {
+                "type": "string"
+              },
+              "epics": {
+                "type": "array"
+              },
+              "defects": {
+                "type": "array"
+              },
+              "tests": {
+                "type": "array"
+              },
+              "endpoints": {
+                "type": "array"
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "epics_written": {
+            "type": "integer"
+          },
+          "epics_rejected": {
+            "type": "integer"
+          },
+          "defects_written": {
+            "type": "integer"
+          },
+          "defects_rejected": {
+            "type": "integer"
+          },
+          "test_cases_written": {
+            "type": "integer"
+          },
+          "test_cases_rejected": {
+            "type": "integer"
+          },
+          "endpoints_written": {
+            "type": "integer"
+          },
+          "adapted": {
+            "type": "boolean"
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "epics_written",
+          "defects_written",
+          "test_cases_written",
+          "endpoints_written"
+        ]
+      }
+    },
+    "metis_ingest_swagger_analysis": {
+      "description": "Atlas bridge (Phase D): lands intake-processor's Swagger/OpenAPI UIF as ExternalAPISpec + Endpoint nodes. data_model/DTO entries are reported as data_model_skipped, never silently dropped -- no Schema/DTO label exists in the closed ontology yet. Requires graph.backend: neo4j; returns {adapted: true} against the dogfooding LocalGraphStore.",
+      "input": {
+        "type": "object",
+        "required": [
+          "payload"
+        ],
+        "properties": {
+          "payload": {
+            "type": "object",
+            "properties": {
+              "spec_id": {
+                "type": "string"
+              },
+              "job_id": {
+                "type": "string"
+              },
+              "registry_source": {
+                "type": "string"
+              },
+              "scope": {
+                "type": "object"
+              },
+              "metadata": {
+                "type": "object"
+              },
+              "specifications": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "endpoints_written": {
+            "type": "integer"
+          },
+          "data_model_skipped": {
+            "type": "integer"
+          },
+          "adapted": {
+            "type": "boolean"
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "endpoints_written",
+          "data_model_skipped"
+        ]
+      }
+    },
+    "metis_mine_requirements": {
+      "description": "Two-stage intake mining: derive Requirement + AcceptanceCriterion (and, where the source genuinely describes one, State/Transition) from an Episode's raw_content, linking the full chain through TestDesign. Stage 1 is deterministic and free (segment, discard cue-less blocks, dedup, short-circuit already-EARS text); Stage 2 pays a model only for the ambiguous remainder and every proposal is re-verified deterministically (EARS + vagueness + source-grounding) before it can land. Nothing auto-writes: everything lands at lifecycle_state 'Quarantine', confidence 0.7, below ConfidenceTiering's 0.9 floor. Additive to metis_ingest_requirements, which is unchanged; both converge on submit_candidate(). Requires graph.backend: neo4j.",
+      "input": {
+        "type": "object",
+        "required": [
+          "episode_id"
+        ],
+        "properties": {
+          "episode_id": {
+            "type": "string",
+            "description": "Id of an Episode carrying raw_content, e.g. 'flatfiles:corpus/spec.md'"
+          },
+          "confirm_cost": {
+            "type": "boolean",
+            "default": false,
+            "description": "COST-08 confirmation for batches materially larger than typical."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": true,
+            "description": "Run Stages 1-2 and return the plan and cost without writing."
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "required": [
+          "episode_id",
+          "segmentation",
+          "mining",
+          "planned_chains",
+          "dry_run"
+        ],
+        "properties": {
+          "episode_id": {
+            "type": "string"
+          },
+          "episode_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "type": "string",
+            "description": "Resolved from config models.extraction, never hardcoded."
+          },
+          "segmentation": {
+            "type": "object",
+            "description": "Stage 1 counts incl. char_reduction_pct -- the share of source text that never reached a model."
+          },
+          "mining": {
+            "type": "object",
+            "description": "Stage 2 counts, calls_made and total_cost_usd."
+          },
+          "planned_chains": {
+            "type": "integer"
+          },
+          "blocked": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "Proposals rejected by deterministic verification, each with its reason and evidence span."
+          },
+          "unplannable": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "landed": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "Present only when dry_run is false."
+          },
+          "refused": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "Chains the guardrail gate declined, with reasons."
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "requires_confirmation": {
+            "type": "boolean",
+            "description": "True when COST-08 gating stopped the batch."
+          }
+        }
+      }
+    },
+    "metis_list_skills": {
+      "description": "Runtime discovery of the Métis skill catalogue. Returns each skill's name, description, routing triggers, use-when text, step files and owning workflow agent, plus the workflow-agent groupings and supported clients -- all read from the real SKILL.md files and the router's Quick Routing table, never a hand-maintained list. Needs no graph backend, so it works against both 'local' and 'neo4j' and is the cheapest live-connection check.",
+      "input": {
+        "type": "object",
+        "required": [],
+        "properties": {}
+      },
+      "output": {
+        "type": "object",
+        "required": [
+          "skills",
+          "workflow_agents",
+          "counts",
+          "clients"
+        ],
+        "properties": {
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "name, description, triggers[], use_when, steps[], workflow_agent, path"
+          },
+          "workflow_agents": {
+            "type": "object",
+            "description": "agent name -> {title, description, skills[], tools[]}"
+          },
+          "counts": {
+            "type": "object",
+            "description": "skills and workflow_agents totals"
+          },
+          "clients": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Clients an agent file is generated for, e.g. claude and copilot."
           }
         }
       }
@@ -1121,6 +1628,35 @@
           "required": [
             "project_wide"
           ]
+        }
+      ]
+    },
+    "transition_scope": {
+      "type": "object",
+      "description": "A Transition, State-machine, or standard graph scope to plan in State-Transition order.",
+      "oneOf": [
+        {
+          "properties": {
+            "transition_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "transition_id"
+          ]
+        },
+        {
+          "properties": {
+            "state_machine_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "state_machine_id"
+          ]
+        },
+        {
+          "$ref": "#/$defs/scope"
         }
       ]
     }

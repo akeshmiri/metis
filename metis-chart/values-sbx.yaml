@@ -19,15 +19,15 @@ components:
     # Real bug found deploying this to a real cluster: Helm merges VALUES
     # MAPS across -f files, but REPLACES LISTS wholesale -- this used to
     # declare only the one changed entry (DEFAULT_POLL_INTERVAL_SECONDS),
-    # which silently dropped CONNECTOR_MANIFEST_DIR and METIS_HOME (defined
+    # which silently dropped CONNECTOR_MANIFEST_DIR and METIS_CONFIG_PATH (defined
     # in the base values.yaml's list for this same component) instead of
     # overriding just that one value. The full list must be restated here,
     # not just the delta.
     env:
       - name: CONNECTOR_MANIFEST_DIR
         value: "/etc/metis/connectors"
-      - name: METIS_HOME
-        value: "/etc/metis/config"
+      - name: METIS_CONFIG_PATH
+        value: "/etc/metis/config/config.json"
       - name: DEFAULT_POLL_INTERVAL_SECONDS
         value: "900"   # gentler polling for a sandbox-scale pilot
   guardrail-corpus-runner:

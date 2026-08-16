@@ -1,0 +1,111 @@
+{
+  "id": "athena-kube-api",
+  "states": [
+    {
+      "id": "Ready",
+      "name": "Ready",
+      "surface": "api",
+      "is_initial": true
+    },
+    {
+      "id": "Ok200",
+      "name": "Ok200",
+      "surface": "api",
+      "is_initial": false
+    },
+    {
+      "id": "NoContent204",
+      "name": "NoContent204",
+      "surface": "api",
+      "is_initial": false
+    },
+    {
+      "id": "Created201",
+      "name": "Created201",
+      "surface": "api",
+      "is_initial": false
+    }
+  ],
+  "transitions": [
+    {
+      "id": "org.catools.athena.kube.rest.controler.PodController.getSummary:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.Integer)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /summary",
+      "target": "Ok200",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.kube.rest.controler.PodController.getTrend:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.Integer)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /trend",
+      "target": "Ok200",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.kube.rest.controler.PodController.getAllPaged:org.springframework.http.ResponseEntity(int,int,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /all",
+      "target": "Ok200",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.kube.rest.controler.PodController.getAll:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /pods",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.kube.rest.controler.PodController.getAll:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /pods",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.kube.rest.controler.PodController.getByNameAndNamespace:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /pod",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.kube.rest.controler.PodController.getByNameAndNamespace:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /pod",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.kube.rest.controler.PodController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /pod/{id}",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.kube.rest.controler.PodController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /pod/{id}",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.kube.rest.controler.PodController.saveOrUpdate:org.springframework.http.ResponseEntity(org.catools.athena.model.kube.PodDto)::POST->Created201",
+      "source": "Ready",
+      "trigger": "POST /pod",
+      "target": "Created201",
+      "guard": "",
+      "implementation_status": "implemented"
+    }
+  ]
+}

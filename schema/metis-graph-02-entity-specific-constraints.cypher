@@ -185,11 +185,18 @@ FOR (x:ExternalAPISpec) REQUIRE x.registry_source IS NOT NULL;
 // from is the implicit Given). Neither FROM_STATE nor TO_STATE ever had
 // a real relationship-property index (an oversight); WHEN/THEN get one,
 // closing that gap at the same time.
+//
+// Cached Jira ingestion: Episode-[:DIRECTLY_LINKS_TO]->Episode preserves
+// a direct Jira issuelink as provenance. The importer resolves only one
+// cache-backed hop and never treats this source relationship as business
+// traceability.
 
 CREATE INDEX rel_t_valid IF NOT EXISTS FOR ()-[r:HAS_AC]-() ON (r.t_valid);
 CREATE INDEX rel_t_invalid IF NOT EXISTS FOR ()-[r:HAS_AC]-() ON (r.t_invalid);
 CREATE INDEX rel_implements_t_valid IF NOT EXISTS FOR ()-[r:IMPLEMENTS]-() ON (r.t_valid);
 CREATE INDEX rel_implements_t_invalid IF NOT EXISTS FOR ()-[r:IMPLEMENTS]-() ON (r.t_invalid);
+CREATE INDEX rel_modifies_t_valid IF NOT EXISTS FOR ()-[r:MODIFIES]-() ON (r.t_valid);
+CREATE INDEX rel_references_t_valid IF NOT EXISTS FOR ()-[r:REFERENCES]-() ON (r.t_valid);
 CREATE INDEX rel_verifies_t_valid IF NOT EXISTS FOR ()-[r:VERIFIES]-() ON (r.t_valid);
 CREATE INDEX rel_produces_t_valid IF NOT EXISTS FOR ()-[r:PRODUCES]-() ON (r.t_valid);
 CREATE INDEX rel_traces_to_t_valid IF NOT EXISTS FOR ()-[r:TRACES_TO]-() ON (r.t_valid);
@@ -200,8 +207,17 @@ CREATE INDEX rel_has_t_valid IF NOT EXISTS FOR ()-[r:HAS]-() ON (r.t_valid);
 CREATE INDEX rel_ran_against_t_valid IF NOT EXISTS FOR ()-[r:RAN_AGAINST]-() ON (r.t_valid);
 CREATE INDEX rel_includes_version_t_valid IF NOT EXISTS FOR ()-[r:INCLUDES_VERSION]-() ON (r.t_valid);
 CREATE INDEX rel_validates_t_valid IF NOT EXISTS FOR ()-[r:VALIDATES]-() ON (r.t_valid);
+CREATE INDEX rel_directly_links_to_t_valid IF NOT EXISTS FOR ()-[r:DIRECTLY_LINKS_TO]-() ON (r.t_valid);
 CREATE INDEX rel_when_t_valid IF NOT EXISTS FOR ()-[r:WHEN]-() ON (r.t_valid);
 CREATE INDEX rel_then_t_valid IF NOT EXISTS FOR ()-[r:THEN]-() ON (r.t_valid);
+
+// Session 14: JiraItem-REPRESENTS->Requirement/Defect and
+// JiraItem-LINKS_TO->JiraItem (Jira parent/subtask/issuelink evidence) --
+// HAS_AC and REFERENCES already have indexes above and cover
+// JiraItem-HAS_AC->AcceptanceCriterion / Commit-REFERENCES->JiraItem|
+// AcceptanceCriterion without any new index type.
+CREATE INDEX rel_represents_t_valid IF NOT EXISTS FOR ()-[r:REPRESENTS]-() ON (r.t_valid);
+CREATE INDEX rel_links_to_t_valid IF NOT EXISTS FOR ()-[r:LINKS_TO]-() ON (r.t_valid);
 
 // Every relationship of these types also carries: created_by (human|ai_decision
 // node ref), created_at, confidence (§7.1's edge-level confidence, distinct

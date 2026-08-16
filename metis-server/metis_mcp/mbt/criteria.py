@@ -1,0 +1,296 @@
+"""
+Coverage criteria (application spec §6.1, §6.2).
+
+A criterion is a function from a model to a set of **coverage targets** -- the
+things that must be validated. It never decides how many assertions a test makes:
+spec P-1a requires every criterion to preserve one validation per test, so deeper
+criteria produce *more targets*, never richer ones.
+
+Each target names exactly one `validated_transition_id`. That is what makes
+P-5 ("one validation per test") a property of the type system here rather than a
+convention someone has to remember.
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+
+from metis_mcp.mbt.model import Model, Transition
+
+ALL_STATES = "all-states"
+ALL_TRANSITIONS = "all-transitions"
+ALL_TRANSITION_PAIRS = "all-transition-pairs"
+GUARD_COVERAGE = "guard-coverage"
+
+# ISO/IEC/IEEE 29119-4 boundary value analysis + equivalence partitioning.
+# Opt-in like guard coverage (P-2a): it multiplies cases on every journey, and
+# most journeys do not need that depth.
+BOUNDARY_COVERAGE = "boundary-coverage"
+
+# The default. Spec P-2: the criterion whose coverage number is meaningful
+# without qualification and whose cost is predictable.
+DEFAULT_CRITERION = ALL_TRANSITIONS
+
+
+@dataclass(frozen=True)
+class CoverageTarget:
+    """One thing that must be validated by exactly one test.
+
+    `validated_transition_id` is the single assertion (spec P-5).
+    `via_transition_id`, where set, constrains how setup must arrive -- this is
+    how transition-pair coverage varies the *route* without adding a second
+    assertion.
+    `data_note` carries a guard-coverage condition as a data requirement; it is
+    never a solved value (spec M-9).
+    """
+
+    kind: str
+    key: str
+    validated_transition_id: str
+    via_transition_id: str | None = None
+    data_note: str | None = None
+
+
+@dataclass
+class CriterionResult:
+    name: str
+    targets: list[CoverageTarget] = field(default_factory=list)
+    unsatisfiable: list[tuple[str, str]] = field(default_factory=list)  # (key, reason)
+
+
+# ---------------------------------------------------------------------------
+# all-states
+# ---------------------------------------------------------------------------
+
+def _all_states(model: Model) -> CriterionResult:
+    """One target per non-initial state: validate arrival at it.
+
+    Initial states need no test -- a tester establishes them as a precondition,
+    they are not something the system transitions into. Including them would
+    claim coverage for behaviour that was never exercised.
+    """
+    result = CriterionResult(name=ALL_STATES)
+    initial = set(model.initial_state_ids())
+    for sid in model.state_ids():
+        if sid in initial:
+            continue
+        arrivals = model.incoming(sid)
+        if not arrivals:
+            result.unsatisfiable.append((sid, "no generatable transition arrives at this state"))
+            continue
+        # Deterministic choice: the lowest-id arriving transition (spec P-7).
+        result.targets.append(CoverageTarget(
+            kind="state", key=sid, validated_transition_id=arrivals[0].id,
+        ))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# all-transitions  (the default)
+# ---------------------------------------------------------------------------
+
+def _all_transitions(model: Model) -> CriterionResult:
+    result = CriterionResult(name=ALL_TRANSITIONS)
+    for t in model.generatable_transitions():
+        result.targets.append(CoverageTarget(
+            kind="transition", key=t.id, validated_transition_id=t.id,
+        ))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# all-transition-pairs
+# ---------------------------------------------------------------------------
+
+def _all_transition_pairs(model: Model) -> CriterionResult:
+    """One target per consecutive pair (t1 -> t2), validating t2 only.
+
+    Spec P-1a: the pair criterion tests the *same* transition once per arrival
+    path. It does not assert two things -- it asserts one thing, having arrived a
+    particular way. `via_transition_id` carries that constraint into generation.
+    """
+    result = CriterionResult(name=ALL_TRANSITION_PAIRS)
+    for t1 in model.generatable_transitions():
+        followers = model.outgoing(t1.target)
+        if not followers:
+            continue
+        for t2 in followers:
+            result.targets.append(CoverageTarget(
+                kind="transition-pair",
+                key=f"{t1.id}->{t2.id}",
+                validated_transition_id=t2.id,
+                via_transition_id=t1.id,
+            ))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# guard coverage
+# ---------------------------------------------------------------------------
+
+# Split on AND/&& only. OR is deliberately not decomposed: a disjunction's
+# branches are not independently controllable from a single transition, and
+# treating them as such would claim combinations that no test actually varies.
+_CONJUNCT_RE = re.compile(r"\s+AND\s+|\s*&&\s*", re.IGNORECASE)
+
+
+def atomic_conditions(guard: str) -> list[str]:
+    """Split a guard into its top-level conjuncts, verbatim.
+
+    Deliberately minimal (spec M-6 normalisation discipline): it does not
+    simplify, reorder or interpret. A guard it cannot split is returned whole,
+    which is the fail-safe direction -- one condition treated as atomic is a
+    weaker claim than a wrong decomposition.
+    """
+    if not guard or not guard.strip():
+        return []
+    return [c.strip() for c in _CONJUNCT_RE.split(guard.strip()) if c.strip()]
+
+
+def _guard_coverage(model: Model) -> CriterionResult:
+    """One target per (transition, atomic condition, polarity).
+
+    The false-polarity target is only satisfiable where some *other* transition
+    from the same source and trigger actually exercises it. Where nothing does,
+    it is reported unsatisfiable rather than silently dropped (spec P-3) -- a
+    criterion that quietly reduces its own requirements reports success it did
+    not achieve.
+    """
+    result = CriterionResult(name=GUARD_COVERAGE)
+    for t in model.generatable_transitions():
+        conditions = atomic_conditions(t.guard)
+        if not conditions:
+            # An unguarded transition has nothing to vary; it is covered by
+            # all-transitions and contributes no guard target. Not a gap.
+            result.targets.append(CoverageTarget(
+                kind="guard", key=f"{t.id}::<unguarded>",
+                validated_transition_id=t.id, data_note="no guard",
+            ))
+            continue
+        siblings = [s for s in model.outgoing(t.source)
+                    if s.trigger == t.trigger and s.id != t.id]
+        for cond in conditions:
+            result.targets.append(CoverageTarget(
+                kind="guard", key=f"{t.id}::{cond}::true",
+                validated_transition_id=t.id, data_note=f"{cond} must hold",
+            ))
+            if siblings:
+                # Some sibling on the same (state, trigger) represents the
+                # complementary case; validating it is how "false" is exercised.
+                result.targets.append(CoverageTarget(
+                    kind="guard", key=f"{t.id}::{cond}::false",
+                    validated_transition_id=siblings[0].id,
+                    data_note=f"{cond} must not hold",
+                ))
+            else:
+                result.unsatisfiable.append((
+                    f"{t.id}::{cond}::false",
+                    "no alternative transition on this (state, trigger) exercises "
+                    "the complementary case",
+                ))
+    return result
+
+
+def _boundary_coverage(model: Model) -> CriterionResult:
+    """One target per boundary value, plus one per equivalence partition
+    (ISO/IEC/IEEE 29119-4).
+
+    Sits ALONGSIDE guard coverage rather than replacing it. Guard coverage asks
+    "is each condition exercised both ways?"; this asks "are the values either
+    side of the threshold exercised?" -- the question that finds an off-by-one,
+    which no true/false pair ever will.
+
+    **P-1a holds: this adds more TESTS, never more assertions per test.** Each
+    boundary is its own target and therefore its own single-assertion path.
+
+    **M-9 holds: `data_note` carries a CONDITION, never a value.** `attempts = 4`
+    is a requirement the fixture must satisfy; solving it remains out of scope.
+
+    A guard with no recoverable boundary contributes its partitions and is
+    reported in `unsatisfiable` for the boundary it does not have (M-17) -- never
+    silently skipped, which would let a criterion quietly shrink its own
+    requirements (P-3).
+    """
+    from metis_mcp.mbt.techniques import analyse_guard
+
+    result = CriterionResult(name=BOUNDARY_COVERAGE)
+    for t in model.generatable_transitions():
+        analysis = analyse_guard(t.guard)
+        if not t.guard.strip():
+            result.targets.append(CoverageTarget(
+                kind="boundary", key=f"{t.id}::<unguarded>",
+                validated_transition_id=t.id, data_note="no guard"))
+            continue
+
+        for boundary in analysis.boundaries:
+            result.targets.append(CoverageTarget(
+                kind="boundary", key=f"{t.id}::{boundary.condition}",
+                validated_transition_id=t.id,
+                data_note=f"{boundary.condition} ({boundary.position} the boundary)"))
+
+        for partition in analysis.partitions:
+            result.targets.append(CoverageTarget(
+                kind="partition", key=f"{t.id}::partition::{partition.condition}",
+                validated_transition_id=t.id,
+                data_note=f"{partition.condition} (equivalence partition)"))
+
+        for atom, why in analysis.unanalysable:
+            result.unsatisfiable.append((f"{t.id}::{atom}::boundary", why))
+    return result
+
+
+_CRITERIA = {
+    ALL_STATES: _all_states,
+    ALL_TRANSITIONS: _all_transitions,
+    ALL_TRANSITION_PAIRS: _all_transition_pairs,
+    GUARD_COVERAGE: _guard_coverage,
+    BOUNDARY_COVERAGE: _boundary_coverage,
+}
+
+
+def criterion_names() -> list[str]:
+    return sorted(_CRITERIA)
+
+
+ALREADY_COVERED = "already_covered_by"
+
+
+def targets_for(model: Model, criterion: str = DEFAULT_CRITERION,
+                grades: dict | None = None) -> CriterionResult:
+    """Coverage targets, minus anything an existing test already covers.
+
+    `grades` comes from `test_levels.grade_transitions`. Spec REQ-METIS-PG-01:
+    generation never fires for a layer already covered -- on the pilot estate 84
+    of 145 transitions are covered by integration tests that already pass, and
+    generating for them produces review burden and a flattering coverage figure
+    in exchange for nothing.
+
+    A dropped target moves to `unsatisfiable` **with the test that covers it
+    named**, never disappearing: P-12 forbids quietly lowering the denominator,
+    and "already tested" is a different fact from "not covered" that a reader
+    must be able to tell apart.
+
+    This is deliberately NOT `Transition.exclusion_reason`. That property is
+    derived from lifecycle and implementation status -- facts about the
+    transition itself. Existing coverage is external knowledge that varies with
+    which inventory you point at, so it belongs to the criterion run, not to the
+    element.
+    """
+    if criterion not in _CRITERIA:
+        raise ValueError(
+            f"unknown criterion {criterion!r}; known: {', '.join(criterion_names())}"
+        )
+    result = _CRITERIA[criterion](model)
+    if not grades:
+        return result
+
+    kept = []
+    for target in result.targets:
+        grade = grades.get(target.validated_transition_id)
+        if grade is not None and not grade.should_generate:
+            evidence = ", ".join(grade.evidence) or grade.detail
+            result.unsatisfiable.append((target.key, f"{ALREADY_COVERED}: {evidence}"))
+            continue
+        kept.append(target)
+    result.targets = kept
+    return result

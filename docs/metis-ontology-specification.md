@@ -37,7 +37,7 @@ Each layer table has one row per label:
 |---|---|
 | Label | The exact Neo4j node label. |
 | Purpose | What real-world thing this node represents, one sentence. |
-| Required properties | Beyond `id`/`source_episode_id` (every label always requires these two — see `BASELINE_REQUIRED`). |
+| Required properties | Beyond `id`/`source_episode_id`/`name` (every candidate label requires these three — see `BASELINE_REQUIRED`; `name` is readable display data, not a unique identity key). |
 | Allowed outgoing relationships | Every `-[:REL]->(Label)` this label is permitted to have, per the Relationship Catalog below. |
 
 An empty "Allowed outgoing relationships" cell means the label is only
@@ -170,6 +170,7 @@ not code or tests.
 | `AcceptanceCriterion` | One atomic, testable condition belonging to exactly one Requirement — also the real bridge from the backbone to concrete behavior. | `revision` | `TRACES_TO`→`Intent`, `VALIDATES`→`Transition` |
 | `BusinessRule` | A standalone business rule not expressed as a Requirement. | `corroboration_count` | *(none — only ever a target)* |
 | `MicroRequirement` | A Requirement decomposed into a smaller, independently-testable unit (Layer 6 LLM-as-judge output). | — | *(none — only ever a target)* |
+| `JiraItem` | The explicit evidence anchor for one real Jira issue — site-qualified `jira_key` so it stays globally unique across Atlassian sites. Distinct from a normalized `Requirement`/`Defect`: a `JiraItem` can exist (and stay queryable) even when its own Requirement is rejected or quarantined. | `jira_key`, `issue_type` | `REPRESENTS`→`Requirement`, `REPRESENTS`→`Defect`, `HAS_AC`→`AcceptanceCriterion`, `LINKS_TO`→`JiraItem` |
 
 **A `TestCase` never `VERIFIES` a `Requirement` directly.**
 `Requirement<-VERIFIES-TestCase` with no `HAS_AC` hop in between is the
@@ -201,12 +202,13 @@ implied fixed; a future session's job, not this one's.
 |---|---|---|---|
 | `Service` | A real deployed service/component. | — | *(none today — disclosed gap above)* |
 | `API` | A versioned API surface owned by a Service. | — | *(none today — disclosed gap above)* |
-| `Endpoint` | One real HTTP endpoint of an API. | — | *(none today — disclosed gap above; only ever a target, of `TestCase.VERIFIES`)* |
+| `Endpoint` | One real HTTP endpoint of an API. | — | `TestCase.VERIFIES` targets it (performance/SLA tests); owned by exactly one `Repository` (`EXPOSES`) or `ExternalAPISpec` (`DEFINES`) |
 | `Database` | A real database instance. | — | `HAS`→`Table` |
 | `Table` | A real table within one Database. | — | *(none — only ever a target)* |
 | `Column` | A real column within one Table. | — | *(none — only ever a target; `Table.HAS` doesn't yet extend to Column, same disclosed gap)* |
 | `KafkaTopic` | A real Kafka topic. | — | *(none)* |
 | `ExternalSystem` | A real third-party/external system integration point. | — | *(none)* |
+| `ExternalAPISpec` | A real, registered external OpenAPI/Swagger specification (`registry_source` — e.g. `swaggerhub`\|`apis.guru`\|`internal-registry`), landed by `metis_mcp/atlas_bridge.py`'s swagger-ingestion path. | `registry_source` | `DEFINES`→`Endpoint` |
 | `ApplicationConfiguration` | A real component-version snapshot — what was actually deployed when a TestExecution ran, for release-report generation. Carries no version data itself; every version lives on its own `INCLUDES_VERSION` edges. | — | `INCLUDES_VERSION` (with a `version` property)→`Service` |
 
 ## Implementation layer
@@ -216,11 +218,11 @@ AST-based Cognify pass.
 
 | Label | Purpose | Required properties | Allowed outgoing relationships |
 |---|---|---|---|
-| `Repository` | One real code repository. | — | `DEFINES`→`Class` |
+| `Repository` | One real code repository. | — | `DEFINES`→`Class`, `EXPOSES`→`Endpoint` (real REST endpoints discovered by `git-repository-analyzer`, landed via `metis_mcp/atlas_bridge.py`) |
 | `Class` | One real class, `repo:path:name`-keyed. | — | `HAS_METHOD`→`Method`, `IMPORTS`→`Class`, `INHERITS`→`Class` |
 | `Method` | One real method/function, `repo:path:name.method`-keyed. | — | `CALLS`→`Method`, `IMPLEMENTS`→`Requirement` |
 | `PullRequest` | A real pull request. | — | `PRODUCES`→`Commit` |
-| `Commit` | A real commit. | — | *(none — only ever a target)* |
+| `Commit` | A real commit with exact Jira keys and changed source paths from commit-impact evidence. | — | `REFERENCES`→`Requirement`, `MODIFIES`→`Method` |
 | `Branch` | A real branch. | — | *(none)* |
 
 ## Operations layer
@@ -245,7 +247,7 @@ AST-based Cognify pass.
 
 | Label | Purpose | Required properties | Allowed outgoing relationships |
 |---|---|---|---|
-| `Episode` | The real provenance record for every ingested unit — `source_connector`, `t_recorded`, `job_id`. Every other node's `source_episode_id` points at one of these. | `t_recorded`, `source_connector`, `job_id` | *(none — every other label points AT this one via `source_episode_id`, a property, not a graph edge)* |
+| `Episode` | The real provenance record for every ingested unit — `source_connector`, `t_recorded`, `job_id`. Every other node's `source_episode_id` points at one of these. | `t_recorded`, `source_connector`, `job_id` | `DIRECTLY_LINKS_TO`→`Episode` (source-system direct link only) |
 | `Revision` | One real point-in-time snapshot of a node's properties, written by `metis_mcp/temporal.py`'s `record_revision()`. | — | *(none — only ever a target)* |
 
 **Why there is no `CopilotSession`/`Prompt`/`GeneratedCode`/`AIDecision`/
@@ -291,6 +293,7 @@ stale.
 | `TestExecution` | `PRODUCES` | `Defect` | Failed executions only |
 | `TestExecution` | `RAN_AGAINST` | `ApplicationConfiguration` | Which component-version snapshot this execution ran against |
 | `ApplicationConfiguration` | `INCLUDES_VERSION` | `Service` | `version` property on the edge — this config's real component version |
+| `Episode` | `DIRECTLY_LINKS_TO` | `Episode` | A direct source-system link (for example, a cached Jira `issuelink`); provenance only, not requirement traceability |
 | `State` | `WHEN` | `Transition` | Behavior model — this State is the (implicit Given) precondition; WHEN this fires |
 | `Transition` | `THEN` | `State` | Behavior model — THEN the Transition results in this target State |
 | `Database` | `HAS` | `Table` | Architecture |
@@ -301,6 +304,16 @@ stale.
 | `Method` | `CALLS` | `Method` | Code structure |
 | `Method` | `IMPLEMENTS` | `Requirement` | Which Requirement this real method implements |
 | `PullRequest` | `PRODUCES` | `Commit` | VCS structure |
+| `Commit` | `REFERENCES` | `Requirement` | The commit evidence names the Jira key carried by this Requirement |
+| `Commit` | `MODIFIES` | `Method` | The commit changed the exact repository-qualified source file containing this Method |
+| `Repository` | `EXPOSES` | `Endpoint` | Which repository's code defines this real REST endpoint (`atlas_bridge.py` repository-analysis ingestion) |
+| `ExternalAPISpec` | `DEFINES` | `Endpoint` | Which external OpenAPI/Swagger spec documents this endpoint (`atlas_bridge.py` swagger ingestion) |
+| `JiraItem` | `REPRESENTS` | `Requirement` | This Jira issue is the system-of-record source for this normalized Requirement |
+| `JiraItem` | `REPRESENTS` | `Defect` | This Jira Bug/JSM request is the system-of-record source for this normalized Defect |
+| `JiraItem` | `HAS_AC` | `AcceptanceCriterion` | This specific Jira issue's own AC evidence (distinct from `Requirement`-`HAS_AC`, the normalized ownership edge) |
+| `JiraItem` | `LINKS_TO` | `JiraItem` | A real Jira parent/subtask/issuelink between two Jira issues |
+| `Commit` | `REFERENCES` | `JiraItem` | Exact commit-to-ticket evidence, by normalized Jira key |
+| `Commit` | `REFERENCES` | `AcceptanceCriterion` | Direct commit-to-AC evidence — `evidence_status` on the edge distinguishes an explicit AC reference from a ticket-scope association |
 | *(any real label)* | `HAS_REVISION` | `Revision` | Generic, written only by `metis_mcp/temporal.py`'s `record_revision()` — the one relationship type intentionally NOT scoped to a fixed from-label, since every label can have revision history |
 
 **One documented, intentional exception, not a gap**:

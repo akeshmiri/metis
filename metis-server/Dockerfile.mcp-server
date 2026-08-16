@@ -1,13 +1,8 @@
-# Real bug found deploying this via metis-chart: config_manager.py resolves
-# project-level (.metis/config.yaml relative to cwd) BEFORE host-level
-# (METIS_HOME/config.yaml), first-found-wins, NO MERGE. Baking .metis/ into
-# this image would make it always win over the chart's mounted ConfigMap
-# (METIS_HOME=/etc/metis/config), silently defeating per-deployment
-# configuration -- the deployed config would always be this dev-only file,
-# regardless of what the chart intends. Deliberately NOT bundled here; the
-# chart supplies config via its mounted ConfigMap + env var overrides
-# (see files/metis-config.yaml). For standalone (non-chart) testing without
-# a mount, pass your own: `-e METIS_HOME=/config -v $(pwd)/.metis:/config`.
+# The chart supplies config via its mounted JSON ConfigMap and METIS_HOME.
+# Deliberately do not bundle a host config in the image: the shared
+# ~/.metis/config.json contract must remain the deployment's source of truth.
+# For standalone testing, mount a directory containing config.json with
+# `-e METIS_HOME=/config -v /path/to/metis-config:/config`.
 FROM python:3.13-slim
 WORKDIR /app
 COPY pyproject.toml requirements.txt ./

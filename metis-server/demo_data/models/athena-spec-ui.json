@@ -1,0 +1,169 @@
+{
+  "id": "athena-spec-ui",
+  "states": [
+    {
+      "id": "PageLoaded",
+      "name": "PageLoaded",
+      "surface": "ui",
+      "is_initial": true
+    },
+    {
+      "id": "Empty",
+      "name": "Empty",
+      "surface": "ui",
+      "is_initial": false
+    },
+    {
+      "id": "Ready",
+      "name": "Ready",
+      "surface": "ui",
+      "is_initial": false
+    }
+  ],
+  "transitions": [
+    {
+      "id": "ui::ApiSpecDetailPage::/spec/::NoContent204",
+      "source": "PageLoaded",
+      "trigger": "open ApiSpecDetailPage loading /spec/",
+      "target": "Empty",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::ApiSpecDetailPage::/spec/::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open ApiSpecDetailPage loading /spec/",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::ApiSpecWorkspacePage::/spec/summary::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open ApiSpecWorkspacePage loading /spec/summary",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::ApiSpecWorkspacePage::/spec/freshness::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open ApiSpecWorkspacePage loading /spec/freshness",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::ApiSpecWorkspacePage::/spec/drift::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open ApiSpecWorkspacePage loading /spec/drift",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::ApiSpecWorkspacePage::/spec/all::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open ApiSpecWorkspacePage loading /spec/all",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::OverviewPage::/spec/summary::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open OverviewPage loading /spec/summary",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::OverviewPage::/spec/freshness::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open OverviewPage loading /spec/freshness",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::ExceptionFollowUpReportPage::/spec/summary::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open ExceptionFollowUpReportPage loading /spec/summary",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::ExceptionFollowUpReportPage::/spec/freshness::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open ExceptionFollowUpReportPage loading /spec/freshness",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::ExecutiveBriefingReportPage::/spec/summary::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open ExecutiveBriefingReportPage loading /spec/summary",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::ExecutiveBriefingReportPage::/spec/freshness::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open ExecutiveBriefingReportPage loading /spec/freshness",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::PlatformOperationsReportPage::/spec/summary::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open PlatformOperationsReportPage loading /spec/summary",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::PlatformOperationsReportPage::/spec/freshness::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open PlatformOperationsReportPage loading /spec/freshness",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::PortfolioReportPage::/spec/summary::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open PortfolioReportPage loading /spec/summary",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::PortfolioReportPage::/spec/freshness::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open PortfolioReportPage loading /spec/freshness",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::ReleaseReadinessReportPage::/spec/summary::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open ReleaseReadinessReportPage loading /spec/summary",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::ReleaseReadinessReportPage::/spec/freshness::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open ReleaseReadinessReportPage loading /spec/freshness",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    }
+  ]
+}

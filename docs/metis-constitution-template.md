@@ -75,7 +75,7 @@ This Constitution is the highest-precedence rule set governing quality engineeri
 
 **CONST-018.** No secret, credential, or API key is ever stored in an `Episode` payload, a test fixture, a log, or a generated-code artifact in plaintext. Where a connector needs a credential, it is referenced, never embedded.
 
-**CONST-019.** Security-relevant `Transition.guard` conditions (authorization checks, rate limits, input validation boundaries) are subject to Article I's ≥2-source corroboration requirement (CONST-003) without exception — a security control described in only one place is a security control that can silently drift out of sync with the code that enforces it.
+**CONST-019.** Security-relevant `Transition.guard_expression` conditions (authorization checks, rate limits, input validation boundaries) are subject to Article I's ≥2-source corroboration requirement (CONST-003) without exception — a security control described in only one place is a security control that can silently drift out of sync with the code that enforces it.
 
 **CONST-020.** `[SET BY ORG: applicable compliance regime — e.g. SOC 2, PCI-DSS, HIPAA, GDPR]` requirements are modeled as `BusinessRule` entities with explicit `Compliance` taxonomy tags (§4.4), not left as tribal knowledge — if a rule exists because of a compliance obligation, that obligation is named in the graph, not just implied.
 

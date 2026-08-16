@@ -1,0 +1,353 @@
+{
+  "id": "athena-core-api",
+  "states": [
+    {
+      "id": "Ready",
+      "name": "Ready",
+      "surface": "api",
+      "is_initial": true
+    },
+    {
+      "id": "Ok200",
+      "name": "Ok200",
+      "surface": "api",
+      "is_initial": false
+    },
+    {
+      "id": "NoContent204",
+      "name": "NoContent204",
+      "surface": "api",
+      "is_initial": false
+    },
+    {
+      "id": "Created201",
+      "name": "Created201",
+      "surface": "api",
+      "is_initial": false
+    },
+    {
+      "id": "AlreadyReported208",
+      "name": "AlreadyReported208",
+      "surface": "api",
+      "is_initial": false
+    },
+    {
+      "id": "Conflicted409",
+      "name": "Conflicted409",
+      "surface": "api",
+      "is_initial": false
+    },
+    {
+      "id": "Updated200",
+      "name": "Updated200",
+      "surface": "api",
+      "is_initial": false
+    }
+  ],
+  "transitions": [
+    {
+      "id": "org.catools.athena.core.rest.controller.EnvironmentController.getAll:org.springframework.http.ResponseEntity(int,int,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /environment/all",
+      "target": "Ok200",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.EnvironmentController.search:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /environment",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.EnvironmentController.search:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /environment",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.EnvironmentController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /environment/{id}",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.EnvironmentController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /environment/{id}",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.EnvironmentController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.core.EnvironmentDto)::POST->Created201",
+      "source": "Ready",
+      "trigger": "POST /environment",
+      "target": "Created201",
+      "guard": "NOT (an exception is thrown) AND NOT (ex.getCause() instanceof ConstraintViolationException) AND NOT (dbRecord.isPresent())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.EnvironmentController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.core.EnvironmentDto)::POST->AlreadyReported208",
+      "source": "Ready",
+      "trigger": "POST /environment",
+      "target": "AlreadyReported208",
+      "guard": "an exception is thrown AND ex.getCause() instanceof ConstraintViolationException AND dbRecord.isPresent()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.EnvironmentController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.core.EnvironmentDto)::POST->Conflicted409",
+      "source": "Ready",
+      "trigger": "POST /environment",
+      "target": "Conflicted409",
+      "guard": "an exception is thrown AND NOT (ex.getCause() instanceof ConstraintViolationException) AND NOT (dbRecord.isPresent())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.EnvironmentController.update:org.springframework.http.ResponseEntity(org.catools.athena.model.core.EnvironmentDto)::PUT->Updated200",
+      "source": "Ready",
+      "trigger": "PUT /environment",
+      "target": "Updated200",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.ProjectController.getAll:org.springframework.http.ResponseEntity(int,int,java.lang.String,java.lang.String,java.lang.String,java.lang.String)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /project/all",
+      "target": "Ok200",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.ProjectController.search:org.springframework.http.ResponseEntity(java.lang.String)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /project",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.ProjectController.search:org.springframework.http.ResponseEntity(java.lang.String)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /project",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.ProjectController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /project/{id}",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.ProjectController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /project/{id}",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.ProjectController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.core.ProjectDto)::POST->Created201",
+      "source": "Ready",
+      "trigger": "POST /project",
+      "target": "Created201",
+      "guard": "NOT (an exception is thrown) AND NOT (ex.getCause() instanceof ConstraintViolationException) AND NOT (dbRecord.isPresent())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.ProjectController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.core.ProjectDto)::POST->AlreadyReported208",
+      "source": "Ready",
+      "trigger": "POST /project",
+      "target": "AlreadyReported208",
+      "guard": "an exception is thrown AND ex.getCause() instanceof ConstraintViolationException AND dbRecord.isPresent()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.ProjectController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.core.ProjectDto)::POST->Conflicted409",
+      "source": "Ready",
+      "trigger": "POST /project",
+      "target": "Conflicted409",
+      "guard": "an exception is thrown AND NOT (ex.getCause() instanceof ConstraintViolationException) AND NOT (dbRecord.isPresent())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.ProjectController.update:org.springframework.http.ResponseEntity(org.catools.athena.model.core.ProjectDto)::PUT->Updated200",
+      "source": "Ready",
+      "trigger": "PUT /project",
+      "target": "Updated200",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.UserController.getAll:org.springframework.http.ResponseEntity(int,int,java.lang.String,java.lang.String,java.lang.String,java.lang.String)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /user/all",
+      "target": "Ok200",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.UserController.search:org.springframework.http.ResponseEntity(java.lang.String)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /user",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.UserController.search:org.springframework.http.ResponseEntity(java.lang.String)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /user",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.UserController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /user/{id}",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.UserController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /user/{id}",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.UserController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.core.UserDto)::POST->Created201",
+      "source": "Ready",
+      "trigger": "POST /user",
+      "target": "Created201",
+      "guard": "NOT (an exception is thrown) AND NOT (ex.getCause() instanceof ConstraintViolationException) AND NOT (dbRecord.isPresent())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.UserController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.core.UserDto)::POST->AlreadyReported208",
+      "source": "Ready",
+      "trigger": "POST /user",
+      "target": "AlreadyReported208",
+      "guard": "an exception is thrown AND ex.getCause() instanceof ConstraintViolationException AND dbRecord.isPresent()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.UserController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.core.UserDto)::POST->Conflicted409",
+      "source": "Ready",
+      "trigger": "POST /user",
+      "target": "Conflicted409",
+      "guard": "an exception is thrown AND NOT (ex.getCause() instanceof ConstraintViolationException) AND NOT (dbRecord.isPresent())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.UserController.update:org.springframework.http.ResponseEntity(org.catools.athena.model.core.UserDto)::PUT->Updated200",
+      "source": "Ready",
+      "trigger": "PUT /user",
+      "target": "Updated200",
+      "guard": "NOT (an exception is thrown) AND NOT (ex.getCause() instanceof ConstraintViolationException) AND NOT (dbRecord.isPresent())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.UserController.update:org.springframework.http.ResponseEntity(org.catools.athena.model.core.UserDto)::PUT->AlreadyReported208",
+      "source": "Ready",
+      "trigger": "PUT /user",
+      "target": "AlreadyReported208",
+      "guard": "an exception is thrown AND ex.getCause() instanceof ConstraintViolationException AND dbRecord.isPresent()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.UserController.update:org.springframework.http.ResponseEntity(org.catools.athena.model.core.UserDto)::PUT->Conflicted409",
+      "source": "Ready",
+      "trigger": "PUT /user",
+      "target": "Conflicted409",
+      "guard": "an exception is thrown AND NOT (ex.getCause() instanceof ConstraintViolationException) AND NOT (dbRecord.isPresent())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.VersionController.getAll:org.springframework.http.ResponseEntity(int,int,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /version/all",
+      "target": "Ok200",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.VersionController.search:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /version",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.VersionController.search:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /version",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.VersionController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /version/{id}",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.VersionController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /version/{id}",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.VersionController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.core.VersionDto)::POST->Created201",
+      "source": "Ready",
+      "trigger": "POST /version",
+      "target": "Created201",
+      "guard": "NOT (an exception is thrown) AND NOT (ex.getCause() instanceof ConstraintViolationException) AND NOT (version.getCode() == null) AND NOT (dbRecord.isPresent())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.VersionController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.core.VersionDto)::POST->Conflicted409",
+      "source": "Ready",
+      "trigger": "POST /version",
+      "target": "Conflicted409",
+      "guard": "an exception is thrown AND NOT (ex.getCause() instanceof ConstraintViolationException) AND NOT (version.getCode() == null) AND NOT (dbRecord.isPresent())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.VersionController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.core.VersionDto)::POST->AlreadyReported208",
+      "source": "Ready",
+      "trigger": "POST /version",
+      "target": "AlreadyReported208",
+      "guard": "an exception is thrown AND ex.getCause() instanceof ConstraintViolationException AND dbRecord.isPresent()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.core.rest.controller.VersionController.update:org.springframework.http.ResponseEntity(org.catools.athena.model.core.VersionDto)::PUT->Updated200",
+      "source": "Ready",
+      "trigger": "PUT /version",
+      "target": "Updated200",
+      "guard": "",
+      "implementation_status": "implemented"
+    }
+  ]
+}

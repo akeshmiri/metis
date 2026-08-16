@@ -1,7 +1,7 @@
 # Métis MCP Server — Phase 0 Dogfooding Quickstart
 
 This is a real, tested MCP server — not a mockup. It was verified end-to-end
-with an actual MCP client over stdio before being packaged here: 9 tools,
+with an actual MCP client over stdio before being packaged here: 16 tools,
 177 real items parsed from this platform's own `REQ-METIS-*`/`CONST-*`/
 `DQ-*`/`AF-*`/`BS-*` documents, 359 real cross-reference edges, correct
 not-found handling, and the write path (`metis_submit_episode`) correctly
@@ -23,28 +23,27 @@ rather than faking production behavior.
 ## Install
 
 ```bash
-cd metis-mcp-server
+cd metis-server
 python3 -m venv .venv
-.venv/bin/pip install -e .
+.venv/bin/pip install -e ".[test]"
 ```
 
 ## Configure (required — the server will not start without this)
 
 Per explicit direction, **no configuration lives in code** — model names,
-ZDR status, per-repository classifications, and the corpus path all come
-from `.metis/config.yaml` (project-level) or `~/.metis/config.yaml`
-(host-level default), resolved by `config_manager.py` using the same
-project-overrides-host, first-found-wins convention as the real
-`atlas-config-manager`. **If neither file exists, the server raises
-`ConfigNotFoundError` and refuses to start** — this is deliberate, not a bug:
-a missing config is a setup gap to fix, not something to paper over with an
-assumed default.
+ZDR status, per-repository classifications, the corpus path, and Neo4j
+connection details all come from `~/.metis/config.json` (or the file named by
+`METIS_CONFIG_PATH` for a mounted deployment). **If that file does not
+exist, there is no configured Métis instance**: the server raises
+`ConfigNotFoundError`, while Atlas treats Métis as unavailable and continues
+without it.
 
-A real `.metis/config.yaml` is already included in this package, reflecting
-the actual current decision: no ZDR agreement (`zdr.confirmed: false`), and
-this platform's own dogfooding corpus classified `public_internal`. Copy
-`metis.config.example.yaml` and fill it in for your own repositories before
-connecting anything beyond the bundled dogfooding corpus.
+The local host config is `~/.metis/config.json`. The repository contains only
+the shape reference `metis.config.example.json`; copy its fields into the host
+file and keep that file mode `0600` because `graph.neo4j.password` is a direct
+secret value. The Helm deployment renders the same complete JSON at install
+time; Athena and HTTP JWT credentials remain separate deployment-secret
+references.
 
 ## Connect Claude Code
 
@@ -59,20 +58,17 @@ Add to your project's `.mcp.json`:
 {
   "mcpServers": {
     "metis": {
-      "command": "/absolute/path/to/metis-mcp-server/.venv/bin/python3",
+      "command": "/absolute/path/to/metis-server/.venv/bin/python3",
       "args": ["-m", "metis_mcp.server"],
-      "cwd": "/absolute/path/to/metis-mcp-server"
+      "cwd": "/absolute/path/to/metis-server"
     }
   }
 }
 ```
 
-The dogfooding corpus (this platform's own 17 real `metis-*.md` documents) is
-bundled in `corpus/` and used by default, per `corpus.glob` in
-`.metis/config.yaml` — no separate data-loading step. Edit that file's
-`corpus.glob` value if you want to point it at a different or updated set
-of documents; there's no environment variable for this anymore, per the
-"no configuration in code" directive.
+The dogfooding corpus (this platform's own real `metis-*.md` documents) is
+bundled in `corpus/`; set its absolute path in `corpus.glob` in the host JSON
+file if the local checkout moves. There is no project-local config fallback.
 
 ## Verify it before trusting it
 
@@ -83,9 +79,22 @@ subprocess and calls real tools, the same way Claude Code will:
 .venv/bin/python3 test_e2e.py
 ```
 
-Expect: 9 tools listed, real answers about `CONST-047` (citing
+Expect: 16 tools listed, real answers about `CONST-047` (citing
 `metis-standards-integration.md`, not a guess), a clean `found: false` for a
 made-up id, and a clear refusal from `metis_submit_episode`.
+
+## Run the test suite
+
+```bash
+.venv/bin/pytest -q
+```
+
+The test suite starts a disposable Neo4j container automatically through
+`neo4j_test_support.py`, applies the repository schema, loads the dogfooding
+corpus, and removes the container and temporary config when the run ends. It
+never writes to the deployed graph from `~/.metis/config.json`. The
+application-code connector tests additionally use the local mock Athena
+Postgres described in `CLAUDE.md`.
 
 ## Try it in Claude Code
 
@@ -135,13 +144,12 @@ repo's own earlier Cognify run populated — no synthetic copy. See
 `demo_data/metis_grounded.py`'s docstring for the full grounding
 discipline.
 
-**Requires `graph.backend: neo4j`** (see `.metis/config.yaml`) — this
+**Requires `graph.backend: neo4j`** (see `~/.metis/config.json`) — this
 doesn't work against `LocalGraphStore`.
 
 **One click, from the browser** (the same review UI above already has a
 "Load demo data" / "Wipe demo data" panel at the top):
 ```bash
-export METIS_NEO4J_PASSWORD=<your Neo4j password>
 .venv/bin/python3 review_api_server.py
 # open http://127.0.0.1:8420/ and click "Load demo data"
 ```

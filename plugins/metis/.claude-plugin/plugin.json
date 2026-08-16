@@ -1,0 +1,13 @@
+{
+  "name": "metis",
+  "description": "Métis skills for Quality Engineering against a requirements knowledge graph: review-assist (walk one Quarantine-tier item to an honest Approve/Reject), behavior-modeling (determinism/completeness/reachability checks per CONST-048/049), onboarding (the 6-step runbook for adding a repository to ingestion), deck-renderer (dated .pptx quality snapshot) and site-renderer (always-current static site).",
+  "version": "0.1.0",
+  "keywords": [
+    "requirements",
+    "traceability",
+    "quality-engineering",
+    "knowledge-graph",
+    "test-design",
+    "metis"
+  ]
+}

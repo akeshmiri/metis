@@ -27,6 +27,18 @@ CREATE INDEX feature_lifecycle_state IF NOT EXISTS FOR (n:Feature) ON (n.lifecyc
 CREATE INDEX feature_t_valid IF NOT EXISTS FOR (n:Feature) ON (n.t_valid);
 CREATE INDEX feature_t_invalid IF NOT EXISTS FOR (n:Feature) ON (n.t_invalid);
 
+// ---- Jira evidence layer (Session 14) -- JiraItem is the explicit
+// evidence-anchor node for a real Jira issue; jira_key is site-qualified so
+// it stays globally unique across Atlassian sites, never a bare project key.
+CREATE CONSTRAINT jiraitem_id_unique IF NOT EXISTS FOR (n:JiraItem) REQUIRE n.id IS UNIQUE;
+CREATE CONSTRAINT jiraitem_source_episode_required IF NOT EXISTS FOR (n:JiraItem) REQUIRE n.source_episode_id IS NOT NULL;
+CREATE CONSTRAINT jiraitem_jira_key_required IF NOT EXISTS FOR (n:JiraItem) REQUIRE n.jira_key IS NOT NULL;
+CREATE CONSTRAINT jiraitem_issue_type_required IF NOT EXISTS FOR (n:JiraItem) REQUIRE n.issue_type IS NOT NULL;
+CREATE INDEX jiraitem_lifecycle_state IF NOT EXISTS FOR (n:JiraItem) ON (n.lifecycle_state);
+CREATE INDEX jiraitem_t_valid IF NOT EXISTS FOR (n:JiraItem) ON (n.t_valid);
+CREATE INDEX jiraitem_t_invalid IF NOT EXISTS FOR (n:JiraItem) ON (n.t_invalid);
+CREATE INDEX jiraitem_jira_key_lookup IF NOT EXISTS FOR (n:JiraItem) ON (n.jira_key);
+
 // ---- Requirement layer ----
 CREATE CONSTRAINT requirement_id_unique IF NOT EXISTS FOR (n:Requirement) REQUIRE n.id IS UNIQUE;
 CREATE CONSTRAINT requirement_source_episode_required IF NOT EXISTS FOR (n:Requirement) REQUIRE n.source_episode_id IS NOT NULL;
@@ -313,3 +325,54 @@ OPTIONS {indexConfig: {
   `vector.dimensions`: 1536,
   `vector.similarity_function`: 'cosine'
 }};
+
+// ---- Readable names (all canonical ontology entities) ----
+// Every graph node shown to a human must have a deterministic, non-empty
+// display name. Raw writers derive this before the database write; these
+// constraints make that invariant impossible to bypass.
+CREATE CONSTRAINT goal_name_required IF NOT EXISTS FOR (n:Goal) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT capability_name_required IF NOT EXISTS FOR (n:Capability) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT epic_name_required IF NOT EXISTS FOR (n:Epic) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT feature_name_required IF NOT EXISTS FOR (n:Feature) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT requirement_name_required IF NOT EXISTS FOR (n:Requirement) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT acceptancecriterion_name_required IF NOT EXISTS FOR (n:AcceptanceCriterion) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT constraint_name_required IF NOT EXISTS FOR (n:Constraint) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT businessrule_name_required IF NOT EXISTS FOR (n:BusinessRule) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT microrequirement_name_required IF NOT EXISTS FOR (n:MicroRequirement) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT intent_name_required IF NOT EXISTS FOR (n:Intent) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT testdesign_name_required IF NOT EXISTS FOR (n:TestDesign) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT state_name_required IF NOT EXISTS FOR (n:State) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT transition_name_required IF NOT EXISTS FOR (n:Transition) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT action_name_required IF NOT EXISTS FOR (n:Action) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT event_name_required IF NOT EXISTS FOR (n:Event) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT workflow_name_required IF NOT EXISTS FOR (n:Workflow) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT service_name_required IF NOT EXISTS FOR (n:Service) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT api_name_required IF NOT EXISTS FOR (n:API) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT endpoint_name_required IF NOT EXISTS FOR (n:Endpoint) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT database_name_required IF NOT EXISTS FOR (n:Database) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT table_name_required IF NOT EXISTS FOR (n:Table) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT column_name_required IF NOT EXISTS FOR (n:Column) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT kafkatopic_name_required IF NOT EXISTS FOR (n:KafkaTopic) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT externalsystem_name_required IF NOT EXISTS FOR (n:ExternalSystem) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT repository_name_required IF NOT EXISTS FOR (n:Repository) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT class_name_required IF NOT EXISTS FOR (n:Class) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT method_name_required IF NOT EXISTS FOR (n:Method) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT pullrequest_name_required IF NOT EXISTS FOR (n:PullRequest) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT commit_name_required IF NOT EXISTS FOR (n:Commit) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT branch_name_required IF NOT EXISTS FOR (n:Branch) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT testcase_name_required IF NOT EXISTS FOR (n:TestCase) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT testsuite_name_required IF NOT EXISTS FOR (n:TestSuite) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT automationscript_name_required IF NOT EXISTS FOR (n:AutomationScript) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT testcycle_name_required IF NOT EXISTS FOR (n:TestCycle) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT testexecution_name_required IF NOT EXISTS FOR (n:TestExecution) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT applicationconfiguration_name_required IF NOT EXISTS FOR (n:ApplicationConfiguration) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT defect_name_required IF NOT EXISTS FOR (n:Defect) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT release_name_required IF NOT EXISTS FOR (n:Release) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT incident_name_required IF NOT EXISTS FOR (n:Incident) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT alert_name_required IF NOT EXISTS FOR (n:Alert) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT jiraitem_name_required IF NOT EXISTS FOR (n:JiraItem) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT metrics_name_required IF NOT EXISTS FOR (n:Metrics) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT logs_name_required IF NOT EXISTS FOR (n:Logs) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT generatedtest_name_required IF NOT EXISTS FOR (n:GeneratedTest) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT constitution_name_required IF NOT EXISTS FOR (n:Constitution) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT externalapispec_name_required IF NOT EXISTS FOR (n:ExternalAPISpec) REQUIRE n.name IS NOT NULL;

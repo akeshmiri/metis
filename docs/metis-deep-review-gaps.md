@@ -48,7 +48,7 @@ To be fair to what's already there: §11.2 does specify OAuth2, scoped per-user,
 
 ## 10. Multi-language coverage for AST-based parsing is assumed, not verified
 
-The code-graph extension and `application-code`/`test-suite-ingest` connectors were designed and reasoned about almost entirely in Java terms (matching Athena's real Java Spring Boot codebase and your own Java-based test automation project). Tree-sitter itself is multi-language, so this is likely fine — but nothing in the design explicitly confirms coverage for non-Java projects if your ~100K-ticket, multi-project scope includes any, and the `project_test_id_conventions`/pattern-per-project mechanism was designed with Java's `@TestId`-style annotations as the running example throughout.
+The code-graph extension and `application-code`/`test-suite-ingest` connectors were designed and reasoned about almost entirely in Java terms (matching a Java Spring Boot codebase and a Java-based test automation project). Tree-sitter itself is multi-language, so this is likely fine — but nothing in the design explicitly confirms coverage for non-Java projects if the target multi-project scope includes any, and the `project_test_id_conventions`/pattern-per-project mechanism was designed with Java's `@TestId`-style annotations as the running example throughout.
 
 ---
 
@@ -58,6 +58,6 @@ The code-graph extension and `application-code`/`test-suite-ingest` connectors w
 
 **Fix before Phase 0 generates real review volume:** #1 (reviewer UI) — the guardrail stack's entire safety model depends on humans actually doing the review step; right now that step requires Cypher fluency.
 
-**Fine to defer, but track explicitly rather than forget:** #2, #3, #4, #6, #7, #8, #9, #10 — real gaps, none of them block a small pilot, all of them will matter at the scale you've already described (100K tickets, 15K tests, multiple projects).
+**Fine to defer, but track explicitly rather than forget:** #2, #3, #4, #6, #7, #8, #9, #10 — real gaps, none of them block a small pilot, all of them will matter at the target scale (100K tickets, 15K tests, multiple projects).
 
 Want me to build out any of these — the reviewer UI is probably the highest-value next artifact, given it's the one blocking the actual human workflow this whole system depends on?

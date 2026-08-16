@@ -34,3 +34,9 @@ htmlcov/
 
 # Environment variables
 .env
+
+# Local workspace state
+.DS_Store
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
+*.work

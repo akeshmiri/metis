@@ -1,0 +1,123 @@
+{
+  "id": "athena-kube-ui",
+  "states": [
+    {
+      "id": "PageLoaded",
+      "name": "PageLoaded",
+      "surface": "ui",
+      "is_initial": true
+    },
+    {
+      "id": "Ready",
+      "name": "Ready",
+      "surface": "ui",
+      "is_initial": false
+    }
+  ],
+  "transitions": [
+    {
+      "id": "ui::OverviewPage::/kube/summary::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open OverviewPage loading /kube/summary",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::OverviewPage::/kube/trend::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open OverviewPage loading /kube/trend",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::ExceptionFollowUpReportPage::/kube/summary::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open ExceptionFollowUpReportPage loading /kube/summary",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::ExceptionFollowUpReportPage::/kube/trend::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open ExceptionFollowUpReportPage loading /kube/trend",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::ExecutiveBriefingReportPage::/kube/summary::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open ExecutiveBriefingReportPage loading /kube/summary",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::ExecutiveBriefingReportPage::/kube/trend::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open ExecutiveBriefingReportPage loading /kube/trend",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::PlatformOperationsReportPage::/kube/summary::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open PlatformOperationsReportPage loading /kube/summary",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::PlatformOperationsReportPage::/kube/trend::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open PlatformOperationsReportPage loading /kube/trend",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::PortfolioReportPage::/kube/summary::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open PortfolioReportPage loading /kube/summary",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::PortfolioReportPage::/kube/trend::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open PortfolioReportPage loading /kube/trend",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::PodWorkspacePage::/kube/summary::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open PodWorkspacePage loading /kube/summary",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::PodWorkspacePage::/kube/trend::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open PodWorkspacePage loading /kube/trend",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::PodWorkspacePage::/kube/all::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open PodWorkspacePage loading /kube/all",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    }
+  ]
+}

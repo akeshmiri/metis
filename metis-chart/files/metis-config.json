@@ -1,0 +1,50 @@
+{
+  "zdr": {
+    "confirmed": false,
+    "confirmed_date": null,
+    "confirmed_by": null,
+    "note": "Deployment value: review this explicitly before changing it."
+  },
+  "models": {
+    "extraction": "claude-haiku-4-5-20251001",
+    "judge": "claude-sonnet-5"
+  },
+  "corpus": {
+    "glob": "/app/corpus/*.md"
+  },
+  "graph": {
+    "backend": "neo4j",
+    "neo4j": {
+      "uri": "bolt://{{ .Release.Name }}-neo4j:7687",
+      "user": "neo4j",
+      "password": {{ .Values.secrets.neo4jPassword | default "REPLACE-AT-INSTALL-TIME" | quote }}
+    }
+  },
+  "server": {
+    "transport": "streamable-http"
+  },
+  "security": {
+    "jwt_secret_env": "OAUTH_CLIENT_SECRET"
+  },
+  "connectors": {
+    "application_code": {
+      "athena": {
+        "host": "localhost",
+        "port": 5432,
+        "dbname": "athena",
+        "user": "athena",
+        "password_env": "ATHENA_DB_PASSWORD"
+      }
+    }
+  },
+  "repositories": [
+    {
+      "name": "metis-self",
+      "classification": "public_internal",
+      "note": "This platform's own design documents."
+    }
+  ],
+  "token_optimization": {
+    "headroom_enabled": false
+  }
+}

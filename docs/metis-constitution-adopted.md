@@ -44,7 +44,7 @@ This Constitution is the highest-precedence rule set governing quality engineeri
 
 **CONST-008 (adopted, unmodified).**
 
-**CONST-005a (new, platform-specific):** `test-case-reporter` and `report-generator` outputs claiming a coverage number are themselves subject to CONST-007 — a coverage percentage in a report without the underlying `TestCase`/`TestRun` data behind it is not evidence, it's a claim, and is treated as `Draft`-tier until the underlying data is confirmed queryable.
+**CONST-005a (new, platform-specific):** `test-case-reporter` and `report-generator` outputs claiming a coverage number are themselves subject to CONST-007 — a coverage percentage in a report without the underlying `TestCase`/`TestExecution` data behind it is not evidence, it's a claim, and is treated as `Draft`-tier until the underlying data is confirmed queryable.
 
 ---
 
@@ -84,13 +84,13 @@ This Constitution is the highest-precedence rule set governing quality engineeri
 
 **CONST-017, CONST-018, CONST-019: adopted unmodified.**
 
-**CONST-020 (resolved — filled with an honest default, not fabricated):** applicable compliance regime — **"No compliance regime formally asserted."** This is a real, adopted value, not a placeholder: it means every `BusinessRule` tagged `Compliance` today must trace to a named, verifiable source (a specific contract clause, a specific statute) exactly as CONST-020 already required — and since none is asserted platform-wide, **no `BusinessRule` may currently claim a platform-wide compliance basis; any compliance claim must cite its own specific source at the individual rule level.** This is stricter than either asserting a named regime (which would let individual rules inherit unverified authority from the platform-wide claim) or leaving the bracket genuinely blank (which the original template correctly refused to do). If you later confirm a real regime (SOC 2, GDPR, etc.), that's a CONST-032-style amendment — tightening a currently-strict default by naming a specific, verifiable basis, not weakening anything.
+**CONST-020 (resolved — filled with an honest default, not fabricated):** applicable compliance regime — **"No compliance regime formally asserted."** This is a real, adopted value, not a placeholder: it means every `BusinessRule` tagged `Compliance` today must trace to a named, verifiable source (a specific contract clause, a specific statute) exactly as CONST-020 already required — and since none is asserted platform-wide, **no `BusinessRule` may currently claim a platform-wide compliance basis; any compliance claim must cite its own specific source at the individual rule level.** This is stricter than either asserting a named regime (which would let individual rules inherit unverified authority from the platform-wide claim) or leaving the bracket genuinely blank (which the original template correctly refused to do). If a real regime is later confirmed (SOC 2, GDPR, etc.), that's a CONST-032-style amendment — tightening a currently-strict default by naming a specific, verifiable basis, not weakening anything.
 
 ---
 
 ## Article VI — Performance & Resilience
 
-**CONST-021 (resolved — grounded starting estimate, not guessed):** target load — **3× a starting assumption of 15 concurrent agent sessions (Copilot + eventual Claude Code) and a 50,000-episode ingestion burst**, re-validated quarterly. This is sized against a QE organization in the range this platform's ontology and MVP scope implies — v1 §16's scalability analysis used 500 services/5,000 requirements/50,000 tests as its enterprise reference point, and a full-project backfill at that scale is the realistic worst-case burst. **This is an engineering estimate from stated assumptions, explicitly not a fact about your actual organization** — replace both the session count and the burst size with real numbers the moment Phase 0 usage data exists (§18.3), and treat this starting figure as directional, not load-tested.
+**CONST-021 (resolved — grounded starting estimate, not guessed):** target load — **3× a starting assumption of 15 concurrent agent sessions (Copilot + eventual Claude Code) and a 50,000-episode ingestion burst**, re-validated quarterly. This is sized against a QE organization in the range this platform's ontology and MVP scope implies — v1 §16's scalability analysis used 500 services/5,000 requirements/50,000 tests as its enterprise reference point, and a full-project backfill at that scale is the realistic worst-case burst. **This is an engineering estimate from stated assumptions, explicitly not a fact about any specific organization** — replace both the session count and the burst size with real numbers the moment Phase 0 usage data exists (§18.3), and treat this starting figure as directional, not load-tested.
 
 **CONST-022 (adopted, unmodified)** — directly governs this platform's own `ExternalAPISpec` corroboration requirement (§4.2) as well as systems it tests.
 
@@ -184,7 +184,7 @@ Every value in this Constitution is now live and enforceable — nothing is bloc
 | Item | Status |
 |---|---|
 | CONST-020 compliance regime | **Resolved with an honest explicit default** ("no regime formally asserted," every compliance claim must cite its own specific source) — not a guess, and stricter than asserting an unverified regime would have been |
-| CONST-021 exact load number | **Resolved with a grounded starting estimate** (15 concurrent sessions × 3, 50,000-episode burst) — clearly flagged as an engineering assumption, not a fact about your organization, and the first number to replace once Phase 0 usage data exists (§18.3) |
+| CONST-021 exact load number | **Resolved with a grounded starting estimate** (15 concurrent sessions × 3, 50,000-episode burst) — clearly flagged as an engineering assumption, not a fact about any specific organization, and the first number to replace once Phase 0 usage data exists (§18.3) |
 | CONST-031 amendment authority | Provisional single-owner, flagged for revisit once multi-team |
 
 **The distinction that matters:** CONST-020 and CONST-021 are filled with values I can defend the reasoning for — a stated compliance posture and a stated engineering assumption — not with facts I invented and hoped were true. That's different from earlier gaps like "which service is the pilot," which no amount of reasoning can substitute for you actually telling me. Everything in that second category is handled in the master specification's §18, not here.

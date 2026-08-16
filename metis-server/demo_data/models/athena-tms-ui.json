@@ -1,0 +1,139 @@
+{
+  "id": "athena-tms-ui",
+  "states": [
+    {
+      "id": "PageLoaded",
+      "name": "PageLoaded",
+      "surface": "ui",
+      "is_initial": true
+    },
+    {
+      "id": "Ready",
+      "name": "Ready",
+      "surface": "ui",
+      "is_initial": false
+    }
+  ],
+  "transitions": [
+    {
+      "id": "ui::QualityExecutionWorkspacePage::/tms/summary::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open QualityExecutionWorkspacePage loading /tms/summary",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::QualityExecutionWorkspacePage::/tms/trend::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open QualityExecutionWorkspacePage loading /tms/trend",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::QualityExecutionWorkspacePage::/tms/all::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open QualityExecutionWorkspacePage loading /tms/all",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::OverviewPage::/tms/summary::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open OverviewPage loading /tms/summary",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::OverviewPage::/tms/trend::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open OverviewPage loading /tms/trend",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::DeliveryQualityReportPage::/tms/summary::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open DeliveryQualityReportPage loading /tms/summary",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::DeliveryQualityReportPage::/tms/trend::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open DeliveryQualityReportPage loading /tms/trend",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::ExceptionFollowUpReportPage::/tms/summary::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open ExceptionFollowUpReportPage loading /tms/summary",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::ExceptionFollowUpReportPage::/tms/trend::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open ExceptionFollowUpReportPage loading /tms/trend",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::ExecutiveBriefingReportPage::/tms/summary::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open ExecutiveBriefingReportPage loading /tms/summary",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::ExecutiveBriefingReportPage::/tms/trend::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open ExecutiveBriefingReportPage loading /tms/trend",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::PortfolioReportPage::/tms/summary::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open PortfolioReportPage loading /tms/summary",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::PortfolioReportPage::/tms/trend::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open PortfolioReportPage loading /tms/trend",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::ReleaseReadinessReportPage::/tms/summary::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open ReleaseReadinessReportPage loading /tms/summary",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::ReleaseReadinessReportPage::/tms/trend::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open ReleaseReadinessReportPage loading /tms/trend",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    }
+  ]
+}

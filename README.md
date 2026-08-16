@@ -1,9 +1,7 @@
-# claude/ — Métis Project Root
+# Métis Project Root
 
 Everything built across this project's design and implementation phases,
-organized as a real directory tree. Extract this archive directly at
-`/Users/akeshmiri/Projects/` and it recreates this structure exactly at
-`/Users/akeshmiri/Projects/claude/`.
+organized as a real directory tree under this repository root.
 
 ## Layout
 
@@ -53,10 +51,10 @@ claude/
 │   ├── metis-mcp-tool-contracts.json           The 9 MCP tools' real input/output schemas
 │   └── metis-adversarial-injection-corpus.json 12-case guardrail regression corpus
 │
-├── metis-server/                REAL, TESTED Python MCP server (start here for dev work) — 100+ tests passing
+├── metis-server/                REAL, TESTED Python MCP server (start here for dev work); local dogfooding e2e passes, production validation requires a seeded Neo4j graph
 │   ├── metis_mcp/
 │   │   ├── server.py            The 9 MCP tools; stdio AND OAuth2-gated Streamable HTTP transport (live-deployed)
-│   │   ├── config_manager.py    No-config-in-code resolution (project/host, first-found-wins; real env-var overrides)
+│   │   ├── config_manager.py    No-config-in-code resolution (~/.metis/config.json; real env-var overrides)
 │   │   ├── classification_gate.py  CONST-051/052/053 enforcement (ZDR gating)
 │   │   ├── graph_store.py       LocalGraphStore — dogfooding-corpus stand-in
 │   │   ├── neo4j_graph_store.py Neo4jGraphStore — real Cypher backend
@@ -83,19 +81,17 @@ claude/
 │   ├── guardrails/               pipeline.py, corpus_runner.py, calibration.py — Layer 2/3 wiring, adversarial corpus, CONST-036 calibration
 │   ├── perf/locustfile.py        Real Locust script for review_api_server.py (locust-performance connector's real target)
 │   ├── test_fixtures/bmad/       Disclosed synthetic BMAD-shaped fixture (no real BMAD project exists here)
-│   ├── demo_data/                One-click ~12K-node/~11K-relationship demo dataset (43 labels, 10 rel types) — real EARS/tiering/determinism logic, not fabricated; see QUICKSTART.md
+│   ├── demo_data/                Cached-ticket offline importer plus a small, wipeable gap-fill dataset; see QUICKSTART.md
 │   ├── ingestion_worker.py       Wraps connectors + Cognify on a poll loop (metis-ingestion-worker service, live-deployed)
 │   ├── review_api_server.py      Real HTTP API behind docs/metis-review-queue-ui.html (now also serves /api/demo-data/*)
 │   ├── Dockerfile.*              Real Dockerfiles for all 3 metis-chart components (non-root, live-deployed)
-│   ├── .agents/metis.agent.md    Real skill router (REQ-METIS-SKL-01/02) — Quick Routing table for all 5 real skills
-│   ├── .agents/skills/           metis-review-assist (reconstructed), metis-behavior-modeling, metis-onboarding, metis-site-renderer, metis-deck-renderer
 │   ├── academy/                  4 real Academy pages (graph model, traceability, confidence tiers, EARS authoring) — §12
 │   ├── site/                     Real generated example output of metis_mcp/site_renderer.py
 │   ├── quality-snapshot.pptx     Real generated example output of metis_mcp/pptx_renderer.py
-│   ├── .metis/config.yaml       This project's REAL current config
+│   ├── ~/.metis/config.json     Shared host-level Métis configuration
 │   ├── corpus/                  Bundled copy of docs/ for offline dogfooding
 │   ├── test_*.py                 41 real test files — see CLAUDE.md for the full list/commands (a few make real, costed LLM calls and are deliberately excluded from routine runs)
-│   ├── metis.config.example.yaml
+│   ├── metis.config.example.json
 │   ├── pyproject.toml / requirements.txt
 │   └── QUICKSTART.md            Start here — install, configure, connect Claude Code
 │
@@ -122,9 +118,9 @@ claude/
 ## What's genuinely still open (as of this snapshot — see PLAN.md for full detail)
 
 - `docs/metis-const-053-confirmation-record.md` — the org's actual Zero Data Retention agreement status with Anthropic is not yet confirmed (currently, deliberately, `zdr.confirmed: false` — no commercial agreement is being pursued right now, a real decision, not an oversight).
-- `metis-server/.agents/skills/metis-review-assist` — the real original was missing from this copy of the project entirely; the current one is a disclosed reconstruction, not the original.
+- `plugins/metis/skills/metis-review-assist` — the real original was missing from this copy of the project entirely; the current one is a disclosed reconstruction, not the original.
 - `metis-chart/`'s three application images (`metis-mcp-server`, `metis-ingestion-worker`, `metis-guardrail-corpus-runner`) — the chart deploys them, it doesn't build them.
-- `metis-chart` was never run through `helm lint`/`helm template` in the sandbox that built it (no network access to Helm's distribution there) — run that for real before applying it to a cluster.
+- `metis-chart` passes local `helm lint` and `helm template`; deployment still requires real registry coordinates and published application images.
 - §8.2's semantic/vector retrieval mode — no embedding model is available in this environment; `metis_mcp/hybrid_retrieval.py` disclosed-refuses rather than faking it.
 - `REQ-METIS-MTX-01..03` (Athena metrics/Grafana dashboard integration), `REQ-METIS-RES-01..04` (uniform resumability vocabulary), and `REQ-METIS-CPT-06` (a GitHub required status check) — found by Session 5's fresh full-project re-audit; the user chose not to build these this round.
 - Retrofitting every existing write path to call `metis_mcp/temporal.py`'s `record_revision` — the real versioning/rollback mechanism exists and is tested, but isn't wired into every connector's write path yet.

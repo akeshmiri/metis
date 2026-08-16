@@ -56,6 +56,7 @@ Each metric: **ID**, **formula** (against the actual schema), **target**, **band
 | **DQ-007** | Transition coverage | `count(MicroRequirement WITH ≥1 PRODUCES edge) / count(MicroRequirement)` | **≥ 95%** for `Approved` tier | Below target → systemic gap in behavior modeling, not just individual missing transitions |
 | **DQ-008** | Test coverage (functional) | `count(Transition WITH ≥1 VERIFIES edge, non-stale) / count(Transition reachable from Approved Requirement)` | **100%** — this is CONST-005 restated as a measured metric | Directly gates release (§11.4 CI check) |
 | **DQ-009** | Stale-coverage rate | `count(TestCase WHERE t_valid < linked Transition's most recent t_valid) / count(TestCase)` | **≤ 3%** | Feeds directly into DQ-008 — a rising stale rate is a leading indicator DQ-008 will fail soon even if it hasn't yet |
+| **DQ-025** | AcceptanceCriterion lifecycle and condition completeness | Structured breakdown of total/Approved/Quarantine/orphan AcceptanceCriteria plus explicit/corroborated condition units covered, uncovered, and unresolved | **100% condition coverage, zero orphan ACs, zero unresolved units** | Keeps lifecycle and condition gaps visible instead of allowing Approved-only or Requirement-only views to hide incomplete behavior |
 
 ### Dimension 4 — Consistency
 
@@ -88,7 +89,7 @@ Each metric: **ID**, **formula** (against the actual schema), **target**, **band
 
 | ID | Metric | Formula | Target | Consequence if breached |
 |---|---|---|---|---|
-| **DQ-017** | End-to-end chain completeness | `count(Requirement WITH unbroken path to ≥1 Approved TestRun) / count(Requirement WITH status=Approved AND linked to a Release)` | **100%** for anything in a shipped `Release` | This is the platform's single most important number — it's the literal claim the whole system exists to make true |
+| **DQ-017** | End-to-end chain completeness | `count(Requirement WITH unbroken path to ≥1 Approved TestExecution within a regression TestCycle) / count(Requirement WITH status=Approved AND linked to a Release)` | **100%** for anything in a shipped `Release` | This is the platform's single most important number — it's the literal claim the whole system exists to make true |
 | **DQ-018** | Circular-traceability count | `count(Requirement WHERE sole supporting TestCase cites only that Requirement with no independent AcceptanceCriterion)` (§7 Layer 8's circularity heuristic) | **0** | Any nonzero count is investigated individually — this pattern indicates reverse-engineered rather than derived traceability |
 | **DQ-019** | Orphan-code rate | `count(Method WITH no IMPLEMENTS edge) / count(Method in a service under this platform's scope)` | Track as a trend; **not** a hard gate (legitimate undocumented legacy code exists) | High/rising rate on a service that's supposed to be fully under management is a scope-completeness signal, not necessarily an error |
 

@@ -1,7 +1,6 @@
 # Métis Helm chart values
-# Structure mirrors Athena's real orchestration chart convention (single chart,
-# `components:` map, shared deployment/service/configmap templates) so this is
-# a recognizable sibling chart, not a differently-shaped one.
+# Single chart, `components:` map, shared deployment/service/configmap
+# templates -- a conventional shape, not a bespoke one.
 
 default:
   env:
@@ -9,24 +8,27 @@ default:
       value: "WARN"
     - name: METIS_LOG_LEVEL
       value: "WARN"
-    # Athena connectivity -- Métis reads FROM Athena's existing Postgres, per the
-    # athena_internal_read protocol (§3.3, §6 of the master spec). This is NOT a
-    # new database deployment -- these are connection details to Athena's already-
-    # running instance, same pattern Athena's own chart uses for its own DB.
+    # Athena connectivity -- Métis reads FROM an existing Athena Postgres, per
+    # the athena_internal_read protocol (§3.3, §6 of the master spec). This is
+    # NOT a new database deployment -- these are connection details to an
+    # already-running instance.
+    #
+    # Defaults target a local Postgres so a fresh checkout works out of the box.
+    # For an in-cluster deployment, override ATHENA_DB_HOSTNAME with the real
+    # service DNS name -- `localhost` resolves to the pod itself, not a database.
+    # ATHENA_DB_USERNAME should be a read-only role scoped to the schema-catalog
+    # objects Métis reads (CONST-052-adjacent least-privilege); do not reuse a
+    # write-capable service account.
     - name: ATHENA_DB_HOSTNAME
-      value: "REPLACE: same host as Athena's own ATHENA_DB_HOSTNAME"
+      value: "localhost"
     - name: ATHENA_DB_PORT
       value: "5432"
     - name: ATHENA_DB_DATABASE
       value: "athena"
     - name: ATHENA_DB_USERNAME
-      value: "REPLACE: a read-only role scoped to the schema-catalog objects Métis reads (CONST-052-adjacent least-privilege -- do not reuse Athena's own write-capable service account)"
-    - name: NEO4J_URI
-      value: "bolt://{{ .Release.Name }}-neo4j:7687"
-    - name: NEO4J_DATABASE
-      value: "metis"
+      value: "athena"
     # LLM vendor call routing config (ZDR status, model names, classifications)
-    # lives ENTIRELY in the mounted metis-config ConfigMap below, not as
+    # lives ENTIRELY in the mounted metis-config Secret below, not as
     # individual env vars here -- this is the "no configuration in code"
     # directive applied to the chart itself, not just the Python package.
     # See metis_mcp/config_manager.py for the resolution logic that reads it.
@@ -34,8 +36,8 @@ default:
   envOverrides: []
 
   image:
-    registry: "REPLACE: e.g. harbor-ny2n.saas-n.com, same registry Athena's chart uses if co-located"
-    repository: "REPLACE: e.g. pbs-pmx/bat/metis-services"
+    registry: "REPLACE: your container registry hostname, e.g. registry.example.com"
+    repository: "REPLACE: your image path, e.g. my-org/metis-services"
     tag: "0.1.0"
     pullPolicy: Always
     pullSecrets: []
@@ -133,11 +135,11 @@ components:
       - name: OAUTH_REVALIDATE_PER_REQUEST
         value: "true"   # CONST-064 -- team/RBAC re-checked every request, not cached from issuance
       # Real bug found deploying this to a real cluster: this component had
-      # no METIS_HOME/mountedConfigMaps at all, so it had no way to ever
-      # find config.yaml -- config_manager.py's ConfigNotFoundError halted
+      # no METIS_CONFIG_PATH/mountedSecrets at all, so it had no way to ever
+      # find config.json -- config_manager.py's ConfigNotFoundError halted
       # the container on startup, every time, regardless of image content.
-      - name: METIS_HOME
-        value: "/etc/metis/config"
+      - name: METIS_CONFIG_PATH
+        value: "/etc/metis/config/config.json"
     resources:
       requests:
         memory: 512Mi
@@ -151,10 +153,10 @@ components:
         port: 8090
       initialDelaySeconds: 10
       periodSeconds: 15
-    mountedConfigMaps:
+    mountedSecrets:
       - name: metis-config
-        mountPath: /etc/metis/config/config.yaml
-        subPath: config.yaml
+        mountPath: /etc/metis/config/config.json
+        subPath: config.json
 
   ingestion-worker:
     enabled: true
@@ -168,8 +170,8 @@ components:
     env:
       - name: CONNECTOR_MANIFEST_DIR
         value: "/etc/metis/connectors"
-      - name: METIS_HOME
-        value: "/etc/metis/config"   # config_manager.py resolves config.yaml from here (host-level default)
+      - name: METIS_CONFIG_PATH
+        value: "/etc/metis/config/config.json"   # complete deployment config
       # Poll cadence for athena_internal_read-protocol connectors -- matches the
       # per-connector poll_interval_seconds already set in each manifest
       # (e.g. metis-connector-application-code.json's 300s); this env var is a
@@ -186,9 +188,10 @@ components:
     mountedConfigMaps:
       - name: connector-manifests
         mountPath: /etc/metis/connectors
+    mountedSecrets:
       - name: metis-config
-        mountPath: /etc/metis/config/config.yaml
-        subPath: config.yaml
+        mountPath: /etc/metis/config/config.json
+        subPath: config.json
 
   guardrail-corpus-runner:
     enabled: true

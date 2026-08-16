@@ -1,0 +1,139 @@
+{
+  "id": "athena-metric-ui",
+  "states": [
+    {
+      "id": "PageLoaded",
+      "name": "PageLoaded",
+      "surface": "ui",
+      "is_initial": true
+    },
+    {
+      "id": "Ready",
+      "name": "Ready",
+      "surface": "ui",
+      "is_initial": false
+    }
+  ],
+  "transitions": [
+    {
+      "id": "ui::MetricWorkspacePage::/metric/summary::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open MetricWorkspacePage loading /metric/summary",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::MetricWorkspacePage::/metric/trend::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open MetricWorkspacePage loading /metric/trend",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::MetricWorkspacePage::/metric/all::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open MetricWorkspacePage loading /metric/all",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::OverviewPage::/metric/summary::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open OverviewPage loading /metric/summary",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::OverviewPage::/metric/trend::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open OverviewPage loading /metric/trend",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::DeliveryQualityReportPage::/metric/summary::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open DeliveryQualityReportPage loading /metric/summary",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::DeliveryQualityReportPage::/metric/trend::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open DeliveryQualityReportPage loading /metric/trend",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::ExceptionFollowUpReportPage::/metric/summary::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open ExceptionFollowUpReportPage loading /metric/summary",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::ExceptionFollowUpReportPage::/metric/trend::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open ExceptionFollowUpReportPage loading /metric/trend",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::ExecutiveBriefingReportPage::/metric/summary::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open ExecutiveBriefingReportPage loading /metric/summary",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::ExecutiveBriefingReportPage::/metric/trend::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open ExecutiveBriefingReportPage loading /metric/trend",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::PlatformOperationsReportPage::/metric/summary::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open PlatformOperationsReportPage loading /metric/summary",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::PlatformOperationsReportPage::/metric/trend::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open PlatformOperationsReportPage loading /metric/trend",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::PortfolioReportPage::/metric/summary::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open PortfolioReportPage loading /metric/summary",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "ui::PortfolioReportPage::/metric/trend::Ok200",
+      "source": "PageLoaded",
+      "trigger": "open PortfolioReportPage loading /metric/trend",
+      "target": "Ready",
+      "guard": "",
+      "implementation_status": "implemented"
+    }
+  ]
+}

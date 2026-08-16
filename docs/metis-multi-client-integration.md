@@ -5,7 +5,7 @@
 
 ## 0. Why this works for both without server-side branching
 
-Métis's `mcp-server` component (the Helm chart's `mcp-server` deployment) speaks standard **MCP over Streamable HTTP** with OAuth2 authorization. This is the whole point of MCP as a protocol — the server doesn't know or care whether the caller is Claude Code, Claude Desktop, or GitHub Copilot's Agent mode. What differs between clients is entirely **client-side configuration**: how each one is told the server exists and how each one obtains a token. Everything after that — the 9 tools, the RBAC scoping, the token lifecycle (`CONST-064`) — is identical.
+Métis's `mcp-server` component (the Helm chart's `mcp-server` deployment) speaks standard **MCP over Streamable HTTP** with OAuth2 authorization. This is the whole point of MCP as a protocol — the server doesn't know or care whether the caller is Claude Code, Claude Desktop, or GitHub Copilot's Agent mode. What differs between clients is entirely **client-side configuration**: how each one is told the server exists and how each one obtains a token. Everything after that — the current tool set, the RBAC scoping, the token lifecycle (`CONST-064`) — is identical.
 
 ---
 

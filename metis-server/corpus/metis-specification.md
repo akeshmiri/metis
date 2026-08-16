@@ -186,14 +186,14 @@ Domain / Risk / Architecture / Technology / Compliance / Security / Testing / Pe
 
 | Convention | Rule | How Métis uses it |
 |---|---|---|
-| **File layout** | `.agents/skills/<name>/SKILL.md` (slimmed) + `steps/NN-<stage-slug>.md` + `knowledge/<topic>.md`, unchanged `scripts/`/`resources/`/`configs/`/`tests/` | Every Métis skill (graph context retrieval, traceability, coverage checking, etc.) follows this exact structure inside **Métis's own** skill tree |
+| **File layout** | `plugins/metis/skills/<name>/SKILL.md` (slimmed) + `steps/NN-<stage-slug>.md` + `knowledge/<topic>.md`, unchanged `scripts/`/`resources/`/`configs/`/`tests/` | Every Métis skill (graph context retrieval, traceability, coverage checking, etc.) follows this exact structure inside **Métis's own** skill tree |
 | **Content boundary rule** | Always-enforced rules in `SKILL.md`; supporting detail in `knowledge/` | Adopted as-is — a well-tested judgment call worth reusing verbatim |
 | **RPI anti-hallucination protocol** | Scope Lock → Forbidden Substitutions → Confidence Tagging (`VERIFIED`/`INFERRED`/`UNVERIFIED`) → Drift Check | Reimplemented in Métis's own shared knowledge base, modeled directly on Atlas's `shared/knowledge/anti-hallucination-protocol.md` — Métis's guardrail stack (§7) is an *elaboration* of RPI (adding persistence, corroboration, and contradiction tracking that a single workflow run doesn't need), not a parallel protocol invented from scratch |
 | **Stage Confirmation Protocol** | `[C]/[R]/[B]/[X]` menu, standalone-pauses/chain-auto-advances | Reimplemented independently for Métis's own pipeline (§9.2), same design, not shared code |
 | **Config resolution pattern** | Resolve once per session, project-level then host-level fallback, never re-ask | Adopted as a general pattern for Métis's own connector configuration, modeled on `atlas-config-manager`'s approach |
 
-`REQ-METIS-SKL-01` (final): Every Métis skill follows the step-decomposition structure above within Métis's own skill tree — there is no dependency on an Atlas installation, no shared runtime, no shared router.
-`REQ-METIS-SKL-02` (final): Métis skills register in Métis's own router, built independently on the same *pattern* as `atlas.agent.md`'s Quick Routing table — not inside Atlas's actual routing table. If an org runs both Atlas and Métis, they coexist as two separate tools a person or a Copilot Agent-mode session can invoke, neither depending on the other's installation.
+`REQ-METIS-SKL-01` (final): Every Métis skill follows the step-decomposition structure above within Métis's own skill tree (`plugins/metis/skills/<name>/`, packaged as the `metis` plugin and distributed through Métis's own marketplace at `.claude-plugin/marketplace.json`) — there is no dependency on an Atlas installation, no shared runtime, no shared router.
+`REQ-METIS-SKL-02` (final): Métis skills register in Métis's own router (`plugins/metis/agents/metis.agent.md`), built independently on the same *pattern* as `atlas.agent.md`'s Quick Routing table — not inside Atlas's actual routing table. Workflow agents grouping those skills are generated for both Claude and Copilot from the same `SKILL.md` frontmatter by `metis_mcp/agent_generator.py`, so the two clients cannot drift, and the catalogue is discoverable at runtime via the `metis_list_skills` MCP tool. If an org runs both Atlas and Métis, they coexist as two separate tools a person or a Copilot Agent-mode session can invoke, neither depending on the other's installation.
 
 ### 4.6.1 Convention for Presentation/Slide-Producing Skills
 
@@ -204,7 +204,7 @@ Neither Atlas nor Athena produces slide decks — Atlas's `report-generator`/`qu
 **Folder structure** (extends §4.6's base convention with two new folders specific to this skill type):
 
 ```
-.agents/skills/<slide-skill-name>/
+plugins/metis/skills/<slide-skill-name>/
 ├── SKILL.md                    # frontmatter + purpose + Step Index + Non-Negotiable Rules
 ├── steps/
 │   ├── 01-gather-content.md    # RPI-gated: pulls from the Métis graph (metrics, traceability, gaps)

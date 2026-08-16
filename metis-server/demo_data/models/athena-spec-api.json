@@ -1,0 +1,103 @@
+{
+  "id": "athena-spec-api",
+  "states": [
+    {
+      "id": "Ready",
+      "name": "Ready",
+      "surface": "api",
+      "is_initial": true
+    },
+    {
+      "id": "Ok200",
+      "name": "Ok200",
+      "surface": "api",
+      "is_initial": false
+    },
+    {
+      "id": "Created201",
+      "name": "Created201",
+      "surface": "api",
+      "is_initial": false
+    },
+    {
+      "id": "NoContent204",
+      "name": "NoContent204",
+      "surface": "api",
+      "is_initial": false
+    }
+  ],
+  "transitions": [
+    {
+      "id": "org.catools.athena.spec.rest.controller.ApiSpecController.getSummary:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.Integer)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /spec/summary",
+      "target": "Ok200",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.spec.rest.controller.ApiSpecController.getFreshness:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.Integer)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /spec/freshness",
+      "target": "Ok200",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.spec.rest.controller.ApiSpecController.getDrift:org.springframework.http.ResponseEntity(int,int,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /spec/drift",
+      "target": "Ok200",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.spec.rest.controller.ApiSpecController.getAll:org.springframework.http.ResponseEntity(int,int,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /spec/all",
+      "target": "Ok200",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.spec.rest.controller.ApiSpecController.saveOrUpdate:org.springframework.http.ResponseEntity(org.catools.athena.model.apispec.ApiSpecDto)::POST->Created201",
+      "source": "Ready",
+      "trigger": "POST /spec",
+      "target": "Created201",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.spec.rest.controller.ApiSpecController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /spec/{id}",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.spec.rest.controller.ApiSpecController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /spec/{id}",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.spec.rest.controller.ApiSpecController.search:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String)::GET->NoContent204",
+      "source": "Ready",
+      "trigger": "GET /spec",
+      "target": "NoContent204",
+      "guard": "t.isEmpty()",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "org.catools.athena.spec.rest.controller.ApiSpecController.search:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String)::GET->Ok200",
+      "source": "Ready",
+      "trigger": "GET /spec",
+      "target": "Ok200",
+      "guard": "NOT (t.isEmpty())",
+      "implementation_status": "implemented"
+    }
+  ]
+}

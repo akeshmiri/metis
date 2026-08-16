@@ -4,20 +4,20 @@
 # config_manager.py's docstring for the full resolution rule.
 
 zdr:
-  # Explicit, current decision (not a placeholder): no commercial Zero Data
-  # Retention agreement with Anthropic is being pursued right now. This is a
-  # deliberate choice, not an unfinished task -- see the reasoning recorded
-  # in metis-const-053-confirmation-record.md and the conversation that led
-  # to it. Because this is false, any repository classified `confidential`
-  # below will be blocked at the gate (CONST-051) until this changes.
+  # Zero Data Retention status for the adopting organization. Fail-closed by
+  # default: while `confirmed` is false, any repository classified
+  # `confidential` below is blocked at the gate (CONST-051).
+  #
+  # Record the decision here once made -- see
+  # metis-const-053-confirmation-record.md for the procurement checklist and
+  # the fields to fill in.
   confirmed: false
   confirmed_date: null
   confirmed_by: null
   note: >
-    Decided 2026-07-25: standard API terms (no training, 30-day auto-delete)
-    are sufficient for now. Revisit only if a specific repository's
-    contractual or regulatory requirements actually need stricter handling
-    -- see the classification guidance below, not a blanket policy change.
+    REPLACE: record the ZDR decision, its date, and the reasoning. Until this
+    is filled in, treat the fail-closed default above as intentional rather
+    than as an unfinished task.
 
 models:
   extraction: claude-haiku-4-5-20251001

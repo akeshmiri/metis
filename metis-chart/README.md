@@ -28,6 +28,12 @@ rather than one hand-written manifest per component.
 
 ## Install
 
+The chart renders a complete deployment `config.json` Secret from the install
+values. The MCP server and ingestion worker read it through
+`METIS_CONFIG_PATH`; they do not consume `NEO4J_URI`, `NEO4J_PASSWORD`, or
+`METIS_NEO4J_*` runtime variables. Local MCP and Atlas usage are separate and
+read `~/.metis/config.json`.
+
 ```bash
 # Add the real Neo4j chart repo (dependency)
 helm repo add neo4j https://helm.neo4j.com/neo4j
@@ -36,7 +42,7 @@ helm dependency update
 # Phase 0 / sandbox
 helm install metis . -f values.yaml -f values-sbx.yaml \
   --set-string secrets.athenaDbPassword="$ATHENA_DB_PASSWORD" \
-  --set-string secrets.neo4jPassword="$NEO4J_PASSWORD" \
+  --set-string secrets.neo4jPassword="$DEPLOYMENT_NEO4J_PASSWORD" \
   --set-string secrets.anthropicApiKey="$ANTHROPIC_API_KEY" \
   --set-string secrets.oauthClientSecret="$OAUTH_CLIENT_SECRET"
 
@@ -45,7 +51,7 @@ helm install metis . -f values.yaml \
   --set neo4j.edition=enterprise \
   --set neo4j.acceptLicenseAgreement=yes \
   --set-string secrets.athenaDbPassword="$ATHENA_DB_PASSWORD" \
-  --set-string secrets.neo4jPassword="$NEO4J_PASSWORD" \
+  --set-string secrets.neo4jPassword="$DEPLOYMENT_NEO4J_PASSWORD" \
   --set-string secrets.anthropicApiKey="$ANTHROPIC_API_KEY" \
   --set-string secrets.oauthClientSecret="$OAUTH_CLIENT_SECRET"
 ```
@@ -55,16 +61,22 @@ helm install metis . -f values.yaml \
 - **Every `REPLACE` placeholder in `values.yaml`/`Chart.yaml`** — registry, image
   repository, ingress host, storage class, and the pinned Neo4j chart version —
   none of these are guessable from outside your actual infrastructure.
-- **This chart could not be validated with `helm lint`/`helm template` in the
-  environment that built it** — this sandbox's network allowlist doesn't reach
-  Helm's own distribution (`get.helm.sh`, GitHub release assets for Helm itself).
-  What *was* checked: `Chart.yaml` and `values.yaml` are valid plain YAML, and
-  every `.tpl`/template file has balanced `{{ }}` delimiters. Full template
-  rendering (`helm template .`) should be run in a real environment before
-  applying this to a cluster — treat this chart as reviewed-by-construction,
-  not test-deployed.
-- **The three application images** (`metis-mcp-server`, `metis-ingestion-worker`,
-  `metis-guardrail-corpus-runner`) don't exist yet — this chart deploys them,
-  it doesn't build them. The MCP tool contracts (`metis-mcp-tool-contracts.json`)
-  and connector manifests (bundled in `files/connectors/`) define their expected
-  behavior; the actual service implementations are a separate build task.
+- **Deployment publication remains external.** The four local images now build
+  successfully with Podman at `0.1.0`:
+  `metis-mcp-server`, `metis-ingestion-worker`,
+  `metis-guardrail-corpus-runner`, and `metis-graph-sync`. They still need to be
+  pushed to the real registry and wired to the real registry/repository values.
+- **Chart validation is green locally.** `helm lint .` and
+  `helm template metis .` both pass; the rendered manifest was checked before
+  this release record was updated. A real cluster install remains an external
+  deployment gate.
+
+The local image build pattern is:
+
+```bash
+cd metis-server
+podman build -f Dockerfile.mcp-server -t metis-mcp-server:0.1.0 .
+podman build -f Dockerfile.ingestion-worker -t metis-ingestion-worker:0.1.0 .
+podman build -f Dockerfile.guardrail-corpus-runner -t metis-guardrail-corpus-runner:0.1.0 .
+podman build -f Dockerfile.graph-sync -t metis-graph-sync:0.1.0 .
+```

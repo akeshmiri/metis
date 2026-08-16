@@ -60,9 +60,16 @@ spec:
           livenessProbe:
             {{- .livenessProbe | toYaml | nindent 12 }}
           {{- end }}
-          {{- if .mountedConfigMaps }}
+          {{- if or .mountedConfigMaps .mountedSecrets }}
           volumeMounts:
-          {{- range .mountedConfigMaps }}
+          {{- range (.mountedConfigMaps | default (list)) }}
+            - name: {{ .name | lower }}
+              mountPath: {{ .mountPath }}
+              {{- if .subPath }}
+              subPath: {{ .subPath }}
+              {{- end }}
+          {{- end }}
+          {{- range (.mountedSecrets | default (list)) }}
             - name: {{ .name | lower }}
               mountPath: {{ .mountPath }}
               {{- if .subPath }}
@@ -70,12 +77,17 @@ spec:
               {{- end }}
           {{- end }}
           {{- end }}
-      {{- if .mountedConfigMaps }}
+      {{- if or .mountedConfigMaps .mountedSecrets }}
       volumes:
-      {{- range .mountedConfigMaps }}
+      {{- range (.mountedConfigMaps | default (list)) }}
         - name: {{ .name | lower }}
           configMap:
             name: {{ printf "%s-%s" $.Release.Name .name | trunc 63 | trimSuffix "-" }}
+      {{- end }}
+      {{- range (.mountedSecrets | default (list)) }}
+        - name: {{ .name | lower }}
+          secret:
+            secretName: {{ printf "%s-%s" $.Release.Name .name | trunc 63 | trimSuffix "-" }}
       {{- end }}
       {{- end }}
 {{- end }}
@@ -139,9 +151,16 @@ spec:
                 {{- include "metis.pod.env" . | nindent 16 }}
               resources:
                 {{- .resources | toYaml | nindent 16 }}
-              {{- if .mountedConfigMaps }}
+              {{- if or .mountedConfigMaps .mountedSecrets }}
               volumeMounts:
-              {{- range .mountedConfigMaps }}
+              {{- range (.mountedConfigMaps | default (list)) }}
+                - name: {{ .name | lower }}
+                  mountPath: {{ .mountPath }}
+                  {{- if .subPath }}
+                  subPath: {{ .subPath }}
+                  {{- end }}
+              {{- end }}
+              {{- range (.mountedSecrets | default (list)) }}
                 - name: {{ .name | lower }}
                   mountPath: {{ .mountPath }}
                   {{- if .subPath }}
@@ -149,12 +168,17 @@ spec:
                   {{- end }}
               {{- end }}
               {{- end }}
-          {{- if .mountedConfigMaps }}
+          {{- if or .mountedConfigMaps .mountedSecrets }}
           volumes:
-          {{- range .mountedConfigMaps }}
+          {{- range (.mountedConfigMaps | default (list)) }}
             - name: {{ .name | lower }}
               configMap:
                 name: {{ printf "%s-%s" $.Release.Name .name | trunc 63 | trimSuffix "-" }}
+          {{- end }}
+          {{- range (.mountedSecrets | default (list)) }}
+            - name: {{ .name | lower }}
+              secret:
+                secretName: {{ printf "%s-%s" $.Release.Name .name | trunc 63 | trimSuffix "-" }}
           {{- end }}
           {{- end }}
 {{- end }}

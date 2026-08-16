@@ -55,6 +55,115 @@ def _parse_guard(expression: str):
     return m.group("var"), m.group("op"), float(m.group("num"))
 
 
+
+# --------------------------------------------------------------------------
+# Syntactic complementarity (spec M-17's other half)
+# --------------------------------------------------------------------------
+#
+# The interval machinery below decides guards of the shape `<var> <op> <number>`.
+# Real recovered guards are mostly not that shape -- `t.isEmpty()` versus
+# `NOT (t.isEmpty())` -- and were therefore reported `unverifiable`: 135 of 223
+# such findings on the athena estate alone.
+#
+# Those are decidable, and decidable *without interpretation*: two guards whose
+# conjuncts are identical except that exactly one appears negated in one and
+# positive in the other are mutually exclusive AND jointly exhaustive, whatever
+# the atoms mean. That is propositional structure, not semantics -- the checker
+# never has to know what `t.isEmpty()` does.
+#
+# This is deliberately narrow. It decides only exact complementarity and exact
+# identity; anything else still falls through to the interval check and then to
+# `unverifiable`, because M-17 is fail-closed and a partial syntactic match is
+# not a proof.
+
+_NOT_PREFIX = re.compile(r"^\s*NOT\s*\((.*)\)\s*$", re.IGNORECASE)
+
+
+def _strip_parens(text: str) -> str:
+    t = text.strip()
+    while t.startswith("(") and t.endswith(")"):
+        depth = 0
+        balanced = True
+        for i, ch in enumerate(t):
+            depth += (ch == "(") - (ch == ")")
+            if depth == 0 and i < len(t) - 1:
+                balanced = False
+                break
+        if not balanced:
+            break
+        t = t[1:-1].strip()
+    return t
+
+
+def _literal(term: str) -> tuple[str, bool]:
+    """`NOT (x)` -> (x, True); `x` -> (x, False). Only the outermost NOT."""
+    t = _strip_parens(term)
+    m = _NOT_PREFIX.match(t)
+    if m:
+        inner, _ = _literal(m.group(1))
+        return inner, True
+    if t.upper().startswith("NOT "):
+        inner, _ = _literal(t[4:])
+        return inner, True
+    return t, False
+
+
+def _conjuncts(expression: str) -> set[tuple[str, bool]] | None:
+    """Split on top-level ` AND `. Returns None if an OR is present.
+
+    An OR makes the expression a disjunction, and deciding complementarity over
+    disjunctions needs real boolean reasoning -- out of scope, and pretending
+    otherwise is exactly what M-17 forbids.
+    """
+    text = _strip_parens(expression)
+    if not text:
+        return None
+    if re.search(r"\bOR\b", text, re.IGNORECASE):
+        return None
+    parts, depth, current = [], 0, ""
+    tokens = re.split(r"(\bAND\b)", text, flags=re.IGNORECASE)
+    for token in tokens:
+        if token.upper() == "AND" and depth == 0:
+            parts.append(current)
+            current = ""
+            continue
+        depth += token.count("(") - token.count(")")
+        current += token
+    parts.append(current)
+    out = {_literal(p) for p in parts if p.strip()}
+    return out or None
+
+
+def syntactic_relation(guard_a: str, guard_b: str) -> str | None:
+    """`"identical"`, `"complementary"`, `"exclusive"`, or None.
+
+    **Exclusivity and exhaustiveness are different properties, and conflating
+    them under-reports.** Two guards are mutually EXCLUSIVE as soon as any single
+    atom appears positive in one and negated in the other -- they cannot both
+    hold, whatever else differs. They are COMPLEMENTARY (exclusive *and* jointly
+    exhaustive) only when that opposing atom is their sole difference.
+
+    An earlier version required the sole-difference condition for both, so
+    three-way try/catch guards differing in two literals -- plainly exclusive,
+    since one demands `instanceof` and the other its negation -- were reported
+    unverifiable. Exclusivity is what a determinism check needs; exhaustiveness
+    is what a completeness check needs; they are now answered separately.
+    """
+    ca, cb = _conjuncts(guard_a), _conjuncts(guard_b)
+    if ca is None or cb is None:
+        return None
+    if ca == cb:
+        return "identical"
+
+    opposed = {atom for atom, neg in ca if (atom, not neg) in cb}
+    only_a, only_b = ca - cb, cb - ca
+    if (len(only_a) == 1 and len(only_b) == 1 and len(opposed) == 1):
+        return "complementary"
+    if opposed:
+        return "exclusive"
+    return None
+
+
 @dataclass
 class _Bound:
     lower: float
@@ -113,6 +222,20 @@ def guards_conflict(guard_a: str, guard_b: str) -> tuple[bool, str]:
     'confidence >= 0.9'). Guards outside this shape are conservatively
     flagged as unverifiable-but-potentially-ambiguous, never silently
     assumed safe -- fail-closed, same discipline as classification_gate.py."""
+    relation = syntactic_relation(guard_a, guard_b)
+    if relation == "exclusive":
+        return False, (f"'{guard_a}' and '{guard_b}' are mutually exclusive: an atom "
+                       f"appears positive in one and negated in the other, so they "
+                       f"cannot both hold.")
+    if relation == "complementary":
+        return False, (f"'{guard_a}' and '{guard_b}' are complementary: identical "
+                       f"conjuncts but for one literal, negated on one side. "
+                       f"Mutually exclusive by propositional structure, whatever "
+                       f"the atoms mean.")
+    if relation == "identical":
+        return True, (f"'{guard_a}' and '{guard_b}' are the SAME condition, so they "
+                      f"always overlap -- this is certain, not unverifiable.")
+
     parsed_a, parsed_b = _parse_guard(guard_a), _parse_guard(guard_b)
     if parsed_a is None or parsed_b is None:
         return True, (
@@ -138,6 +261,10 @@ def _guard_coverage_gap(guards: list[str]) -> str | None:
     for a GAP is the natural complement of checking for an OVERLAP. Same
     fail-closed discipline: an unparseable guard, or guards on different
     variables, is flagged as unverifiable, never assumed complete."""
+    if len(guards) == 2 and syntactic_relation(guards[0], guards[1]) == "complementary":
+        # X and NOT X cover the whole domain between them, by structure.
+        return None
+
     parsed = [(g, _parse_guard(g)) for g in guards]
     unparseable = [g for g, p in parsed if p is None]
     if unparseable:
@@ -174,7 +301,7 @@ class GuardCoverageGap:
     reason: str
 
 
-def check_guard_completeness(session) -> list[GuardCoverageGap]:
+def check_guard_completeness(session, state_machine_id: str | None = None) -> list[GuardCoverageGap]:
     """Not one of CONST-048/049's original determinism/completeness
     checks -- a real, requested extension: for every (from_state,
     trigger) with >=2 real Transitions, verifies their guards jointly
@@ -187,12 +314,14 @@ def check_guard_completeness(session) -> list[GuardCoverageGap]:
     is check_completeness()'s job, not this one's."""
     rows = session.run(
         """
-        MATCH (s:State)-[:WHEN]->(t:Transition)
-        WHERE t.trigger IS NOT NULL AND t.guard_expression IS NOT NULL
+                MATCH (s:State)-[:WHEN]->(t:Transition)
+                WHERE t.trigger IS NOT NULL AND t.guard_expression IS NOT NULL
+                    AND ($state_machine_id IS NULL OR t.state_machine_id = $state_machine_id)
         RETURN s.id AS from_state, t.trigger AS trigger, t.id AS transition_id,
                t.guard_expression AS guard
-        """
-    ).data()
+                """,
+                state_machine_id=state_machine_id,
+        ).data()
 
     groups: dict[tuple, list[dict]] = {}
     for row in rows:
@@ -215,7 +344,8 @@ def check_guard_completeness(session) -> list[GuardCoverageGap]:
 def load_transition(session, transition_id: str, source_episode_id: str, from_state: str,
                      to_state: str, trigger: str, guard_expression: str,
                      implementing_method_id: str | None = None,
-                     performance_sla_critical: bool = False) -> None:
+                     performance_sla_critical: bool = False,
+                     state_machine_id: str | None = None) -> None:
     """MERGE-based, idempotent -- reusable for any real Transition set, not
     tied to a specific illustrative scenario.
 
@@ -231,37 +361,51 @@ def load_transition(session, transition_id: str, source_episode_id: str, from_st
     def _write(tx):
         tx.run(
             """
-            MERGE (from:State {id: $from_state}) ON CREATE SET from.source_episode_id = $episode
-            MERGE (to:State {id: $to_state}) ON CREATE SET to.source_episode_id = $episode
+            MERGE (from:State {id: $from_state})
+            SET from.source_episode_id = $episode, from.name = $from_name,
+                from.name_source = 'source', from.name_quality = 'verified'
+            MERGE (to:State {id: $to_state})
+            SET to.source_episode_id = $episode, to.name = $to_name,
+                to.name_source = 'source', to.name_quality = 'verified'
             MERGE (t:Transition {id: $transition_id})
-            SET t.source_episode_id = $episode,
+            SET from.state_machine_id = coalesce($state_machine_id, from.state_machine_id),
+                to.state_machine_id = coalesce($state_machine_id, to.state_machine_id),
+                t.source_episode_id = $episode, t.name = $transition_name,
+                t.name_source = 'derived', t.name_quality = 'derived',
                 t.trigger = $trigger,
                 t.guard_expression = $guard_expression,
                 t.implementing_method_id = $implementing_method_id,
-                t.performance_sla_critical = $performance_sla_critical
+                t.performance_sla_critical = $performance_sla_critical,
+                t.state_machine_id = coalesce($state_machine_id, t.state_machine_id)
             MERGE (from)-[:WHEN]->(t)
             MERGE (t)-[:THEN]->(to)
             """,
             transition_id=transition_id, episode=source_episode_id, from_state=from_state,
             to_state=to_state, trigger=trigger, guard_expression=guard_expression,
+            from_name=from_state, to_name=to_state, transition_name=trigger or transition_id,
             implementing_method_id=implementing_method_id,
-            performance_sla_critical=performance_sla_critical,
+            performance_sla_critical=performance_sla_critical, state_machine_id=state_machine_id,
         )
     session.execute_write(_write)
 
 
-def check_determinism(session, state_id: str) -> DeterminismResult:
+def check_determinism(session, state_id: str,
+                      state_machine_id: str | None = None) -> DeterminismResult:
     """CONST-048/REQ-METIS-BM-04: no two Transitions from the same source
     State should fire on the same Trigger with overlapping Guards."""
     rows = session.run(
         """
-        MATCH (s:State {id: $state_id})-[:WHEN]->(t1:Transition)
+                MATCH (s:State {id: $state_id})-[:WHEN]->(t1:Transition)
         MATCH (s)-[:WHEN]->(t2:Transition)
-        WHERE t1.id < t2.id AND t1.trigger = t2.trigger
+                WHERE t1.id < t2.id AND t1.trigger = t2.trigger
+                    AND ($state_machine_id IS NULL OR (
+                            t1.state_machine_id = $state_machine_id
+                            AND t2.state_machine_id = $state_machine_id
+                    ))
         RETURN t1.id AS t1_id, t2.id AS t2_id, t1.trigger AS trigger_id,
                t1.guard_expression AS g1_expr, t2.guard_expression AS g2_expr
         """,
-        state_id=state_id,
+        state_id=state_id, state_machine_id=state_machine_id,
     ).data()
 
     findings = []
@@ -294,27 +438,34 @@ class CompletenessGap:
     trigger_id: str
 
 
-def check_completeness(session) -> list[CompletenessGap]:
+def check_completeness(session, state_machine_id: str | None = None) -> list[CompletenessGap]:
     """Every State should have a defined Transition for every Trigger used
     anywhere in the set. Operationalized exactly as §2 defines it: the
     full Trigger vocabulary is whatever's actually used across this
     Transition set (not an externally-imposed list)."""
     gaps = session.run(
         """
-        MATCH (any:Transition) WHERE any.trigger IS NOT NULL
+                MATCH (any:Transition)
+                WHERE any.trigger IS NOT NULL
+                    AND ($state_machine_id IS NULL OR any.state_machine_id = $state_machine_id)
         WITH DISTINCT any.trigger AS trigger
         MATCH (s:State)
-        WHERE NOT EXISTS {
-            MATCH (s)-[:WHEN]->(t:Transition) WHERE t.trigger = trigger
+                WHERE ($state_machine_id IS NULL OR s.state_machine_id = $state_machine_id)
+                    AND NOT EXISTS {
+                        MATCH (s)-[:WHEN]->(t:Transition)
+                        WHERE t.trigger = trigger
+                            AND ($state_machine_id IS NULL OR t.state_machine_id = $state_machine_id)
         }
         RETURN s.id AS state_id, trigger AS trigger_id
         ORDER BY state_id, trigger_id
-        """
-    ).data()
+                """,
+                state_machine_id=state_machine_id,
+        ).data()
     return [CompletenessGap(g["state_id"], g["trigger_id"]) for g in gaps]
 
 
-def check_reachability(session, initial_state_id: str) -> list[str]:
+def check_reachability(session, initial_state_id: str,
+                       state_machine_id: str | None = None) -> list[str]:
     """Every State should be reachable from the initial State via some
     directed path of Transitions. Returns the ids of unreachable States.
 
@@ -327,12 +478,21 @@ def check_reachability(session, initial_state_id: str) -> list[str]:
     unreachable states in one pass, where a Cypher shortestPath/reachability
     pattern would need a separate query per candidate state. Deterministic
     graph algorithm either way, not LLM judgment, per §9's allocation."""
-    all_states = {r["id"] for r in session.run("MATCH (s:State) RETURN s.id AS id").data()}
+    all_states = {r["id"] for r in session.run(
+        "MATCH (s:State) WHERE $state_machine_id IS NULL OR s.state_machine_id = $state_machine_id "
+        "RETURN s.id AS id",
+        state_machine_id=state_machine_id,
+    ).data()}
     edges = session.run(
         """
         MATCH (a:State)-[:WHEN]->(t:Transition)-[:THEN]->(b:State)
+        WHERE $state_machine_id IS NULL OR (
+            a.state_machine_id = $state_machine_id
+            AND t.state_machine_id = $state_machine_id
+            AND b.state_machine_id = $state_machine_id
+        )
         RETURN a.id AS from_id, b.id AS to_id
-        """
+        """, state_machine_id=state_machine_id,
     ).data()
 
     adjacency: dict[str, list[str]] = {}

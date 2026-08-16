@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "metis": {
+      "command": "REPLACE: absolute path to metis-server/.venv/bin/python3",
+      "args": ["-m", "metis_mcp.server"],
+      "cwd": "REPLACE: absolute path to metis-server"
+    }
+  }
+}

@@ -1,0 +1,51 @@
+# Query pack: JVM structural extraction (application spec §13.4)
+#
+# The pack's job is to emit code_analysis.contract's shape. Everything
+# downstream consumes the contract, never Joern's raw output -- so an engine
+# upgrade touches this pack and nothing else (spec X-3).
+name: jvm-structural
+version: 0.1.0
+contract: metis.cpg-extract/1
+
+engine:
+  name: joern
+  # X-3: pinned, not a range. Joern's 2.x -> 4.x migration replaced its storage
+  # backend; an unpinned engine would break packs silently.
+  version: "4.0.604"
+  frontends: [javasrc2cpg, jimple2cpg]
+
+layers: [1, 2, 3]          # structural, endpoints, type registry
+
+status: working
+verified_against:
+  repo: athena-boot-git
+  java_files: 25
+  result: "149 methods, 161 calls, 6 endpoints, 60 members, 0 unparsed"
+  endpoints_cross_checked: "6 — matches the independent grep recorded in spec §15.1"
+  routes: ["/commit", "/commit/{id}", "/repo", "/repo/{id}"]
+
+known_limits:
+  - "path constants resolve from string-literal assignments only; anything else
+     is emitted as __unresolved__ and never guessed (spec T-9d)"
+  - "Layers 4-5 (transitions, AC matching) are not in this pack — §13 scope banner"
+
+frameworks:
+  # X-10b: classification is configuration; order is a code fact (X-10a).
+  spring:
+    endpoint_annotations:
+      - GetMapping
+      - PostMapping
+      - PutMapping
+      - DeleteMapping
+      - PatchMapping
+      - RequestMapping
+    dimension_classes:
+      authentication:
+        cross_cutting: true
+        matches: [SecurityFilterChain, PreAuthenticated]
+      authorization:
+        cross_cutting: true
+        matches: [PreAuthorize, hasRole, hasAuthority]
+      validation:
+        cross_cutting: false
+        matches: [Valid, Validated, NotNull, NotBlank]

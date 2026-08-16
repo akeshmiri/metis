@@ -13,6 +13,58 @@ operated so far: build it, then run it for real and check a specific output
 bugs were caught this way already (see `CLAUDE.md`'s "working style"
 section); assume there are more waiting in the phases below, not zero.
 
+## Session 14 addendum — release verification and local packaging
+
+The release-readiness repair pass is complete for the executable code scope:
+
+- The default Métis regression suite is green: **337 passed**, with one
+   pre-existing Starlette deprecation warning. The MCP subprocess e2e test also
+   passes independently.
+- A clean `metis-mcp-server` **0.1.0** wheel builds through standard PEP 517
+   isolation. Its archive contains only the intended `metis_mcp` package and
+   the `metis-mcp-server` console entrypoint.
+- `helm lint .` and `helm template metis .` pass. The chart release README now
+   records the verified state rather than claiming template validation and image
+   builds are unavailable.
+- Podman **5.8.2** builds all four local images at `0.1.0`: `metis-mcp-server`,
+   `metis-ingestion-worker`, `metis-guardrail-corpus-runner`, and
+   `metis-graph-sync`. Each image runs as UID 10001; all entrypoint imports pass
+   when their required runtime configuration is available. The MCP image still
+   correctly refuses to start without configuration or a reachable Neo4j.
+- The Métis root now has local Git metadata and release hygiene rules, but no
+   files have been staged or committed and no remote has been invented.
+
+Still external release gates, not unresolved application failures:
+
+- Replace infrastructure-specific chart values and publish the four images to
+   the real registry; the local images are not yet remotely addressable.
+- Set a real ingress/public URL, storage class, Athena read-only endpoint, and
+   Neo4j deployment settings. Community Neo4j remains the local/sandbox default.
+- Resolve the current ZDR/security decision before any confidential production
+   repository is enabled. The local config still reports `zdr.confirmed: false`.
+- The four explicitly costed LLM test files remain unrun. No `claude` executable
+   is available on the current PATH or common local bin locations, so running
+   them here would not produce valid model evidence.
+- Git hosting, tagging, and registry publication still require the release
+   owner's actual remote, credentials, and infrastructure coordinates.
+
+## Session 15 addendum — isolated Neo4j test lifecycle
+
+Métis tests no longer use the deployed Neo4j configured in
+`~/.metis/config.json`. `metis-server/neo4j_test_support.py` now starts a
+unique disposable Podman Neo4j container on a random loopback port, applies
+schema 01/02/03, loads the real 177-item dogfooding corpus, and points server
+subprocesses at a temporary config whose graph endpoint is that container.
+`conftest.py` force-removes the container and temporary config at pytest
+session end; the module also registers an exit cleanup for script-style test
+execution. A full isolated run remains **337 passed**.
+
+The Atlas test suite was audited separately: its Python tests contain no
+Neo4j driver, Bolt URI, or graph write path. Atlas's Métis-manager tests use
+temporary configuration and HTTP-client fixtures only, so starting a second
+Neo4j instance for Atlas would add an unused dependency rather than protect a
+real data path. Atlas remains green at **423 passed**.
+
 ## Session 2 addendum — everything originally descoped is now built
 
 After the Phase 1-10 pass below was complete, the user asked to build
@@ -348,7 +400,7 @@ a review-queue table). Do not redesign the schema; implement against it.
 **Acceptance criteria — do not mark this phase done until all of these pass:**
 - [x] All three Cypher files execute against a real Neo4j instance with zero errors — required fixing 4 real bugs in the schema files themselves (invalid vector-index label union, a constraint/index name collision, invalid `CREATE PROPERTY EXISTENCE CONSTRAINT` syntax, and unsupported filtered/partial indexes); see CLAUDE.md's "concrete next build tasks" §1 for the details.
 - [x] A new `test_neo4j_graph_store.py` exists and passes against the real instance (not mocked) — 10/10, run against Neo4j 5.26 Enterprise via Docker.
-- [x] The existing `test_e2e.py` passes with `graph.backend: neo4j` in `.metis/config.yaml` (this project resolves backend selection through config, per the no-config-in-code rule, rather than a raw `METIS_GRAPH_BACKEND` env var read directly in code) — proves the swap is real. Required one small, justified harness fix: `StdioServerParameters` needed explicit `env=os.environ.copy()`, since the MCP SDK only forwards an allowlisted env subset to the spawned subprocess by default, not `METIS_NEO4J_PASSWORD`.
+- [x] The existing `test_e2e.py` passes with `graph.backend: neo4j` in `~/.metis/config.json` (this project resolves backend selection through config, per the no-config-in-code rule, rather than a raw `METIS_GRAPH_BACKEND` env var read directly in code) — proves the swap is real. Required one small, justified harness fix: `StdioServerParameters` needed explicit `env=os.environ.copy()` so the spawned subprocess receives deployment environment overrides consistently.
 - [x] At least one manually-inserted real node round-trips correctly through `metis_get_context` — `load_dogfooding_corpus.py` loaded 177 real nodes / 359 real citation edges from the actual corpus; `metis_get_context('CONST-047')` returns the real text against the neo4j backend.
 
 Note: this loaded the dogfooding corpus under a new `DogfoodingItem` label,

@@ -1,0 +1,203 @@
+{
+  "id": "login-api",
+  "states": [
+    {
+      "id": "LoggedOut",
+      "name": "LoggedOut",
+      "surface": "api",
+      "is_initial": true
+    },
+    {
+      "id": "LoggedIn",
+      "name": "LoggedIn",
+      "surface": "api",
+      "is_initial": false
+    },
+    {
+      "id": "Failed1",
+      "name": "Failed1",
+      "surface": "api",
+      "is_initial": false
+    },
+    {
+      "id": "Failed2",
+      "name": "Failed2",
+      "surface": "api",
+      "is_initial": false
+    },
+    {
+      "id": "Failed3",
+      "name": "Failed3",
+      "surface": "api",
+      "is_initial": false
+    },
+    {
+      "id": "Failed4",
+      "name": "Failed4",
+      "surface": "api",
+      "is_initial": false
+    },
+    {
+      "id": "AccountLocked",
+      "name": "AccountLocked",
+      "surface": "api",
+      "is_initial": false
+    },
+    {
+      "id": "PasswordResetRequested",
+      "name": "PasswordResetRequested",
+      "surface": "api",
+      "is_initial": false
+    },
+    {
+      "id": "PasswordResetSent",
+      "name": "PasswordResetSent",
+      "surface": "api",
+      "is_initial": false
+    },
+    {
+      "id": "SessionExpired",
+      "name": "SessionExpired",
+      "surface": "api",
+      "is_initial": false
+    }
+  ],
+  "transitions": [
+    {
+      "id": "t01",
+      "source": "LoggedOut",
+      "trigger": "submit_valid_credentials",
+      "target": "LoggedIn",
+      "guard": "credentials_valid AND NOT account_locked",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "t02",
+      "source": "LoggedOut",
+      "trigger": "submit_invalid_credentials",
+      "target": "Failed1",
+      "guard": "NOT credentials_valid",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "t03",
+      "source": "Failed1",
+      "trigger": "submit_invalid_credentials",
+      "target": "Failed2",
+      "guard": "NOT credentials_valid",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "t04",
+      "source": "Failed2",
+      "trigger": "submit_invalid_credentials",
+      "target": "Failed3",
+      "guard": "NOT credentials_valid",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "t05",
+      "source": "Failed3",
+      "trigger": "submit_invalid_credentials",
+      "target": "Failed4",
+      "guard": "NOT credentials_valid",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "t06",
+      "source": "Failed4",
+      "trigger": "submit_invalid_credentials",
+      "target": "AccountLocked",
+      "guard": "NOT credentials_valid",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "t07",
+      "source": "Failed1",
+      "trigger": "submit_valid_credentials",
+      "target": "LoggedIn",
+      "guard": "credentials_valid AND NOT account_locked",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "t08",
+      "source": "Failed2",
+      "trigger": "submit_valid_credentials",
+      "target": "LoggedIn",
+      "guard": "credentials_valid AND NOT account_locked",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "t09",
+      "source": "Failed3",
+      "trigger": "submit_valid_credentials",
+      "target": "LoggedIn",
+      "guard": "credentials_valid AND NOT account_locked",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "t10",
+      "source": "Failed4",
+      "trigger": "submit_valid_credentials",
+      "target": "LoggedIn",
+      "guard": "credentials_valid AND NOT account_locked",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "t11",
+      "source": "LoggedOut",
+      "trigger": "click_forgot_password",
+      "target": "PasswordResetRequested",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "t12",
+      "source": "PasswordResetRequested",
+      "trigger": "submit_reset_email",
+      "target": "PasswordResetSent",
+      "guard": "email_registered",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "t13",
+      "source": "LoggedIn",
+      "trigger": "session_idle_timeout",
+      "target": "SessionExpired",
+      "guard": "idle_exceeds_timeout",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "t14",
+      "source": "SessionExpired",
+      "trigger": "any_action_after_expiry",
+      "target": "LoggedOut",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "t15",
+      "source": "AccountLocked",
+      "trigger": "admin_unlock_or_lockout_elapsed",
+      "target": "LoggedOut",
+      "guard": "admin_unlocked OR lockout_elapsed",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "t16",
+      "source": "LoggedIn",
+      "trigger": "click_logout",
+      "target": "LoggedOut",
+      "guard": "",
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "t17",
+      "source": "LoggedIn",
+      "trigger": "enroll_2fa",
+      "target": "LoggedIn",
+      "guard": "",
+      "implementation_status": "planned"
+    }
+  ]
+}

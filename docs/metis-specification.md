@@ -186,14 +186,14 @@ Domain / Risk / Architecture / Technology / Compliance / Security / Testing / Pe
 
 | Convention | Rule | How Métis uses it |
 |---|---|---|
-| **File layout** | `.agents/skills/<name>/SKILL.md` (slimmed) + `steps/NN-<stage-slug>.md` + `knowledge/<topic>.md`, unchanged `scripts/`/`resources/`/`configs/`/`tests/` | Every Métis skill (graph context retrieval, traceability, coverage checking, etc.) follows this exact structure inside **Métis's own** skill tree |
+| **File layout** | `plugins/metis/skills/<name>/SKILL.md` (slimmed) + `steps/NN-<stage-slug>.md` + `knowledge/<topic>.md`, unchanged `scripts/`/`resources/`/`configs/`/`tests/` | Every Métis skill (graph context retrieval, traceability, coverage checking, etc.) follows this exact structure inside **Métis's own** skill tree |
 | **Content boundary rule** | Always-enforced rules in `SKILL.md`; supporting detail in `knowledge/` | Adopted as-is — a well-tested judgment call worth reusing verbatim |
 | **RPI anti-hallucination protocol** | Scope Lock → Forbidden Substitutions → Confidence Tagging (`VERIFIED`/`INFERRED`/`UNVERIFIED`) → Drift Check | Reimplemented in Métis's own shared knowledge base, modeled directly on Atlas's `shared/knowledge/anti-hallucination-protocol.md` — Métis's guardrail stack (§7) is an *elaboration* of RPI (adding persistence, corroboration, and contradiction tracking that a single workflow run doesn't need), not a parallel protocol invented from scratch |
 | **Stage Confirmation Protocol** | `[C]/[R]/[B]/[X]` menu, standalone-pauses/chain-auto-advances | Reimplemented independently for Métis's own pipeline (§9.2), same design, not shared code |
-| **Config resolution pattern** | Resolve once per session, project-level then host-level fallback, never re-ask | Adopted as a general pattern for Métis's own connector configuration, modeled on `atlas-config-manager`'s approach |
+| **Config resolution pattern** | Resolve once per session from `~/.metis/config.json`; a missing file means Métis is not configured | Adopted as the shared host-level configuration contract for Métis and Atlas |
 
-`REQ-METIS-SKL-01` (final): Every Métis skill follows the step-decomposition structure above within Métis's own skill tree — there is no dependency on an Atlas installation, no shared runtime, no shared router.
-`REQ-METIS-SKL-02` (final): Métis skills register in Métis's own router, built independently on the same *pattern* as `atlas.agent.md`'s Quick Routing table — not inside Atlas's actual routing table. If an org runs both Atlas and Métis, they coexist as two separate tools a person or a Copilot Agent-mode session can invoke, neither depending on the other's installation.
+`REQ-METIS-SKL-01` (final): Every Métis skill follows the step-decomposition structure above within Métis's own skill tree (`plugins/metis/skills/<name>/`, packaged as the `metis` plugin and distributed through Métis's own marketplace at `.claude-plugin/marketplace.json`) — there is no dependency on an Atlas installation, no shared runtime, no shared router.
+`REQ-METIS-SKL-02` (final): Métis skills register in Métis's own router (`plugins/metis/agents/metis.agent.md`), built independently on the same *pattern* as `atlas.agent.md`'s Quick Routing table — not inside Atlas's actual routing table. Workflow agents grouping those skills are generated for both Claude and Copilot from the same `SKILL.md` frontmatter by `metis_mcp/agent_generator.py`, so the two clients cannot drift, and the catalogue is discoverable at runtime via the `metis_list_skills` MCP tool. If an org runs both Atlas and Métis, they coexist as two separate tools a person or a Copilot Agent-mode session can invoke, neither depending on the other's installation.
 
 ### 4.6.1 Convention for Presentation/Slide-Producing Skills
 
@@ -204,7 +204,7 @@ Neither Atlas nor Athena produces slide decks — Atlas's `report-generator`/`qu
 **Folder structure** (extends §4.6's base convention with two new folders specific to this skill type):
 
 ```
-.agents/skills/<slide-skill-name>/
+plugins/metis/skills/<slide-skill-name>/
 ├── SKILL.md                    # frontmatter + purpose + Step Index + Non-Negotiable Rules
 ├── steps/
 │   ├── 01-gather-content.md    # RPI-gated: pulls from the Métis graph (metrics, traceability, gaps)
@@ -354,7 +354,7 @@ Ten layers, defense-in-depth (full rationale in v2 §5; requirements formalized 
 | 1. Source grounding | Every entity/edge carries `source_episode_id` + `source_span`; schema-enforced, no exceptions | `REQ-METIS-GRD-01` |
 | 2. Structural validation | Inline OWL/SHACL at Cognify; type, cardinality, referential-integrity checks; failures quarantined, never auto-created to satisfy a dangling reference | `REQ-METIS-GRD-02` |
 | 3. Confidence tiering | ≥0.9 + single reliable source + passes L2 → auto-write as `Draft` (never authoritative); 0.6–0.9 → Quarantine; <0.6 or L2-fail or contradiction → Rejected, logged only | `REQ-METIS-GRD-03` |
-| 4. Corroboration | `Risk=High`-tagged entities and `Requirement`/`BusinessRule`/security-relevant `Transition.guard`/`Constraint` require ≥2 independent sources or explicit human confirmation before `Reviewed`→`Approved` | `REQ-METIS-GRD-04` |
+| 4. Corroboration | `Risk=High`-tagged entities and `Requirement`/`BusinessRule`/security-relevant `Transition.guard_expression`/`Constraint` require ≥2 independent sources or explicit human confirmation before `Reviewed`→`Approved` | `REQ-METIS-GRD-04` |
 | 5. Contradiction detection | Temporal (overlapping validity windows, same tier) + logical (graph-structural impossibility) — both continuous background processes | `REQ-METIS-GRD-05` |
 | 6. LLM-as-judge | Independent model call, source span + claim only, "does this text support this claim, answer only from provided text" — blocks promotion on disagreement | `REQ-METIS-GRD-06` |
 | 7. Human review | Terminal gate; triaged by severity/corroboration-gap/judge-disagreement; **no auto-promotion on timeout** — unreviewed stays quarantined indefinitely | `REQ-METIS-GRD-07` |
@@ -511,7 +511,7 @@ Content-derived identity means two independent workers processing the same input
 
 ## 11. MCP Client Integration Specification (Claude first, Copilot in parallel)
 
-**Reframed from the original "Copilot Integration (MVP), Claude Code deferred to Phase 3" positioning.** Métis's tool-serving layer is a standard MCP server over Streamable HTTP (§3.3's `mcp-server` component) — the protocol itself is already client-agnostic by construction; what needed fixing was several genuinely Copilot-specific assumptions that had been written as if they were platform constraints. **Per explicit direction: Claude is the first client tested, Copilot follows the same server in parallel** — this is a testing-order decision, not a capability difference; both clients reach the identical 9 tools (`metis_get_context`, etc.) over the identical protocol.
+**Reframed from the original "Copilot Integration (MVP), Claude Code deferred to Phase 3" positioning.** Métis's tool-serving layer is a standard MCP server over Streamable HTTP (§3.3's `mcp-server` component) — the protocol itself is already client-agnostic by construction; what needed fixing was several genuinely Copilot-specific assumptions that had been written as if they were platform constraints. **Per explicit direction: Claude is the first client tested, Copilot follows the same server in parallel** — this is a testing-order decision, not a capability difference; both clients reach the current tool set over the identical protocol.
 
 ### 11.1 MCP tool catalog
 
@@ -722,7 +722,7 @@ Honest answer to "are we ready for implementation": **the design is ready; the p
 | Gap | Status | Artifact |
 |---|---|---|
 | **No concrete schema.** | ✅ **Resolved** | `metis-graph-01-entity-baseline-constraints.cypher` (auto-generated per-entity constraints/indexes for all 49 ontology entities) + `metis-graph-02-entity-specific-constraints.cypher` (hand-written: EARS/revision fields, confidence tiering, corroboration counts, Episode node, vector/full-text indexes). Both syntax-checked. |
-| **No JSON schemas for the MCP tools.** | ✅ **Resolved** | `metis-mcp-tool-contracts.json` — 9 tools (8 original + `metis_quality_score`), all validated as well-formed JSON Schema (Draft 2020-12). |
+| **No JSON schemas for the MCP tools.** | ✅ **Resolved** | `metis-mcp-tool-contracts.json` — the current tool set, all validated as well-formed JSON Schema (Draft 2020-12). |
 | **No model/vendor selection.** | ✅ **Resolved (recommendation, not yet measured)** | §9.3 — Haiku-class for Cognify, Sonnet-class for the Layer 6 judge and test-skeleton generation, a self-hosted cross-encoder for reranking. Rough estimate: ~$2–3 per 1,000 episodes ingested, flagged as an estimate to replace with a measured number. |
 | **Precedence table uses shipped defaults.** | ✅ **Resolved** | §5.3 — confirmed Jira as system-of-record. |
 | **No security/compliance sign-off.** | ✅ **Waived per explicit direction** | Logged as an accepted risk in §15; underlying controls (§7) still apply in full. |
@@ -735,7 +735,7 @@ Honest answer to "are we ready for implementation": **the design is ready; the p
 
 - **Requirements source:** the four adopted documents themselves (`metis-specification.md`, the adopted Constitution, and its two amendments) — each `REQ-METIS-*`/`CONST-*` tagged rule becomes a `Requirement` or `BusinessRule` node, already EARS-adjacent by construction since they were written as testable statements from the start.
 - **Architecture source:** the Cypher/SQL/JSON schema files already built become the `Service`/`API`/`Table`/`Endpoint` layer.
-- **Test source:** the validation passes already run in this session (`sqlfluff`, `jsonschema.Draft202012Validator`) become the first real `TestRun` records — genuinely already executed, not hypothetical.
+- **Test source:** the validation passes already run in this session (`sqlfluff`, `jsonschema.Draft202012Validator`) become the first real `TestExecution` records — genuinely already executed, not hypothetical.
 - **Why this is a *good* pilot, not just a convenient one:** every gap this platform is designed to catch (untraceable requirements, unverified facts, stale coverage) is directly checkable against content you already know the ground truth for, since you were in the room when it was written — making it unusually easy to tell if the guardrail stack is working correctly versus just running.
 
 Redirect this to a different service at any point — nothing above is irreversible, and the dogfooding pilot doesn't block a second, external pilot from starting in parallel once you have one in mind.
