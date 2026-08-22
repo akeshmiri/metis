@@ -1,0 +1,46 @@
+{
+  "structure_version": "metis.structure/1",
+  "pages": {
+    "records-list": [
+      {"id": "rl-menu", "kind": "Menu", "name": "Main menu", "contains": [
+        {"id": "rl-nav-new", "kind": "Navigation", "name": "New record", "navigates_to": "record-detail"}
+      ]},
+      {"id": "rl-table", "kind": "UiTable", "name": "Records table", "contains": [
+        {"id": "rl-row", "kind": "Row", "name": "Record row", "contains": [
+          {"id": "rl-archive", "kind": "Action", "name": "Archive", "on_event": "rl-click"},
+          {"id": "rl-click", "kind": "Event", "name": "click"},
+          {"id": "rl-confirm", "kind": "Dialog", "name": "Confirm archive", "contains": [
+            {"id": "rl-confirm-yes", "kind": "Action", "name": "Confirm"}
+          ]}
+        ]},
+        {"id": "rl-page", "kind": "Pagination", "name": "Pager", "contains": [
+          {"id": "rl-next", "kind": "Action", "name": "Next page"}
+        ]},
+        {"id": "rl-sort", "kind": "Sort", "name": "Sort by title"}
+      ]}
+    ],
+    "record-detail": [
+      {"id": "rd-form", "kind": "Form", "name": "Record form", "contains": [
+        {"id": "rd-save", "kind": "Action", "name": "Save"}
+      ]}
+    ]
+  },
+  "datasources": [
+    {"id": "ds-primary", "name": "primary", "dialect": "postgresql", "database": "db-records"}
+  ],
+  "databases": [
+    {"id": "db-records", "name": "records", "schemas": [
+      {"id": "sc-public", "name": "public", "objects": [
+        {"id": "tb-record", "kind": "Table", "name": "record", "columns": [
+          {"name": "id", "data_type": "bigint", "constraints": ["primary key"]},
+          {"name": "title", "data_type": "varchar(120)", "constraints": ["not null"]},
+          {"name": "state", "data_type": "varchar(16)", "constraints": ["check in (Draft,Active,Archived)"]}
+        ]},
+        {"id": "vw-active", "kind": "View", "name": "active_records", "columns": [
+          {"name": "id", "data_type": "bigint"}
+        ]}
+      ]}
+    ]}
+  ],
+  "stored_in": {"record": "tb-record"}
+}

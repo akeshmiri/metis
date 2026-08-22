@@ -68,6 +68,129 @@ def _phrase(text: str) -> str:
     return t
 
 
+def split_criterion(text: str) -> tuple[str, str]:
+    """`(when_clause, then_clause)` from an EARS-shaped criterion, or `("", "")`.
+
+    One definition, because three call sites need this split and three regexes
+    would drift. Anything not in `When … Then …` shape yields a pair of empty
+    strings rather than a partial parse: half a criterion is not evidence.
+    """
+    when = re.search(r"\bwhen\b(.+?)(?:,\s*then\b|$)", text, re.IGNORECASE | re.DOTALL)
+    then = re.search(r"\bthen\b(.+)$", text, re.IGNORECASE | re.DOTALL)
+    if not (when and then):
+        return "", ""
+    return when.group(1), then.group(1)
+
+
+def guard_wording_from_criterion(text: str) -> str:
+    """X-7 tier 1 for a *condition*: the criterion's own When clause.
+
+    A criterion's When is the business's statement of the precondition, written
+    by a person. `guard_language.describe_guard` can only decode conventions the
+    code already commits to -- it reaches "the payload is invalid" and never
+    "the metric belongs to a project the caller cannot see". This does, because
+    somebody wrote it down.
+
+    Returned for display beside the raw guard, never in place of it: the guard is
+    the anchored, auditable fact and a criterion is a second source about the
+    same behaviour. Where they disagree that is a finding for §4.4's comparison,
+    not something to resolve by overwriting one with the other.
+    """
+    when, _ = split_criterion(text)
+    return _clip(re.sub(r"\s+", " ", when).strip(" ,.;:")) if when.strip() else ""
+
+
+def transition_name_from_criterion(text: str) -> str:
+    """X-7 tier 1 for an edge: name a transition from the criterion it validates.
+
+    This is the route to genuinely *business* language for anything the code does
+    not already commit to, and it is available only where a human confirmed a
+    match.
+
+    **The ceiling moved, and this docstring used to overstate it.** It said
+    paraphrasing `t.isEmpty()` into "no metric exists" would be Métis inventing
+    meaning. That is right about a free paraphrase and wrong about a decode:
+    `unfolding.presence_sense` already reads that atom as "the resource is
+    absent" and the M-6 pass already *acts* on it, building `MetricPresent` and
+    re-parenting readers onto it. `guard_language` now says in words what the
+    model had already committed to in structure — tier 2, and marked as such.
+
+    What is still exclusive to tier 1 is meaning the code never states:
+    `ex.getCause() instanceof ConstraintViolationException` is fifteen guards in
+    this estate and no decoder can know it means a duplicate was submitted.
+    """
+    when_clause, then_clause = split_criterion(text)
+    if not (when_clause and then_clause):
+        return ""
+
+    # `_phrase` strips status codes, which is right for a STATE name and
+    # destructive here: the status *is* the outcome. Stripping it turned
+    # "then 204 No Content is returned" into "is returned" -- a name that says
+    # nothing, and a worse one than tier 2 produces. So the outcome side keeps
+    # its words and only the leading article goes.
+    left = _clip(_phrase(when_clause))
+    right = _clip(_LEADING.sub("", re.sub(r"\s+", " ", then_clause).strip(" ,.;:")))
+    if len(left) < 3 or len(right) < 3:
+        # Degenerate after cleaning. Tier 2's readable shape beats a stub.
+        return ""
+    return f"{left} → {right}"
+
+
+# A name is a label, not a paragraph. A criterion may run to several sentences
+# (and a reviewer's edit may make it longer still); the first clause is what
+# identifies the behaviour.
+_NAME_LIMIT = 72
+
+
+def _clip(text: str) -> str:
+    """First sentence, then a hard limit — truncation marked, never silent."""
+    first = re.split(r"(?<=[.;])\s+", text.strip(), maxsplit=1)[0].strip(" ,.;:")
+    if len(first) <= _NAME_LIMIT:
+        return first
+    return first[:_NAME_LIMIT].rsplit(" ", 1)[0] + "…"
+
+
+def transition_display_name(transition, states: dict | None = None,
+                            criterion_text: str = "") -> str:
+    """A readable name for a transition (spec D-8, X-7 applied to edges).
+
+    **D-8 says `name` is display data, not identity** -- and landing was setting
+    it to the id, so the graph showed a reviewer
+
+        org.catools.athena.metric.controller.MetricController.getActionById:
+        org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204
+
+    where it meant to show them a behaviour. The id is unchanged and still
+    content-derived; only what a person reads changes.
+
+    Deterministic, and it introduces no word that is not already in the trigger,
+    the guard or the target state's own name (T-6). Where the target state has
+    earned a business name through X-7's cascade, this inherits it -- so naming a
+    state improves every transition into it, which is the point of the cascade.
+
+    The guard is included because a transition is `(state, trigger, guard,
+    target)` and two transitions on the same trigger differ *only* by their
+    guard: dropping it would give both the same name, which is worse than an
+    ugly one.
+
+    Where a confirmed criterion is supplied it wins (tier 1) -- a person's own
+    words beat a rearrangement of the code's.
+    """
+    if criterion_text:
+        tier_one = transition_name_from_criterion(criterion_text)
+        if tier_one:
+            return tier_one
+
+    trigger = (transition.trigger or "").strip() or "interaction"
+    target = transition.target
+    if states:
+        state = states.get(target)
+        if state is not None:
+            target = state.name or target
+    guard = (transition.guard or "").strip()
+    return f"{trigger} → {target}" + (f" when {guard}" if guard else "")
+
+
 @dataclass(frozen=True)
 class NameProposal:
     """A proposed name, with the evidence and tier that produced it (X-8)."""

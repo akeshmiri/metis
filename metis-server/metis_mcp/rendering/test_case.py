@@ -49,6 +49,29 @@ def humanise(identifier: str) -> str:
     return text[0].upper() + text[1:]
 
 
+# The two kinds of data requirement (spec T-8, §7.4).
+GUARD = "guard"
+INPUT = "input"
+
+
+def input_condition(param: dict) -> str:
+    """One parameter, as a CONDITION on the data (spec M-9, T-9c).
+
+    `body.metricDto is a required MetricDto` states what the fixture must
+    satisfy. It deliberately stops there: constructing a MetricDto is solving the
+    condition, and solving conditions to concrete data is out of scope (§12).
+    Anything that looks like a value here would be Métis inventing test data.
+    """
+    location = param.get("location", "?")
+    name = param.get("name", "?")
+    type_name = (param.get("type_name") or "").rsplit(".", 1)[-1]
+    necessity = "required" if param.get("required", True) else "optional"
+    line = f"{location}.{name} is {'a' if necessity == 'required' else 'an'} " \
+           f"{necessity} {type_name}".replace("is a optional", "is an optional")
+    constraints = [c for c in (param.get("constraints") or ()) if c]
+    return f"{line} ({'; '.join(constraints)})" if constraints else line
+
+
 @dataclass(frozen=True)
 class DataRequirement:
     """One condition the test data must satisfy, and where it is needed.
@@ -60,6 +83,12 @@ class DataRequirement:
 
     condition: str
     steps: tuple[int, ...]
+    # What kind of requirement this is. A guard says what must be *true of the
+    # system*; an input says what the caller must *send*. Both are conditions on
+    # the data and both belong here, but a tester preparing a fixture treats them
+    # differently, and merging them into one undifferentiated list is how "you
+    # must supply a body" reads as "the database must be in some state".
+    kind: str = GUARD
 
     @property
     def where(self) -> str:
@@ -100,6 +129,9 @@ class TestCase:
     labels: tuple[str, ...] = ()
     data_requirements: tuple[DataRequirement, ...] = ()
     precondition_group: tuple[str, ...] = ()
+    # Why the criterion chose this case ("the boundary", "no guard"). Carried
+    # from `criteria.Path`, which has produced it all along.
+    data_note: str = ""
 
     @property
     def assertion_count(self) -> int:
@@ -117,13 +149,47 @@ class RenderResult:
 
 
 def _case_id(model_id: str, path: Path) -> str:
-    """Content-derived from the path (T-10): model + setup + validated transition.
+    """Content-derived from the path (T-10): model + setup + validated transition,
+    **and the data requirement that distinguishes this case from its siblings.**
 
-    The criterion is metadata, not identity -- the same walk generated under two
-    criteria is one path and one case.
+    The criterion stays metadata: the same walk under two criteria is one case,
+    which is why the criterion name is deliberately not in the basis.
+
+    `data_note` is different in kind. A technique that varies the DATA produces
+    several cases over one walk -- pairwise on four optional inputs is six cases
+    that traverse identical transitions and differ only in what they send. Keyed
+    on the walk alone all six hashed to `tc-49a0d30271f2`: publishing them would
+    write one and silently overwrite five, and `TestCase` merges on this id in
+    the graph, so they would fuse there too. The same collision that fused
+    `PageResponse` across seven modules, arriving through a different door.
     """
-    basis = "|".join((model_id, *path.setup_transition_ids, path.validated_transition_id))
+    basis = "|".join((model_id, *path.setup_transition_ids,
+                      path.validated_transition_id, path.data_note or ""))
     return "tc-" + hashlib.sha256(basis.encode()).hexdigest()[:12]
+
+
+def observable_result(transition, target_state) -> str:
+    """What the tester checks — status and body, not the target's node name.
+
+    `Expected result: MetricSaveRejected400` names a graph node. A tester checks
+    a status code and a payload, and both are on the model (M-2/M-3): the
+    business language built for the specification has to reach the artefact a QA
+    engineer actually executes, or it only ever improved the document.
+    """
+    status = getattr(transition, "outcome_status", None)
+    body = (getattr(transition, "response_body", "") or "").strip()
+    name = getattr(target_state, "name", "") or ""
+    if status is None:
+        return name
+    if body:
+        return f"{status} with {body}"
+    return f"{status} with no body"
+
+
+def precondition_of(state) -> str:
+    """What must be true to start, in the state's own words where it has them."""
+    condition = (getattr(state, "condition", "") or "").strip()
+    return condition or f"the system is in {getattr(state, 'name', '?')}"
 
 
 def _describe(model: Model, transition_id: str,
@@ -144,22 +210,37 @@ def _group_requirements(model: Model, path: Path, act_guard: str) -> tuple[DataR
     Order is first-appearance, so the list reads in the order a tester meets the
     conditions rather than in an arbitrary or alphabetical order.
     """
-    order: list[str] = []
-    where: dict[str, list[int]] = {}
+    order: list[tuple[str, str]] = []
+    where: dict[tuple[str, str], list[int]] = {}
+
+    def note(condition: str, kind: str, step: int) -> None:
+        key = (condition, kind)
+        if key not in where:
+            order.append(key)
+            where[key] = []
+        where[key].append(step)
+
+    def requirements_of(tid: str, step: int) -> None:
+        transition = model.transitions[tid]
+        if transition.guard:
+            note(transition.guard, GUARD, step)
+        # What the caller must SEND. Until the pack recovered parameters there
+        # was nothing here at all, so a case for `POST /metric` printed no data
+        # requirements whatsoever -- a test that could be read but not run.
+        for param in transition.inputs or ():
+            note(input_condition(param), INPUT, step)
+
     for index, tid in enumerate(path.setup_transition_ids, start=1):
-        guard = model.transitions[tid].guard
-        if not guard:
-            continue
-        if guard not in where:
-            order.append(guard)
-            where[guard] = []
-        where[guard].append(index)
-    if act_guard:
-        if act_guard not in where:
-            order.append(act_guard)
-            where[act_guard] = []
-        where[act_guard].append(0)
-    return tuple(DataRequirement(condition=g, steps=tuple(where[g])) for g in order)
+        requirements_of(tid, index)
+    requirements_of(path.validated_transition_id, 0)
+
+    # `act_guard` is passed separately by the caller; it is already covered by
+    # `requirements_of` above, so it is only used when the transition is absent.
+    if act_guard and not any(k[0] == act_guard for k in order):
+        note(act_guard, GUARD, 0)
+
+    return tuple(DataRequirement(condition=c, steps=tuple(where[(c, k)]), kind=k)
+                 for c, k in order)
 
 
 def render_path(model: Model, path: Path,
@@ -190,14 +271,21 @@ def render_path(model: Model, path: Path,
         description=description,
         wording_tier=tier,
         guard_verbatim=validated.guard,
-        expected_result=f"{target_state.name}",
+        expected_result=observable_result(validated, target_state),
         is_assertion=True,
     )
 
+    # Business language where the model carries it, the code's where it does not.
+    # `guard_wording` is decoded from conventions the model already committed to,
+    # or is a person's own words via a confirmed criterion.
+    wording = (getattr(validated, "guard_wording", "") or "").strip()
+    given = precondition_of(source_state)
     objective = (objectives or {}).get(
         validated.id,
-        f"Verify that {humanise(validated.trigger).lower()} from "
-        f"{source_state.name} results in {target_state.name}.",
+        f"Verify that, given {given}, "
+        f"{humanise(validated.trigger).lower()}"
+        f"{f' when {wording}' if wording and wording != 'always' else ''} "
+        f"returns {observable_result(validated, target_state)}.",
     )
 
     # T-8/T-9: guards are data *requirements*, aggregated so a tester can prepare
@@ -220,6 +308,7 @@ def render_path(model: Model, path: Path,
         act_step=act_step,
         labels=(model.id, path.criterion),
         data_requirements=data_requirements,
+        data_note=path.data_note or "",
         precondition_group=path.precondition_group,
     )
 
@@ -263,9 +352,21 @@ def format_case(case: TestCase) -> str:
         "",
         f"  Expected result: {case.act_step.expected_result}",
     ]
-    if case.data_requirements:
-        lines.append("")
-        lines.append("  Test data requirements:")
-        for requirement in case.data_requirements:
+    # Split by kind (T-9): "what you must send" and "what must already be true"
+    # are prepared differently, and one undifferentiated list hides that.
+    inputs = [r for r in case.data_requirements if r.kind == INPUT]
+    guards = [r for r in case.data_requirements if r.kind != INPUT]
+    if inputs:
+        lines += ["", "  Request data required:"]
+        for requirement in inputs:
             lines.append(f"    - {requirement.condition}  ({requirement.where})")
+    if guards:
+        lines += ["", "  Test data requirements:"]
+        for requirement in guards:
+            lines.append(f"    - {requirement.condition}  ({requirement.where})")
+    if case.data_note:
+        # Produced by `criteria.py` for every generated path and, until now, read
+        # by nothing: the criterion that chose this case could say *why* it exists
+        # ("the boundary", "no guard") and the tester never saw it.
+        lines += ["", f"  Why this case: {case.data_note}"]
     return "\n".join(lines)

@@ -33,21 +33,44 @@ from metis_mcp.mbt.model import APPROVED, Model, State, Transition
 STATE_VERSION = "metis.review-state/1"
 
 
+def _bare(element_id: str, model_id: str) -> str:
+    """Strip the graph's `<model>::` namespace prefix (spec I-2).
+
+    Landing namespaces every element id by its model, because seven synthesised
+    API models all call their initial state `Ready` and would otherwise MERGE
+    onto one node. That prefix is a **storage** detail: it is a pure function of
+    `model.id`, which this hash already covers.
+
+    Leaving it in made the same model hash differently depending on whether it
+    was read from its JSON source or from the graph -- so a workflow that
+    extracted from a file and then resumed against the graph saw its own earlier
+    stages as stale and refused to continue, reporting a change that had not
+    happened.
+    """
+    prefix = f"{model_id}::"
+    return element_id[len(prefix):] if element_id.startswith(prefix) else element_id
+
+
 def source_fingerprint(model: Model) -> str:
     """Hash of the model's **source substance** -- deliberately excluding lifecycle.
 
     Covers what a reviewer reads and what a re-extraction could change: structure,
     triggers, guards, implementation status, and display names. Lifecycle is a
     human fact and is not part of the evidence a decision was made against.
+
+    Ids are taken bare (see `_bare`), so one model has one fingerprint however it
+    was loaded.
     """
     parts = [model.id]
     for sid in model.state_ids():
         s = model.states[sid]
-        parts.append(f"S|{s.id}|{s.name}|{s.surface}|{s.is_initial}")
+        parts.append(
+            f"S|{_bare(s.id, model.id)}|{s.name}|{s.surface}|{s.is_initial}")
     for tid in model.transition_ids():
         t = model.transitions[tid]
         parts.append(
-            f"T|{t.id}|{t.source}|{t.trigger}|{t.target}|{t.guard}|{t.implementation_status}"
+            f"T|{_bare(t.id, model.id)}|{_bare(t.source, model.id)}|{t.trigger}"
+            f"|{_bare(t.target, model.id)}|{t.guard}|{t.implementation_status}"
         )
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
 

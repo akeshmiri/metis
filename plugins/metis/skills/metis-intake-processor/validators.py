@@ -11,9 +11,15 @@ class UIFValidator:
     def __init__(self, schema_path: Optional[str] = None):
         """Initialize validator with schema."""
         if not schema_path:
-            # Try the current working project first, then this file's own skill tree.
+            # **This skill's own tree, and only its own tree.**
+            #
+            # It used to try `.agents/skills/shared/schemas/...` FIRST -- the
+            # sibling project's layout -- and fall back to Métis's copy only if
+            # that missed. Run from an Atlas checkout, Métis validated its
+            # intake against Atlas's schema, silently, with the foreign one
+            # winning on precedence. Porting a schema and then preferring the
+            # original is not a port.
             possible_paths = [
-                Path(".agents/skills/shared/schemas/unified-intake-format.schema.json"),
                 Path(__file__).parent.parent / "shared" / "schemas" / "unified-intake-format.schema.json",
             ]
             for p in possible_paths:

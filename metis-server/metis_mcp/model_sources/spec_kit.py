@@ -46,6 +46,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from metis_mcp.model_sources.ac_mining import Criterion
+from metis_mcp.specgen.specification import (
+    wording_fingerprint as _wording_fingerprint,
+)
 
 # `### AC-4: Metric Point Query`
 _AC_HEADING = re.compile(r"^###\s+(AC-[\w.\-]+)\s*:\s*(.+?)\s*$", re.M)
@@ -58,6 +61,27 @@ _STATUS = re.compile(r"Status:\s*\*\*([A-Za-z ]+)\*\*")
 # `201 Created`). Backticks are stripped so the text a matcher sees is the text a
 # reader sees -- but nothing else is rewritten.
 _TICKS = re.compile(r"`([^`]*)`")
+# `<sub>`athena-metric-api::…::POST->MetricSaveRejected400`</sub>` — the
+# transition a generated rule came from.
+#
+# **`specgen` has always written this and nothing ever read it.** So the document
+# carried the exact criterion→transition binding while the graph held **zero**
+# `VALIDATES` edges and reconciliation reported every transition unmatched. For a
+# generated spec this needs no matching heuristic at all: the id is right there,
+# which is a far stronger link than name similarity, and X-17 forbids treating
+# similarity as sufficient evidence anyway.
+#
+# Absent on a hand-written spec, which is correct — athena's 66 criteria have no
+# binding and must keep going through `reconciliation.prefilter`.
+_TRANSITION_REF = re.compile(r"<sub>`([^`]+)`</sub>")
+# `<sub>wording: d159ab82f85d</sub>` — the fingerprint `specgen` stamped over the
+# four clauses when it wrote this block.
+#
+# Recomputing it from the clauses as they now read is what makes an edit
+# visible. S-19: a criterion is documentation "until a person edits or affirms
+# one", and this is how the edit is detected without the model — the landing
+# path reads files, so it cannot re-derive what the generator would produce.
+_WORDING_FINGERPRINT = re.compile(r"<sub>wording:\s*([0-9a-f]+)</sub>")
 
 
 @dataclass(frozen=True)
@@ -74,6 +98,18 @@ class SpecCriterion:
     when: str = ""
     then: str = ""
     source_file: str = ""
+    # The transition this criterion was generated from, where the document says
+    # so. Empty for a hand-authored criterion — an absent binding is a fact
+    # about the source, not a gap to fill in by guessing.
+    transition_id: str = ""
+    # A person rewrote these clauses after they were generated (S-19).
+    #
+    # **Only ever True for a generated criterion**, because only a generated one
+    # carries a fingerprint to compare against. A hand-written criterion was
+    # authored by definition and is not "edited"; claiming otherwise would
+    # promote athena's 66 retro-documentation criteria to intent on the strength
+    # of them having no fingerprint, which is the opposite of evidence.
+    edited_by_hand: bool = False
 
     def to_criterion(self) -> Criterion:
         """The shape `ac_mining.mine()` consumes."""
@@ -159,6 +195,15 @@ def parse_spec(path: str | Path, feature: str = "") -> SpecFeature:
         if ref:
             code_ref = _clean(ref.group(1))
 
+        # The transition this block was generated from, if the document says so.
+        # `specgen` stamps it; a hand-written spec has none, and that absence is
+        # carried honestly rather than filled in.
+        ref_match = _TRANSITION_REF.search(body)
+        transition_id = ref_match.group(1) if ref_match else ""
+
+        stamp = _WORDING_FINGERPRINT.search(body)
+        stamped = stamp.group(1) if stamp else ""
+
         rules = _rules(body)
         if not rules:
             # A real criterion, and genuinely not a transition. Returned marked,
@@ -166,13 +211,19 @@ def parse_spec(path: str | Path, feature: str = "") -> SpecFeature:
             out.criteria.append(SpecCriterion(
                 id=ac_id, title=title, feature=name,
                 text=_clean(title), is_behavioural=False,
-                code_reference=code_ref, source_file=str(p)))
+                code_reference=code_ref, source_file=str(p),
+                transition_id=transition_id))
             continue
 
         for i, (given, when, extras) in enumerate(rules, start=1):
             sub_id = ac_id if len(rules) == 1 else f"{ac_id}.{i}"
             then = extras[-1] if extras else ""
             middle = extras[:-1]
+            # Recomputed from the clauses as they now read. A difference from
+            # what was stamped means a person rewrote them; no stamp means this
+            # block was never generated, so there is nothing to have edited.
+            edited = bool(stamped) and stamped != _wording_fingerprint(
+                given, when, " and ".join(middle), then)
             # Reassembled into the Given/When/Then sentence `ac_mining` parses.
             # `And` clauses between When and Then become guard conditions.
             when_text = when if not middle else f"{when} and " + " and ".join(middle)
@@ -180,7 +231,8 @@ def parse_spec(path: str | Path, feature: str = "") -> SpecFeature:
             out.criteria.append(SpecCriterion(
                 id=sub_id, title=title, feature=name, text=sentence,
                 is_behavioural=True, code_reference=code_ref,
-                given=given, when=when_text, then=then, source_file=str(p)))
+                given=given, when=when_text, then=then, source_file=str(p),
+                transition_id=transition_id, edited_by_hand=edited))
     return out
 
 
@@ -211,3 +263,74 @@ def format_specs(features: list[SpecFeature]) -> str:
               "  genuinely not state transitions; they are reported, never forced",
               "  into a shape they do not have (S-13)."]
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# A spec document -> a Requirement (application spec §4.5; S-13, S-19, §4.1)
+# ---------------------------------------------------------------------------
+
+def requirement_from_spec(feature: "SpecFeature", statement: str,
+                          requirement_id: str = "") -> "KnowledgeFile":
+    """One spec feature and its EARS statement, as a `KnowledgeFile`.
+
+    **Why it returns a KnowledgeFile rather than landing.** `knowledge.py` is
+    the only writer of `Requirement` in this codebase, and that is worth
+    keeping: a second writer is how two halves of one graph come to disagree
+    about what `Approved` means. So this converts, and
+    `knowledge.plan_documentation` lands -- through the same ontology gate, the
+    same Quarantine default, and the same `validate()` that reports a
+    non-conformant statement as `requirement_not_ears` rather than landing it.
+
+    **Why the statement is an argument and not derived.** A feature is named
+    "Archive a record"; `Requirement.ears_pattern` needs "When a user archives a
+    record, the system shall hide it from search." Deriving one from the other
+    is composition, not extraction, and composing a requirement nobody wrote is
+    precisely what `ac_mining` refuses to do (S-13, TR-4). The sentence comes
+    from a person -- in a skill session, where the judgement belongs -- and
+    everything below it is mechanical.
+
+    **The circularity, and why nothing here defuses it (§4.1).** A spec rendered
+    from the code model, parsed back into a requirement, then used to check that
+    code, proves only that the code does what the code does. This does not stop
+    you doing that -- it makes it *visible*: every criterion lands at
+    `provenance_for`'s weakest grade, `code_derived`, and only
+    `review.decisions.promotion_for` grants anything stronger, on a real edit or
+    an explicit affirmation. A grade is never upgraded here, and
+    `SpecCriterion.edited_by_hand` is deliberately not read as consent: it says
+    the wording changed, not that a person affirmed the claim.
+
+    The `Requirement` itself carries no grade, and should not. Provenance lives
+    on `AcceptanceCriterion`, where it is an indexed property precisely because
+    "which criteria in this scope are still code_derived" is the filter that
+    separates a coverage claim from a correctness one. Copying a derived value
+    onto the parent would be one fact in two places.
+    """
+    from metis_mcp.model_sources.knowledge import (
+        KnowledgeEntry, KnowledgeFile, KnowledgeRequirement,
+    )
+
+    feature_id = requirement_id or f"req-{_slug(feature.name)}"
+    entries = [
+        KnowledgeEntry(
+            id=criterion.id,
+            text=criterion.text,
+            requirement_id=feature_id,
+            # The statement each criterion claims to formalise. Without it there
+            # is no way to check the formalisation against what was said.
+            source_statement=statement,
+        )
+        for criterion in feature.behavioural
+    ]
+
+    return KnowledgeFile(
+        model_id=feature.name,
+        requirement=KnowledgeRequirement(id=feature_id, text=statement),
+        statement=statement,
+        entries=entries,
+    )
+
+
+def _slug(text: str) -> str:
+    import re
+
+    return re.sub(r"[^a-z0-9]+", "-", text.strip().lower()).strip("-") or "unnamed"

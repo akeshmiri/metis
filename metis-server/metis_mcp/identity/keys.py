@@ -47,6 +47,28 @@ def normalise_guard(guard: str) -> str:
     return text
 
 
+def bare_id(model_id: str, element_id: str) -> str:
+    """Strip the `<model>::` namespace the graph writes, if present.
+
+    **The same id means the same element whether it came from a file or the
+    graph, and it did not.** `landing.graph_state_id` namespaces every state by
+    its model — deliberately, so seven services' `Metric` do not MERGE onto one
+    node — and nothing stripped it back on load. So a graph-loaded `Metric` keyed
+    as `athena-metric-api::Metric` and a freshly-synthesised one keyed as
+    `Metric`, every key differed, and `diff` reported 20 ADDED + 20 REMOVED where
+    the right answer was 20 UNCHANGED.
+
+    The consequence was silent and severe: `carry_human_facts` matched nothing,
+    so every approval was dropped on re-ingest **and no revocation was reported
+    either** — the graph kept asserting approvals whose behaviour had changed.
+
+    This is the second place the same namespace has bitten. `workflow.run`'s
+    `source_fingerprint` needed the identical fix, for the identical reason.
+    """
+    prefix = f"{model_id}::"
+    return element_id[len(prefix):] if element_id.startswith(prefix) else element_id
+
+
 def state_key(model_id: str, state: State) -> str:
     """(model, surface, observable signature).
 
@@ -54,8 +76,12 @@ def state_key(model_id: str, state: State) -> str:
     `NoContent204` encodes status and discriminator, which is what a caller can
     actually distinguish (spec M-3). Display name is deliberately excluded: a
     rename must not change identity.
+
+    Normalised through `bare_id`, so the key survives the file/graph boundary --
+    which is the whole point of a natural key over meaning rather than over
+    representation.
     """
-    return f"{model_id}|{state.surface}|{state.id}"
+    return f"{model_id}|{state.surface}|{bare_id(model_id, state.id)}"
 
 
 def transition_key(model_id: str, transition: Transition, model: Model) -> str:
@@ -66,8 +92,10 @@ def transition_key(model_id: str, transition: Transition, model: Model) -> str:
     """
     source = model.states.get(transition.source)
     target = model.states.get(transition.target)
-    source_part = state_key(model_id, source) if source else f"{model_id}|?|{transition.source}"
-    target_part = state_key(model_id, target) if target else f"{model_id}|?|{transition.target}"
+    source_part = (state_key(model_id, source) if source
+                   else f"{model_id}|?|{bare_id(model_id, transition.source)}")
+    target_part = (state_key(model_id, target) if target
+                   else f"{model_id}|?|{bare_id(model_id, transition.target)}")
     return f"{source_part}=[{transition.trigger}]=>{target_part}"
 
 
@@ -91,3 +119,21 @@ def keyed_transitions(model: Model) -> dict[str, list[Transition]]:
     for t in model.transitions.values():
         out.setdefault(transition_key(model.id, t, model), []).append(t)
     return out
+
+
+def business_entity_key(name: str) -> str:
+    """A business noun's natural key: what it means, normalised.
+
+    I-2's rule applied to the business layer. Two sources describe the same noun
+    and neither is wrong about it: the glossary carries an author-chosen id
+    (`apispec`), and intake mints one from the UIF's `data_model` name. With two
+    minting rules, `api spec` landed twice -- once per source -- and
+    `list_entities` showed a duplicate with no way to tell which was canonical.
+
+    A business entity has no model scope on purpose: `record` means one thing
+    across every journey. That is the whole reason `BusinessEntity` is separate
+    from `Class`, which is scoped to the code that declares it (D-13).
+    """
+    import re
+
+    return re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-") or "unnamed"

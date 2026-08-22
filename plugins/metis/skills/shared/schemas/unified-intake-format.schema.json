@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://atlas.internal/schemas/unified-intake-format.schema.json",
+  "$id": "https://metis.internal/schemas/unified-intake-format.schema.json",
   "title": "Unified Intake Format (UIF) Schema",
   "description": "Schema for unified extraction of FACTS and SPECIFICATIONS from all evidence sources",
   "version": "1.0.0",

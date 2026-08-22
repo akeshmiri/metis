@@ -1,0 +1,23 @@
+{
+  "intent_version": "metis.intent/1",
+  "area": "records",
+  "intents": [
+    {"id": "int-records", "statement": "A user should be able to create a record, read it back, and archive it when it is no longer wanted."}
+  ],
+  "specifications": [
+    {"id": "spec-record-create", "intent": "int-records", "entities": ["record"],
+     "provenance": "independently_authored",
+     "statement": "Creating a record returns 201 with the created record's id, and a request missing a title is rejected with 400.",
+     "contracts": [{"kind": "openapi", "path": "test_fixtures/records-openapi.json"}]},
+
+    {"id": "spec-record-read", "intent": "int-records", "entities": ["record"],
+     "provenance": "independently_authored",
+     "statement": "Reading a record id that does not exist returns 404, and reading one that exists returns 200 with that record.",
+     "contracts": [{"kind": "openapi", "path": "test_fixtures/records-openapi.json"}]},
+
+    {"id": "spec-record-archive", "intent": "int-records", "entities": ["record"],
+     "provenance": "independently_authored",
+     "statement": "Archiving a record removes it from the records list and leaves it readable by id, and archiving an already-archived record changes nothing.",
+     "contracts": [{"kind": "structure", "path": "test_fixtures/structure.json"}]}
+  ]
+}

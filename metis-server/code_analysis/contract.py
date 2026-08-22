@@ -28,6 +28,22 @@ LAYER_TYPE_REGISTRY = 3
 LAYER_TRANSITIONS = 4
 LAYER_AC_MATCHING = 5
 
+# How an outcome was linked to its entry point, weakest claim last. Named rather
+# than spelled inline so a reviewer's UI, the synthesiser and the tests cannot
+# drift on a string literal.
+LINK_RESOLVED = "resolved"            # the call graph resolved it
+LINK_AST_ENCLOSURE = "ast-enclosure"  # the enclosing control structure guards it
+LINK_NAME_MATCH = "name-match"        # a disclosed name heuristic
+LINK_DERIVED_VALIDATION = "derived-validation"  # declared, cause traced (see OutcomeFact)
+LINK_DECLARED = "declared"            # an annotation says so; nothing was traced
+
+# What a pack emits where a route exists but could not be resolved (T-9d). It is
+# deliberately NOT "": a controller with no `@RequestMapping` at all and one
+# whose mapping could not be parsed are different facts, and collapsing them is
+# what hid the dual-mount defect. Declared here because Python readers must
+# recognise it and until now only the Scala pack knew the string.
+UNRESOLVED_PATH = "__unresolved__"
+
 
 @dataclass(frozen=True)
 class Anchor:
@@ -62,6 +78,68 @@ class CallFact:
     anchor: Anchor
 
 
+# Where a parameter rides on the request. Named after the HTTP position rather
+# than the framework annotation, so a second frontend maps onto the same
+# vocabulary instead of leaking `@RequestParam` into the model.
+IN_PATH = "path"
+IN_QUERY = "query"
+IN_HEADER = "header"
+IN_BODY = "body"
+IN_FORM = "form"
+# `in: cookie` is one of OpenAPI 3.0's four parameter locations, and leaving it
+# out meant every cookie parameter was disclosed as unmappable and dropped. The
+# adapter's own note said the right thing -- folding it into `header` would be a
+# different claim about where the value rides -- but the fix for a real position
+# missing from the vocabulary is to add it, not to keep reporting it.
+#
+# It matters for the same reason the others do: a test case has to construct the
+# request, and "send this in a cookie" and "send this in a header" produce
+# different requests.
+IN_COOKIE = "cookie"
+PARAMETER_LOCATIONS = (IN_PATH, IN_QUERY, IN_HEADER, IN_BODY, IN_FORM, IN_COOKIE)
+
+
+@dataclass(frozen=True)
+class ParameterFact:
+    """One input an endpoint reads, Layer 2.
+
+    **Without these a generated test cannot be executed, only described.** An
+    endpoint recovered as `POST /metric` says nothing about what to send, so a
+    case rendered from it can assert a status and never construct a request --
+    which is why the pilot estate's `POST` transition rendered with no data
+    requirement at all.
+
+    `required` and `type_name` are FACTS from the signature; there is deliberately
+    no `example` or `default_value` field. Inventing a value is what M-9 forbids:
+    Métis states the requirement on the data, a person or a factory satisfies it.
+    """
+
+    name: str
+    location: str                  # one of PARAMETER_LOCATIONS
+    type_name: str
+    required: bool = True
+    # The declared constraint, verbatim (`@Size(max=64)`, `@NotNull`). Carried as
+    # source text rather than parsed: a half-understood constraint asserted as
+    # structure is worse than one quoted honestly.
+    constraints: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class SecurityFact:
+    """What an endpoint requires of a caller, Layer 2.
+
+    Recovered from declarative security only (`@PreAuthorize`, `@Secured`,
+    `@RolesAllowed`, and any class-level equivalent). Security enforced in a
+    filter chain or a gateway is **not** visible here, so an endpoint with no
+    `SecurityFact` means *nothing was declared on it*, never *it is open*. The
+    two are not the same claim and the second one is not ours to make.
+    """
+
+    scheme: str                    # e.g. "oauth2", "basic", "role"
+    expression: str                # the declaration, verbatim
+    roles: tuple[str, ...] = ()
+
+
 @dataclass(frozen=True)
 class EndpointFact:
     """One HTTP entry point, Layer 2."""
@@ -71,6 +149,39 @@ class EndpointFact:
     path: str
     handler_method_id: str
     anchor: Anchor
+    # The route argument as written (`METRIC + "/{id}"`), before resolution. The
+    # pack has always emitted it and the contract never declared it, so the first
+    # code that rehydrated a structural report crashed on it -- the field was
+    # real, only undocumented.
+    path_source: str = ""
+    # Everything a caller must supply. Empty means the pack recovered none --
+    # which for a `POST` is a finding, not a fact about the endpoint (X-13).
+    parameters: tuple[ParameterFact, ...] = ()
+    security: tuple[SecurityFact, ...] = ()
+    consumes: tuple[str, ...] = ()
+    produces: tuple[str, ...] = ()
+    # Who handles it. Carried as facts rather than parsed back out of
+    # `handler_method_id`, whose shape is the pack's business and not a format
+    # downstream code should depend on. These name the outcome states, so two
+    # endpoints on one resource stay distinguishable.
+    handler_type: str = ""
+    handler_name: str = ""
+    # What the caller gets back. `response_type` is the declaration verbatim
+    # (`ResponseEntity<PageDto<ProjectDto>>`); `response_body` is what actually
+    # arrives (`PageDto<ProjectDto>`), and is **empty for `Void`** -- a response
+    # with no body, which is a fact and not missing information.
+    #
+    # Neither is available from the CPG's type information: javasrc2cpg erases
+    # the generic, so `methodReturn.typeFullName` is a bare `ResponseEntity` on
+    # every one of athena's 91 handlers. The pack reads the declaration text.
+    response_type: str = ""
+    response_body: str = ""
+    # `@Valid`/`@Validated` on a bound parameter, or `@Validated` on the class.
+    # This is what closes the bean-validation chain: without it a declared 400
+    # can be *known to exist* and still not be attributable to payload validation
+    # (spec GD-2, X-10a). False means the annotation was not found, never that
+    # the endpoint accepts anything.
+    validated: bool = False
 
 
 @dataclass(frozen=True)
@@ -81,6 +192,21 @@ class MemberFact:
     name: str
     type_full_name: str
     anchor: Anchor
+    # The declaring type's FULLY-QUALIFIED name. `type_name` is the simple one,
+    # and simple names collide: athena declares `PageResponse` in seven files,
+    # one per feign module. Keying a graph node on the simple name fuses all
+    # seven into one node that claims to be every one of them — the same defect
+    # as `/project/all` and `/user/all` collapsing onto `All`.
+    #
+    # It is also what a parameter references: `ParameterFact.type_name` is
+    # already fully qualified, so without this the two sides cannot be joined
+    # without guessing.
+    owner_full_name: str = ""
+    # Declared constraints on the field, verbatim (`@NotNull`, `@Size(max=64)`).
+    # These are GD-3's variants: the data requirements a fixture must violate to
+    # reach a validation rejection, and the reason 164 constrained fields stay
+    # test data rather than becoming 164 transitions.
+    constraints: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -97,6 +223,28 @@ class CheckFact:
     order: int
     anchor: Anchor
     dimension_class: str | None = None
+
+
+@dataclass(frozen=True)
+class ExceptionMappingFact:
+    """`@ExceptionHandler(X.class)` + `@ResponseStatus(S)`, Layer 2.
+
+    **This is what makes "which exception becomes a 400" evidence rather than
+    inference.** athena's `GlobalExceptionHandler` maps four distinct exceptions
+    onto 400, and only one of them (`MethodArgumentNotValidException`) is bean
+    validation. Without this fact a declared 400 could only be labelled by
+    guessing, and the guess would be wrong for the other three -- a test written
+    from it would establish the wrong precondition and never reach the path.
+
+    `advice_type` carries the declaring class because two `@ControllerAdvice`
+    beans may handle the same exception. Where they do and neither declares an
+    `@Order`, precedence is undecidable and that is a finding, never a guard.
+    """
+
+    exception_type: str
+    status: int
+    advice_type: str
+    anchor: Anchor
 
 
 @dataclass(frozen=True)
@@ -120,6 +268,12 @@ class OutcomeFact:
     # How the fact was linked: "name-match" is a disclosed heuristic (generic
     # signatures do not resolve without dependencies); "declared" is an
     # annotation, not a construction. A reviewer weighs these differently.
+    #
+    # `DERIVED_VALIDATION` is the third value, and it is deliberately narrow: a
+    # declared outcome whose *cause* was traced through the bean-validation chain
+    # (a `@Valid` body, a constrained DTO, and an `@ExceptionHandler` mapping that
+    # exception to this status). It says more than "declared" and less than
+    # "constructed" -- the outcome is annotation-sourced, the precondition is not.
     link: str = "resolved"
     anchor: Anchor | None = None
 
@@ -144,6 +298,7 @@ class ExtractionReport:
     members: list[MemberFact] = field(default_factory=list)
     checks: list[CheckFact] = field(default_factory=list)
     outcomes: list[OutcomeFact] = field(default_factory=list)
+    exception_mappings: list[ExceptionMappingFact] = field(default_factory=list)
 
     parse_errors: list[str] = field(default_factory=list)
     partial: bool = False
@@ -218,4 +373,43 @@ def validate_report(report: ExtractionReport) -> list[str]:
             "(spec GD-9 requires fail-closed rather than a guessed order)"
         )
 
+    for mapping in report.exception_mappings:
+        if not mapping.anchor or not mapping.anchor.file:
+            errors.append(f"exception mapping {mapping.exception_type!r}: no anchor (X-6)")
+
     return errors
+
+
+def exception_status_map(report: ExtractionReport) -> tuple[dict[str, int], list[str]]:
+    """`exception type -> status`, plus the ones two advices disagree about.
+
+    The second return value is the honest half. Where two `@ControllerAdvice`
+    beans handle the same exception with **different** statuses and neither
+    declares an `@Order`, Spring's choice is not statically decidable -- so the
+    exception is excluded from the map and reported. A guess here would put a
+    precondition on a transition that the runtime may never satisfy.
+
+    Agreement across advices is not a conflict: athena's two beans both map
+    `MethodArgumentNotValidException` to 400, so the status is certain even though
+    the response body is not.
+    """
+    by_exception: dict[str, set[int]] = {}
+    for mapping in report.exception_mappings:
+        by_exception.setdefault(mapping.exception_type, set()).add(mapping.status)
+
+    resolved = {exc: next(iter(s)) for exc, s in by_exception.items() if len(s) == 1}
+    contested = sorted(exc for exc, s in by_exception.items() if len(s) > 1)
+    return resolved, contested
+
+
+def exception_anchors(report: ExtractionReport) -> dict[str, str]:
+    """`exception type -> the @ExceptionHandler line`, for the audit trail.
+
+    First declaration wins where several agree; a reviewer needs *a* line to open,
+    and where two advices genuinely disagree `exception_status_map` has already
+    excluded the exception from the map, so nothing reaches here to be anchored.
+    """
+    out: dict[str, str] = {}
+    for mapping in report.exception_mappings:
+        out.setdefault(mapping.exception_type, str(mapping.anchor))
+    return out

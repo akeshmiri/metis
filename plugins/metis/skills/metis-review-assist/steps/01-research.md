@@ -1,50 +1,52 @@
 # Step 1 — Research (R)
 
-**Scope Lock:** this stage covers exactly one node id — the quarantined
-item the user named. Do not follow references to other quarantined items
-and start reviewing them too; note them as related, don't drift onto them.
+**Scope Lock:** exactly one model, named by `<journey>`/`<surface>`. Related
+models that appear in reconciliation output are noted, not reviewed.
 
 ## Actions
 
-1. Call `metis_get_context(anchor=<the node id>)`.
-   - If `found: false`: stop here. Tell the user this id doesn't exist in
-     the graph. Do not guess a similar-looking id and substitute it
-     (Forbidden Substitutions) — ask the user to confirm the correct id.
-   - If `found: true`: record `text`, `source_file`, `source_heading`,
-     `references`, `referenced_by` verbatim. These are `VERIFIED` facts —
-     they came directly from a real tool call, not inference.
+1. **Find where the run stopped.**
+   ```
+   python3 -m metis_mcp.mbt.cli workflow status model-build--<scope>
+   ```
+   The record names the blocked stage, the outstanding elements, and the exact
+   command that records the decision. If there is no run, the user may be
+   reviewing outside a workflow — that is fine; continue from step 2.
 
-2. Call `metis_get_traceability(node_id=<the node id>, direction="both")`.
-   Record the real `upstream`/`downstream` hop lists. These are also
-   `VERIFIED` — real BFS results, not guessed relationships.
+2. **Get the well-formedness findings.**
+   ```
+   python3 -m metis_mcp.mbt.cli validate --journey <j> --surface <s>
+   ```
+   Record each finding's severity verbatim. The three are not synonyms:
+   `blocking` means this is wrong; `unverifiable` means it *cannot be shown* to
+   be right (M-17); `advisory` means neither. Report them as they are — do not
+   summarise an unverifiable finding as a pass.
 
-3. Call `metis_explain_decision(node_id=<the node id>)` for the
-   corroboration count and provenance.
+3. **Get both reconciliation directions.**
+   ```
+   python3 -m metis_mcp.mbt.cli reconcile --journey <j> --surface <s>
+   ```
+   Record `UNSPECIFIED BEHAVIOUR` and `UNIMPLEMENTED` **separately** (F-5) — a
+   specification gap and an implementation gap have different causes and
+   different owners. Also record how many matches are intent-backed versus
+   documentation-only: a match against a code-derived criterion is documentation
+   agreeing with itself (§4.1).
 
-## Confidence tagging
+4. **Export the review file.**
+   ```
+   python3 -m metis_mcp.mbt.cli review export --journey <j> --surface <s> -o review.json
+   ```
+   Each item carries `evidence` (what the reviewer is shown), `proposed_by`, and
+   where one exists `criterion_id` / `criterion_text`.
 
-Tag every fact you're about to carry into Step 2:
-- `VERIFIED`: came directly from one of the three calls above.
-- `INFERRED`: a reasonable reading of the VERIFIED facts (e.g., "this item
-  looks isolated" from an empty `references`/`referenced_by` list) — label
-  it as inference, don't present it as fact.
-- `UNVERIFIED`: anything you don't actually have tool output for. Don't
-  carry these into a recommendation without flagging them.
+## Forbidden substitutions
 
-## Drift check
+If a command returns nothing, or the journey does not exist, **stop and ask**.
+Do not substitute a similar-looking journey name, and do not proceed on the
+assumption that "no findings" and "the command found no model" are the same
+thing — they are opposite conclusions from identical-looking silence.
 
-Re-read the Scope Lock above. Did this stage stay on the one locked node
-id, or did it wander into summarizing unrelated items? If it drifted,
-redo this stage focused back on the locked id.
+## Output of this stage
 
-## Stage Confirmation
-
-Present real findings (not a summary that hides the actual tool output) and:
-
-```
-[C]ontinue to Plan
-[R]eview this stage in detail
-[B]ack — re-run Research
-[X]it
-```
-Do not proceed to Step 2 without an explicit choice.
+A `VERIFIED` list of: outstanding elements, findings by severity, both gap
+directions, and which items carry a criterion. Nothing inferred.

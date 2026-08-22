@@ -1,14 +1,18 @@
 """
-Model sources: one interface, three implementations (application spec §4.2, R9).
+Model sources: one interface, five implementations (application spec §4.2, R9).
 
 Every source produces **candidate** elements and none writes an approved model
 (spec S-4). The MBT engine never learns which source produced a model (F-29),
 which is why they are interchangeable and why deferring one costs no rework.
 
-Two of the three are registered but not implemented. That is deliberate, and
-`NotImplementedError` carrying the reason is better than their absence: it makes
-R9's "all cases" architecturally real, and it makes the gap visible at the point
-someone tries to use it rather than in a document.
+`authored`, `code`, `web`, `openapi` and `ac-mined` are all registered and all
+implemented -- `cli sources` reports availability from the registry rather than
+from a list here, so that command is the answer and this docstring is not.
+
+`ModelSource.produce` still raises `NotImplementedError` as its base behaviour.
+That is deliberate: a source registered without an implementation must fail at
+the point someone runs it, carrying the reason, rather than be absent from the
+registry and look like a capability nobody thought of.
 """
 from __future__ import annotations
 
@@ -21,7 +25,14 @@ STATIC_ANALYSIS = "static_analysis"
 AC_MINED = "ac_mined"
 
 # Matches Transition.extraction_method's enum in ontology.labels.
-EXTRACTION_METHODS = (HAND_AUTHORED, STATIC_ANALYSIS, AC_MINED)
+# A published contract is not static analysis of code. Reusing `static_analysis`
+# for an OpenAPI document would repeat the exact provenance defect
+# `CodeExtractedSource` records: extraction ran outside the registry, its output
+# landed through the authored source, and the graph said a person wrote what a
+# machine had inferred. A reviewer weighs "the code does this" and "the document
+# says this" very differently, and M-13 exists so they can.
+DECLARED_CONTRACT = "declared_contract"
+EXTRACTION_METHODS = (HAND_AUTHORED, STATIC_ANALYSIS, AC_MINED, DECLARED_CONTRACT)
 
 
 @dataclass

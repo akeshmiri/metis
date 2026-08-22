@@ -1,47 +1,65 @@
 ---
 name: metis-review-assist
-description: Walk a human reviewer through one Quarantine-tier item from Métis's review queue — real graph context, real traceability, real coverage check, ending in an honest write-path decision. Use when a user wants help deciding an Approve/Reject call on a specific quarantined entity, not for batch-processing the whole queue.
+description: Walk a reviewer through the G1 model-approval gate — the outstanding elements, the validation findings and reconciliation gaps that are the evidence for deciding, and the acceptance criteria each rule carries — ending in a recorded decision and a resumed run. Use when a workflow has halted at model-approval, or when a user wants help deciding approve/reject on a model's elements. Not for batch-approving a queue.
 ---
 
 # Métis review-assist
 
-**Reconstruction notice:** the original `metis-review-assist` this project's
-`CLAUDE.md`/`PLAN.md` describe was absent from this copy of the project when
-this session began (see `../shared/knowledge/anti-hallucination-protocol.md`'s
-own notice). This is a best-effort reconstruction against the REAL, currently
-running MCP server (`metis_mcp/server.py`'s actual 9 tools) rather than the
-fuller production contract in `mcp-contracts/metis-mcp-tool-contracts.json` —
-this skill calls tools the way they actually work today in dogfooding mode,
-not the aspirational production shape.
+G1 is one of exactly two human gates (`docs/metis-application-spec.md` §3.4), and
+it is where a workflow **stops and waits**. Nothing auto-promotes on elapsed time
+(F-8): an unreviewed model stays unapproved indefinitely, and the safe failure is
+"no tests generated", never "tests generated from an unreviewed model".
 
-## Purpose
+This skill helps a person make that decision well. It does not make it for them.
 
-Given one quarantined entity (a real node id — a `CONST-*`/`REQ-METIS-*` id
-in dogfooding mode, or a real `Class`/`Method`/`TestCase` id once Phases
-1-4/7 have populated the real graph), this skill:
+## What this skill is for, and what it is not
 
-1. Assembles real context and traceability for the item (Research).
-2. Checks real coverage and forms a recommendation (Plan).
-3. Attempts the write — and shows the real, honest outcome of that attempt,
-   whatever it is (Implementation).
+| | |
+|---|---|
+| **For** | One model whose run has halted at `model-approval`, where a reviewer wants the evidence assembled and the decision recorded properly |
+| **Not for** | Approving everything to get past the gate. A bulk approve buys `lifecycle_state: Approved` and nothing else — it cannot buy intent (S-19), and pretending otherwise is the failure this gate exists to prevent |
 
-It follows `../shared/knowledge/anti-hallucination-protocol.md`'s RPI gates
-and Stage Confirmation Protocol throughout — read that file once, it is not
-repeated here.
+## The evidence a reviewer is owed (N-3)
+
+A decision screen that cannot show its evidence **blocks the decision** rather
+than presenting a partial view (N-4). For model approval that means all of:
+
+- the outstanding elements, **named** — nobody can act on "10 problems";
+- every validation finding, with its severity;
+- reconciliation gaps in **both** directions, never merged into one number (F-5);
+- per-element source, so N-10's separation of proposer from approver can apply;
+- the acceptance criterion each rule carries, if it has one.
 
 ## Steps
 
-Run in order — see `steps/01-research.md`, `steps/02-plan.md`,
-`steps/03-implementation.md`. This is standalone-mode (a single item), so
-each step pauses for Stage Confirmation before the next begins.
+Run in order — `steps/01-research.md`, `steps/02-plan.md`, `steps/03-decide.md`.
+Each stage pauses before the next begins. Read
+`../shared/knowledge/anti-hallucination-protocol.md` once; its four gates apply
+throughout and are not repeated here.
 
-## Real tools this skill calls
+## The commands this skill actually runs
 
-- `metis_get_context(anchor, client="claude", include_draft_tier=False)`
-- `metis_get_traceability(node_id, direction="both")`
-- `metis_check_coverage(target_id)`
-- `metis_explain_decision(node_id)`
-- `metis_submit_episode(episode_type, payload, source_ref)` — per
-  `REQ-METIS-CPT-01`, this is disabled by default regardless of what this
-  skill's Plan stage recommends; Step 3 shows that refusal honestly, it
-  does not pretend the decision was recorded.
+All real, all in `metis-server`:
+
+```
+python3 -m metis_mcp.mbt.cli workflow status <run-id>
+python3 -m metis_mcp.mbt.cli validate  --journey <j> --surface <s>
+python3 -m metis_mcp.mbt.cli reconcile --journey <j> --surface <s>
+python3 -m metis_mcp.mbt.cli review export --journey <j> --surface <s> -o review.json
+python3 -m metis_mcp.mbt.cli review apply  --journey <j> --surface <s> review.json
+python3 -m metis_mcp.mbt.cli workflow resume model-build --scope <scope> --journey <j> --surface <s>
+```
+
+## Two rules this skill must not soften
+
+**A plain approve does not create intent.** `review/decisions.py:promotion_for`
+promotes a criterion from `code_derived` only on a real **edit** or an explicit
+`affirmed_as_intent`. A criterion drafted from the code and approved unchanged
+documents the system; it does not validate it (§4.1, S-19). Never suggest setting
+`affirmed_as_intent` in bulk — that single field is the only thing standing
+between a rubber stamp and a manufactured correctness claim.
+
+**The proposer may not approve their own proposal** (N-10). Landed elements carry
+`proposed_by` from their Episode. If the reviewer is the proposer, `review apply`
+refuses; say so plainly rather than suggesting `allow_self_approval`, which is
+recorded as a self-approval when used.

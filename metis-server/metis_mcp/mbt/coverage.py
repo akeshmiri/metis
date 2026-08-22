@@ -13,7 +13,17 @@ touched. Three rules shape this module:
   * **C-10/C-11** the ledger records *coverage*, not outcome. It answers
     "is this behaviour tested?" and not "is it working?".
 
-Deliberately database-free, like the rest of the engine.
+**P-16 -- a coverage figure without its version is not a measurement.** The
+report must state the model version and commit it refers to, and for a long time
+it did not: the ledger knew the model id and the criterion and nothing else, so
+"how covered is release X" could not be answered by the thing whose whole job is
+answering it. `ComponentRef` carries that half now, and a ledger built without
+one **says so** rather than printing a figure that quietly omits what the rule
+requires.
+
+Deliberately database-free, like the rest of the engine. The `Component` and the
+validating criteria are *passed in* by the caller, exactly as `test_case_ids`
+already is -- this module never opens a session.
 """
 from __future__ import annotations
 
@@ -25,11 +35,35 @@ from metis_mcp.mbt.path_generation import GenerationResult
 
 DIRECT = "direct"
 INDIRECT = "indirect"
+# A UI path **started** this call but observed no outcome (M-5a's `TRIGGERS`).
+# Real information — the endpoint was exercised — and **not coverage**: firing a
+# request proves neither which outcome occurred nor that anyone asserted it.
+INITIATED = "initiated"
 UNCOVERED = "uncovered"
+
+# The mechanisms that count toward the covered figure. `INITIATED` is absent by
+# design: crediting it would mark the 500 a page never handles as tested, which
+# is precisely the gap M-5f exists to surface.
+COVERING_MECHANISMS = frozenset({DIRECT, INDIRECT})
 
 # Criteria for which indirect (cross-surface) credit is allowed at all.
 # Guard coverage is deliberately absent -- see C-2.
 _INDIRECT_CREDITABLE = {ALL_TRANSITIONS, "all-states"}
+
+
+# What P-16 requires a coverage figure to name. A plain value object, not a
+# graph handle: `Component` identity is `(component, commit)` (spec D-6), and both
+# halves travel together or the figure is about an unnamed version.
+@dataclass(frozen=True)
+class ComponentRef:
+    id: str
+    component: str
+    version: str
+    commit_sha: str = ""
+
+    def describe(self) -> str:
+        commit = self.commit_sha or "no commit recorded"
+        return f"{self.component} v{self.version} @ {commit}"
 
 
 @dataclass(frozen=True)
@@ -40,6 +74,10 @@ class LedgerRow:
     criterion: str
     test_case_id: str | None = None
     note: str = ""
+    # Which acceptance criteria validate this transition (`AcceptanceCriterion
+    # -[:VALIDATES]->`). The ledger is keyed by transition (C-9), so criterion
+    # coverage for a version is a pivot over these rather than a second query.
+    criterion_ids: tuple[str, ...] = ()
 
 
 @dataclass
@@ -48,6 +86,14 @@ class Ledger:
     criterion: str
     rows: list[LedgerRow] = field(default_factory=list)
     uncovered: list[tuple[str, str]] = field(default_factory=list)  # (transition id, reason)
+    # P-16. `None` is a real state -- a file-based run with no commit given --
+    # and it is reported as such, never silently dropped from the report.
+    component: ComponentRef | None = None
+    # Every AC validating a transition in scope, covered or not. Needed as its
+    # own field because an AC on an UNCOVERED transition has no row to sit on,
+    # and omitting it would make the criteria denominator shrink to the covered
+    # ones -- a coverage figure that rises by ignoring what it missed.
+    criteria_in_scope: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     def rows_for(self, transition_id: str) -> list[LedgerRow]:
         return [r for r in self.rows if r.transition_id == transition_id]
@@ -68,26 +114,96 @@ class Ledger:
                 out.append(tid)
         return out
 
+    def initiated_only(self) -> list[str]:
+        """Started by a UI path, and never observed by one.
+
+        The honest reading of "the call was genuinely made": worth reporting,
+        never counted. A transition here has had a request sent at it and has had
+        no outcome asserted.
+        """
+        out = []
+        for tid in sorted({r.transition_id for r in self.rows}):
+            mechanisms = self.mechanisms_for(tid)
+            if INITIATED in mechanisms and not (mechanisms & COVERING_MECHANISMS):
+                out.append(tid)
+        return out
+
+    def covered_transitions(self) -> set[str]:
+        """Only covering mechanisms. `initiated` is deliberately absent."""
+        return {r.transition_id for r in self.rows
+                if r.mechanism in COVERING_MECHANISMS}
+
+    def criteria_covered(self) -> list[str]:
+        """ACs validating at least one covered transition (C-7, execution-free).
+
+        This is what "release coverage" means without an execution result: a
+        criterion whose behaviour has a test case, whether or not that case has
+        ever been run (C-10, C-11).
+        """
+        covered = self.covered_transitions()
+        out: set[str] = set()
+        for tid in covered:
+            out.update(self.criteria_in_scope.get(tid, ()))
+        return sorted(out)
+
+    def criteria_uncovered(self) -> list[str]:
+        """ACs in scope validating nothing covered.
+
+        Computed against `criteria_in_scope`, not against the rows: an AC on an
+        uncovered transition has no row, and deriving the denominator from rows
+        would let the figure rise by ignoring what it missed.
+        """
+        covered = set(self.criteria_covered())
+        every: set[str] = set()
+        for ids in self.criteria_in_scope.values():
+            every.update(ids)
+        return sorted(every - covered)
+
     def summary(self) -> dict:
-        covered = {r.transition_id for r in self.rows}
+        # Only covering mechanisms count. Summing every row would let a trigger
+        # raise the number, which is the one thing `initiated` exists to prevent.
+        covered = self.covered_transitions()
+        criteria_covered = self.criteria_covered()
         return {
             "model": self.model_id,
             "criterion": self.criterion,
+            # P-16: the version and commit this figure refers to. `None` when the
+            # run did not record one -- absent, not zero, and the report says so.
+            "component": self.component.component if self.component else None,
+            "version": self.component.version if self.component else None,
+            "commit": (self.component.commit_sha or None) if self.component else None,
             "covered": len(covered),
             "uncovered": len(self.uncovered),
             "indirect_only": len(self.indirect_only()),
+            # Reported beside the covered figure, never inside it.
+            "initiated_not_covered": len(self.initiated_only()),
+            "criteria_covered": len(criteria_covered),
+            "criteria_uncovered": len(self.criteria_uncovered()),
         }
 
 
 def build_ledger(model: Model, result: GenerationResult,
-                 test_case_ids: dict[str, str] | None = None) -> Ledger:
+                 test_case_ids: dict[str, str] | None = None,
+                 *,
+                 component: ComponentRef | None = None,
+                 validating_criteria: dict[str, list[str]] | None = None) -> Ledger:
     """One row per coverage claim, from a generation result.
 
     `test_case_ids` maps a path's target key to the rendered case id, so the
     ledger can answer "by which test case" (C-7). Absent, rows record the claim
     without naming an artefact.
+
+    `component` is P-16's version and commit. `validating_criteria` maps a
+    transition id to the ids of the acceptance criteria that `VALIDATES` it --
+    the same shape as `test_case_ids`, and read from the graph by the caller so
+    this module stays database-free.
+
+    Both are keyword-only and both default to `None`, which is a reported state
+    rather than a silent one: a ledger with no component says so in its report.
     """
-    ledger = Ledger(model_id=result.model_id, criterion=result.criterion)
+    criteria = {tid: tuple(ids) for tid, ids in (validating_criteria or {}).items() if ids}
+    ledger = Ledger(model_id=result.model_id, criterion=result.criterion,
+                    component=component, criteria_in_scope=criteria)
     ids = test_case_ids or {}
 
     for path in result.paths:
@@ -99,6 +215,7 @@ def build_ledger(model: Model, result: GenerationResult,
             criterion=result.criterion,
             test_case_id=ids.get(path.target_key),
             note=path.data_note or "",
+            criterion_ids=criteria.get(transition.id, ()),
         ))
 
     for u in result.uncoverable:
@@ -108,6 +225,42 @@ def build_ledger(model: Model, result: GenerationResult,
         ledger.uncovered.append((tid, reason))
 
     return ledger
+
+
+def credit_initiated(ledger: Ledger, model: Model, triggers: dict[str, list[str]],
+                     covered_elsewhere: set[str]) -> list[str]:
+    """Record that a UI path **started** these API calls (M-5a's `TRIGGERS`).
+
+    `triggers` is one-to-many — opening a page fires every panel's request — and
+    is deliberately a different shape from `invokes`, which is one-to-one.
+
+    Nothing here is credited as coverage. C-3's structural argument holds for
+    `INVOKES` (a UI transition that rendered an outcome necessarily satisfied
+    that outcome's guard) and **not** for `TRIGGERS`: at the moment the request
+    leaves, no outcome has occurred, and a failing call frequently produces no UI
+    transition at all.
+    """
+    initiated = []
+    for ui_transition_id, api_ids in sorted(triggers.items()):
+        if ui_transition_id not in covered_elsewhere:
+            continue
+        for api_transition_id in sorted(api_ids):
+            if api_transition_id not in model.transitions:
+                continue
+            if ledger.mechanisms_for(api_transition_id) & COVERING_MECHANISMS:
+                continue  # already covered; "was called" adds nothing
+            transition = model.transitions[api_transition_id]
+            ledger.rows.append(LedgerRow(
+                transition_id=api_transition_id,
+                surface=model.states[transition.source].surface,
+                mechanism=INITIATED,
+                criterion=ledger.criterion,
+                criterion_ids=ledger.criteria_in_scope.get(api_transition_id, ()),
+                note=(f"started by {ui_transition_id} — the call was made; this "
+                      f"outcome was not observed"),
+            ))
+            initiated.append(api_transition_id)
+    return initiated
 
 
 def credit_indirect(ledger: Ledger, model: Model, invokes: dict[str, str],
@@ -143,6 +296,7 @@ def credit_indirect(ledger: Ledger, model: Model, invokes: dict[str, str],
             surface=model.states[transition.source].surface,
             mechanism=INDIRECT,
             criterion=ledger.criterion,
+            criterion_ids=ledger.criteria_in_scope.get(api_transition_id, ()),
             note=f"via INVOKES from {ui_transition_id}",
         ))
         credited.append(api_transition_id)
@@ -150,15 +304,27 @@ def credit_indirect(ledger: Ledger, model: Model, invokes: dict[str, str],
 
 
 def format_report(ledger: Ledger) -> str:
-    """A coverage report always states its criterion (P-4, C-11)."""
+    """A coverage report always states its criterion and its version (P-4, P-16, C-11)."""
     s = ledger.summary()
-    lines = [
-        f"Coverage — {s['model']}",
+    lines = [f"Coverage — {s['model']}"]
+    if ledger.component is not None:
+        lines.append(f"  version:        {ledger.component.describe()}")
+    else:
+        # P-16 asks for the version and commit every time. Printing the figure
+        # without them and saying nothing would read as though the omission were
+        # not there; a coverage number about an unnamed version is exactly the
+        # kind of claim this whole module refuses to make quietly.
+        lines.append("  version:        not recorded for this run (P-16) — this "
+                     "figure names no version or commit")
+    lines += [
         f"  criterion:      {s['criterion']}",
         f"  covered:        {s['covered']}",
         f"  uncovered:      {s['uncovered']}",
         f"  indirect only:  {s['indirect_only']}",
     ]
+    if ledger.criteria_in_scope:
+        lines.append(f"  criteria:       {s['criteria_covered']} covered, "
+                     f"{s['criteria_uncovered']} not")
     if ledger.indirect_only():
         lines.append("")
         lines.append("  Covered only indirectly — combinations not exercised (C-8):")

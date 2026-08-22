@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from metis_mcp.behavior_model import _guard_coverage_gap, guards_conflict
+from metis_mcp.behavior_model import _guard_coverage_gap, guards_conflict, split_conjuncts
 from metis_mcp.mbt.model import IMPLEMENTED, Model
 
 # Checks (spec §2.6).
@@ -39,6 +39,8 @@ GUARD_COMPLETENESS = "guard_completeness"
 REACHABILITY = "reachability"
 OBSERVABILITY = "observability"
 AC_COVERAGE = "ac_coverage"
+CALLABILITY = "callability"
+AC_ATOMICITY = "ac_atomicity"
 
 # Severities. `UNVERIFIABLE` is deliberately not a synonym for either of the
 # others: "this is wrong" and "this cannot be shown to be right" are different
@@ -342,6 +344,70 @@ def check_ac_coverage(model: Model, validated_transition_ids: set[str] | None = 
     return findings
 
 
+def check_ac_atomicity(model: Model) -> list[Finding]:
+    """A transition whose guard cannot yield **one** condition under test.
+
+    An acceptance criterion is atomic: one condition, one action, one validation.
+    GD-2 makes that reachable for almost every guard -- a rejection guard is
+    `(dimensions 1..k-1 pass) AND (dimension k fails)`, so the prefix is context
+    and the last conjunct is the single condition
+    (`model_sources.ac_drafting.decompose_guard`).
+
+    A guard containing an `OR` is the case that does not decompose. Deciding
+    which branch is the deciding one needs real boolean reasoning, and M-17
+    forbids guessing, so any criterion written for it carries more than one
+    condition and a reviewer can only accept or reject the bundle.
+
+    **Advisory.** The transition is well-formed; what is imperfect is the shape
+    of the criterion it can carry. Blocking generation over the wording of a
+    document would stop tests being produced for behaviour that is entirely
+    sound, and `UNVERIFIABLE` would overstate it -- nothing here is unproven,
+    it is simply not atomic, and it says so.
+    """
+    findings = []
+    for t in sorted(_implemented(model), key=lambda x: x.id):
+        guard = (t.guard or "").strip()
+        if not guard or split_conjuncts(guard) is not None:
+            continue
+        findings.append(Finding(
+            check=AC_ATOMICITY, severity=ADVISORY, element_ids=(t.id,),
+            detail=f"guard {guard!r} is a disjunction — a criterion for it "
+                   f"carries more than one condition, and can only be reviewed "
+                   f"as a bundle",
+            remedy="model each branch as its own transition, so each carries one "
+                   "condition, one action and one validation",
+        ))
+    return findings
+
+
+def check_callability(model: Model) -> list[Finding]:
+    """A write transition with no recovered inputs cannot be issued (spec §7.4).
+
+    `POST /metric` names a door and nothing about what to bring. A case rendered
+    from it can assert a status and can never construct the request, so the
+    "test" it produces is a description of an intention.
+
+    **Unverifiable, not blocking, and not advisory.** M-17's category fits
+    exactly: the extraction did not recover a body, and that is not evidence the
+    endpoint takes none -- real write endpoints do. Blocking would stop every
+    pipeline on the pilot estate (38 of 145 transitions); advisory would file it
+    beside style. Unverifiable says the true thing: nobody has established this
+    either way, and proceeding is an explicit, recorded risk.
+    """
+    findings = []
+    for t in sorted(_implemented(model), key=lambda x: x.id):
+        if t.is_callable:
+            continue
+        findings.append(Finding(
+            check=CALLABILITY, severity=UNVERIFIABLE, element_ids=(t.id,),
+            detail=f"{t.trigger} takes a request body, and none was recovered — "
+                   f"a case for this can assert a status but cannot issue the call",
+            remedy="extend the structural pack to capture @RequestBody / "
+                   "@RequestParam / @PathVariable, or supply the contract",
+        ))
+    return findings
+
+
 # --------------------------------------------------------------------------
 # The gate
 # --------------------------------------------------------------------------
@@ -358,6 +424,8 @@ def validate(model: Model, validated_transition_ids: set[str] | None = None,
     result.findings.extend(check_observability(model))
     result.findings.extend(check_determinism(model, inherited))
     result.findings.extend(check_guard_completeness(model, inherited))
+    result.findings.extend(check_callability(model))
+    result.findings.extend(check_ac_atomicity(model))
     result.findings.extend(check_reachability(model))
     if include_ac_coverage:
         result.findings.extend(check_ac_coverage(model, validated_transition_ids))

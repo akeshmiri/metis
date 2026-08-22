@@ -20,7 +20,7 @@ and the counterpart, REMOVED, for keys the candidate no longer has.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from difflib import SequenceMatcher
 
 from metis_mcp.identity.keys import (
@@ -195,6 +195,20 @@ def carry_human_facts(previous: Model, candidate: Model, delta: Delta) -> CarryR
     revocation propagates to the whole `(state, trigger)` group (I-18), because
     determinism and guard completeness are group properties: a modified sibling
     can break a transition that did not itself change.
+
+    **Every carry is a `replace`, never a reconstruction.** This function used to
+    rebuild each element by naming its fields positionally, which was complete
+    when a `Transition` had seven of them and silently lossy by the time it had
+    twenty-one: `inputs`, `outcome_status`, `response_body`, `guard_wording`,
+    `data_requirements` and `evidence` were all discarded by the function whose
+    entire job is to preserve things. It had never run in production, so nothing
+    caught it drifting.
+
+    `replace` overrides exactly the human fields and carries everything else
+    through untouched -- correct for every field that exists now and every field
+    added later. `test_human_facts_survive.py` enumerates the fields from
+    `dataclasses.fields` rather than by hand, so a new one cannot start being
+    dropped again without a test failing.
     """
     result = CarryResult(model=candidate)
     prev_states = keyed_states(previous)
@@ -207,10 +221,13 @@ def carry_human_facts(previous: Model, candidate: Model, delta: Delta) -> CarryR
         p = prev_states.get(key)
         if p is None:
             continue
-        # A human-resolved name survives; extraction may propose, never overwrite (I-15).
-        candidate.states[sid] = State(
-            id=state.id, name=p.name, surface=state.surface,
-            is_initial=state.is_initial, lifecycle_state=p.lifecycle_state,
+        # A human-resolved name survives; extraction may propose, never overwrite
+        # (I-15). `name_tier` rides with the name it describes -- carrying the
+        # name and leaving the tier behind would claim a reviewer's wording came
+        # from a code convention.
+        candidate.states[sid] = replace(
+            state, name=p.name, lifecycle_state=p.lifecycle_state,
+            name_tier=p.name_tier or state.name_tier,
         )
         result.carried += 1
 
@@ -246,11 +263,12 @@ def carry_human_facts(previous: Model, candidate: Model, delta: Delta) -> CarryR
         else:
             lifecycle = p.lifecycle_state
 
-        candidate.transitions[tid] = Transition(
-            id=transition.id, source=transition.source, trigger=transition.trigger,
-            target=transition.target, guard=transition.guard,
-            implementation_status=transition.implementation_status,
-            lifecycle_state=lifecycle,
+        # Only the human facts are overridden. The guard, trigger, anchors,
+        # inputs, evidence and everything else are the freshly-extracted values
+        # and must stay that way -- that is the whole machine/human split.
+        candidate.transitions[tid] = replace(
+            transition, lifecycle_state=lifecycle,
+            name_tier=p.name_tier or transition.name_tier,
         )
         result.carried += 1
 

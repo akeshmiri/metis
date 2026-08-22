@@ -1,20 +1,39 @@
+# The Métis MCP server — the read-only agent surface (spec §9.5, N-8).
+#
+# Built from the wheel rather than by COPY-ing source trees. The previous
+# version copied `metis_mcp/` and `corpus/` and installed a hand-maintained
+# requirements.txt, which meant the image and the package could disagree about
+# what Métis is — and did: `packages` shipped four modules while the image
+# copied all of them.
+#
 # The chart supplies config via its mounted JSON ConfigMap and METIS_HOME.
-# Deliberately do not bundle a host config in the image: the shared
-# ~/.metis/config.json contract must remain the deployment's source of truth.
-# For standalone testing, mount a directory containing config.json with
+# Deliberately does not bundle a host config: the shared ~/.metis/config.json
+# contract must remain the deployment's source of truth. For standalone
+# testing, mount a directory containing config.json with
 # `-e METIS_HOME=/config -v /path/to/metis-config:/config`.
+
+FROM python:3.13-slim AS build
+WORKDIR /src
+COPY pyproject.toml ./
+COPY metis_mcp/ ./metis_mcp/
+COPY code_analysis/ ./code_analysis/
+RUN pip install --no-cache-dir build && python -m build --wheel --outdir /dist
+
 FROM python:3.13-slim
 WORKDIR /app
-COPY pyproject.toml requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
-COPY metis_mcp/ ./metis_mcp/
-COPY corpus/ ./corpus/
+COPY --from=build /dist/*.whl /tmp/
+RUN pip install --no-cache-dir /tmp/*.whl && rm /tmp/*.whl
+
 EXPOSE 8090
 ENV METIS_HTTP_PORT=8090
-# Real bug found deploying this: values.yaml's securityContext.runAsNonRoot:
-# true requires the image to actually run as non-root -- Kubernetes refused
-# to start the pod ("container has runAsNonRoot and image will run as
-# root") because nothing here ever created/switched to one.
+
+# values.yaml sets securityContext.runAsNonRoot: true, which needs the image to
+# actually run as non-root -- Kubernetes refused to start the pod ("container
+# has runAsNonRoot and image will run as root") because nothing here ever
+# created or switched to one.
 RUN useradd --create-home --uid 10001 metis
 USER 10001
-CMD ["python3", "-m", "metis_mcp.server"]
+
+# The password is never baked in and never passed as an argument (PLT-005):
+# METIS_NEO4J_PASSWORD comes from the environment, via the chart's secret.
+CMD ["metis-mcp-server"]

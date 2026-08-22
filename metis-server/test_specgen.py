@@ -178,9 +178,18 @@ def test_a60_nothing_is_added_for_readability():
 
 
 def test_a60_the_heading_is_the_behaviour_not_the_identifier():
+    """A60 protects the stakeholder's reading: an ELEMENT id as a section title
+    tells them nothing.
+
+    The heading now carries a stable `AC-<id>` prefix (SP-1a) so `spec_kit` can
+    read the document back — without it a generated spec parsed to zero
+    criteria. That is not the identifier A60 excludes: the transition id is
+    still absent, and the behaviour is still what the heading says.
+    """
     spec = _spec(login_model())
     rule = next(r for r in spec.rules if r.transition_id == "t01")
-    assert rule.heading == "submit valid credentials → LoggedIn"
+    assert rule.title == "submit valid credentials → LoggedIn"
+    assert rule.heading == f"{rule.criterion_id}: submit valid credentials → LoggedIn"
     assert "t01" not in rule.heading
 
 

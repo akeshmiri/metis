@@ -27,6 +27,14 @@ verified_against:
 known_limits:
   - "path constants resolve from string-literal assignments only; anything else
      is emitted as __unresolved__ and never guessed (spec T-9d)"
+  - "exception_mappings sees @ExceptionHandler + @ResponseStatus only. A handler
+     that OVERRIDES a Spring base-class method instead of annotating one is
+     invisible: athena's ControllerErrorHandler extends
+     ResponseEntityExceptionHandler and overrides handleMethodArgumentNotValid,
+     returning 400 with a different body. It agrees on the status with the
+     annotated GlobalExceptionHandler, so nothing is misreported here — but the
+     map is not a complete inventory of what maps to what, and must not be read
+     as one"
   - "Layers 4-5 (transitions, AC matching) are not in this pack — §13 scope banner"
 
 frameworks:

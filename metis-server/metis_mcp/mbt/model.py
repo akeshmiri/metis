@@ -32,6 +32,18 @@ DISPUTED = "Disputed"
 REJECTED = "Rejected"
 DEPRECATED = "Deprecated"
 
+# Transition.outcome_source values. Whether the response this transition produces
+# was seen being BUILT, or only DECLARED on an annotation.
+#
+# The distinction has to survive into the graph, because a `@ApiResponse` can
+# simply be wrong -- a copy-pasted annotation declares a status the endpoint
+# cannot produce, and the resulting path is one nobody can walk. That is a real
+# finding about the codebase and the model is right to hold it (a model is every
+# possible user path, not a transcript of what the code happens to do), but a
+# reviewer must be able to see which kind of claim they are approving.
+CONSTRUCTED = "constructed"
+DECLARED = "declared"
+
 
 @dataclass(frozen=True)
 class State:
@@ -47,6 +59,15 @@ class State:
     surface: str = "api"
     is_initial: bool = False
     lifecycle_state: str = QUARANTINE
+    # Web-surface detail. A `ui` state is a screen, mode or message shown (M-2),
+    # so it belongs to a page and names the condition that page is in --
+    # `MetricWorkspacePage` / `summary=error`. Empty on the API surface, where a
+    # state is a response condition and there is no page to belong to.
+    page: str = ""
+    condition: str = ""
+    # X-8, as above. A state named `MetricGetActionByIdNoContent204` and one a
+    # reviewer renamed to "the metric is not found" are different kinds of claim.
+    name_tier: str = ""
 
 
 @dataclass(frozen=True)
@@ -65,6 +86,81 @@ class Transition:
     guard: str = ""
     implementation_status: str = IMPLEMENTED
     lifecycle_state: str = QUARANTINE
+    # What a caller must supply to fire this transition, and what it must prove
+    # about itself (spec §7.4). A `trigger` of "POST /metric" says which door to
+    # knock on and nothing about what to bring; without these a rendered case can
+    # assert a status but can never construct the request.
+    #
+    # Requirements, never values (M-9): each entry states a condition on the data.
+    inputs: tuple = ()
+    security: tuple = ()
+    # `file:line@commit` for the guard's own source (spec §8.5, T-9a). A guard a
+    # reviewer cannot trace back to a line is a claim they have to take on trust.
+    guard_anchor: str = ""
+    # The response this transition produces. Held here rather than read out of the
+    # target state's name, because the two are different things: 201 is what the
+    # caller receives, and "the resource now exists" is the situation the system
+    # is left in. Conflating them is what forced every outcome to be its own
+    # state and made the machine a star.
+    outcome_status: int | None = None
+    # Spec §5.8: a transition may have no recoverable source state. Saying so is
+    # required; giving it a guessed one is prohibited.
+    source_state_unresolved: bool = False
+    # Whether the outcome was constructed in code or only declared on an
+    # annotation (see CONSTRUCTED/DECLARED above).
+    outcome_source: str = CONSTRUCTED
+    # How the guard itself was arrived at -- `contract.LINK_*`. A guard recovered
+    # from a real branch and a guard derived from four annotations are both
+    # legitimate and are not the same claim, and the rendered case says which.
+    guard_claim: str = ""
+    # GD-3's variants: the declared constraints an input must violate to reach a
+    # rejection (`@NotNull`, `@Size(max=64)`), verbatim. These are why 164
+    # constrained fields stay TEST DATA rather than becoming 164 transitions --
+    # a technique turns each into cases (P-1a) without adding a model element.
+    #
+    # Requirements, never values (M-9): the model states what the data must
+    # violate; a person or a factory decides what to actually send.
+    data_requirements: tuple = ()
+    # The expected response, alongside `outcome_status`. `response_body` is the
+    # declared body type (`PageDto<ProjectDto>`), **empty meaning no body** --
+    # `ResponseEntity<Void>` is a real answer, not a recovery failure. Without
+    # these a generated case can assert a status and never check what came back,
+    # which is most of what an API test is for.
+    response_body: str = ""
+    media_types: tuple = ()
+    # X-8: a name and a guard each record which tier of X-7's cascade produced
+    # them. Without this the question "which of these still read as
+    # implementation detail" is not answerable by a query, only by eyeballing
+    # 206 nodes -- and the whole point of the cascade is that it can be driven.
+    name_tier: str = ""
+    # The guard said in business language, and the tier that said it. The raw
+    # `guard` is never overwritten: it is the auditable fact, and this is a
+    # rendering of it (D-8's "name is display data", applied to conditions).
+    guard_wording: str = ""
+    guard_tier: str = ""
+    # **What this transition was derived from** (spec D-14): `(label, node_id)`
+    # pairs into the evidence layer, which landing turns into real edges.
+    #
+    # Provenance used to be a `source_episode_id` property naming the ingest, and
+    # an ingest cannot say WHICH endpoint, outcome or field. Carried as ids
+    # rather than objects so this module stays database-free and the pure model
+    # keeps its meaning.
+    evidence: tuple = ()
+
+    @property
+    def is_callable(self) -> bool:
+        """Whether enough is known to actually issue this request.
+
+        A transition that writes (POST/PUT/PATCH) and has no recovered inputs is
+        **not** callable, and that is a finding rather than a property of the
+        endpoint: real write endpoints take a body, so recovering none means the
+        extraction did not see it (X-13). Reporting it as callable would let a
+        test case claim it exercises a write it cannot actually perform.
+        """
+        verb = (self.trigger or "").split(None, 1)[0].upper()
+        if verb in ("POST", "PUT", "PATCH"):
+            return bool(self.inputs)
+        return True
 
     @property
     def is_generatable(self) -> bool:

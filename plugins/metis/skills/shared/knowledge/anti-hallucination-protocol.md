@@ -5,7 +5,7 @@ copy of this project — `metis-server/.agents/` was entirely absent when this
 session picked up the work (a gap of the same kind CLAUDE.md already
 documents for `pyproject.toml`: something that didn't survive the move to
 this machine, not a stalled task). This is a best-effort reconstruction,
-grounded directly in `docs/metis-specification.md` §9.2's real text (RPI
+grounded directly in `docs/metis-application-spec.md` §9.2's real text (RPI
 adopted from Atlas by name, Stage Confirmation Protocol adopted the same
 way), not invented from scratch. Every skill under `.agents/skills/`
 references this file once, per Atlas's own convention: "do not duplicate

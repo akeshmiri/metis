@@ -1,0 +1,14 @@
+{
+  "glossary_version": "metis.glossary/1",
+  "areas": [
+    {"id": "records", "name": "Records",
+     "description": "The worked example the contract fixtures describe: one entity, an OpenAPI document, and a screen structure."}
+  ],
+  "entities": [
+    {"id": "record", "name": "record", "area": "records",
+     "description": "A titled item a user creates, reads and archives.",
+     "impact": ["Archiving hides a record from the list without deleting it, so a report over the list and a report over ids disagree by design."],
+     "properties": [{"name": "title", "meaning": "the user-visible name; required at creation"},
+                    {"name": "archived", "meaning": "whether the record still appears in the list", "values": ["true", "false"]}]}
+  ]
+}

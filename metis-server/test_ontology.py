@@ -1,5 +1,5 @@
 """
-Twelve-label ontology tests (application spec §8, D-1, D-2, ONT-001, ONT-002).
+Ontology tests (application spec §8, D-1, D-2, ONT-001, ONT-002).
 
 Includes the **four-place governance check**: the schema, the validator, the
 catalogue and the specification document must agree, and CI must fail when they
@@ -40,11 +40,108 @@ SPEC = Path("../docs/metis-application-spec.md")
 # D-1 : every label earns its place
 # --------------------------------------------------------------------------
 
-def test_exactly_twelve_labels():
-    assert len(KNOWN_LABELS) == 12, (
-        f"the ontology is twelve labels (spec D-1); found {len(KNOWN_LABELS)}: "
-        f"{sorted(KNOWN_LABELS)}"
+def test_the_label_set_is_closed_and_each_label_is_argued():
+    """D-1: a label exists only when something writes it AND something reads it.
+
+    The count is pinned so growth is deliberate. `Page` was the thirteenth, added
+    with both halves named: the react-ui synthesiser writes it, and the Web
+    pattern query reads it — a question nothing could ask while the screen name
+    survived only as a substring inside a transition id.
+
+    The nine that follow are the evidence layer, admitted together because they
+    are one claim: the processed intake belongs in the graph, so the control flow
+    can say what it was derived from. §8.7 staged four of them for exactly this
+    and D-11 calls that list a staging plan.
+
+    **Read this before adding the fifty-sixth.** D-1 opens by saying the previous
+    ontology carried ~45 labels where this application needed twelve, and that
+    keeping the rest "would advertise capability that does not exist — the precise
+    failure this specification corrects". The count is 45 again.
+
+    That is not automatically the same mistake. Every label added since carries a
+    named writer and a named reader, which the original thirty-three did not, and
+    the business, Web and data layers were each asked for by name to answer a
+    question the graph genuinely could not. But the number is a warning to heed
+    rather than explain away, and the check on any further growth is the one this
+    test enforces: name the writer, name the reader, and if either is "a file
+    somebody will write one day", stage it in §8.7 instead.
+    """
+    assert len(KNOWN_LABELS) == 55, (
+        f"the ontology is fifty-five labels (spec D-1); found {len(KNOWN_LABELS)}: "
+        f"{sorted(KNOWN_LABELS)}. Adding one requires naming its writer and its "
+        f"reader, not just its purpose."
     )
+
+
+# D-1 demands a named writer AND a named reader. A label with only a writer is
+# how an ontology accretes — `Revision` is declared here with neither and is the
+# standing example of what this test exists to prevent.
+EVIDENCE_LAYER = {
+    "Endpoint": ("raw_landing", "Transition-[:DERIVED_FROM]->"),
+    "Parameter": ("raw_landing", "Transition-[:EXERCISES]->"),
+    "Class": ("raw_landing", "Parameter-[:OF_TYPE]-> and Transition-[:EXPECTS]->"),
+    "Field": ("raw_landing", "Transition-[:REQUIRES]->"),
+    "Method": ("raw_landing", "Endpoint-[:HANDLED_BY]->"),
+    "DeclaredOutcome": ("raw_landing", "Transition-[:DERIVED_FROM]->"),
+    "Check": ("raw_landing", "Transition-[:CONSTRAINED_BY]->"),
+    "ExceptionMapping": ("raw_landing", "ExceptionMapping-[:HANDLED_BY]->Method"),
+    "Route": ("raw_landing", "Route-[:RENDERS]->Page"),
+    # The five intake anchors. Writer: `intake_landing`, from a UIF's
+    # `scope` block. Reader: the traceability chain §7.8 ends on --
+    # TestCase -> Scenario -> Transition -> AcceptanceCriterion -> Requirement
+    # -> the anchor -- which is what answers "what artefact in the world is
+    # this test ultimately about".
+    "ConfluenceItem": ("intake_landing", "ConfluenceItem-[:REPRESENTS]->Requirement"),
+    "OpenApiItem": ("intake_landing", "OpenApiItem-[:REPRESENTS]->Requirement"),
+    "ZephyrItem": ("intake_landing", "ZephyrItem-[:REPRESENTS]->Requirement"),
+    "DatasourceItem": ("intake_landing", "DatasourceItem-[:REPRESENTS]->Requirement"),
+    "CodeItem": ("intake_landing", "CodeItem-[:REPRESENTS]->Requirement"),
+    # The two document labels. Writer: `specgen`. Reader: the MCP surface's
+    # `get_spec` / `get_entity`, which is the whole point of putting the
+    # document in the graph rather than in a file.
+    "SpecDocument": ("specgen.specification", "SpecDocument-[:DESCRIBES]->Component"),
+    "EntityDocument": ("specgen.entity", "EntityDocument-[:DESCRIBES]->BusinessEntity"),
+}
+
+
+def test_every_evidence_label_participates_in_the_catalogue():
+    """The half of D-1 that is easy to skip: a writer alone means the graph grows
+    and nothing asks it anything.
+
+    Participation, not target-ness. An entry node is legitimately a source only —
+    `Route` is where a UI query *starts*, and requiring something to point at it
+    would mean inventing an edge to satisfy a test. What must never happen is a
+    label that appears in no relationship at all.
+    """
+    used = {r.to_label for r in ALLOWED_RELATIONSHIPS}
+    used |= {r.from_label for r in ALLOWED_RELATIONSHIPS}
+    for label in EVIDENCE_LAYER:
+        assert label in KNOWN_LABELS, f"{label} is claimed but not declared"
+        assert label in used, (
+            f"{label} is written and appears in no relationship — D-1 requires a "
+            f"reader, not just a purpose")
+
+
+# What the control flow must be able to reach. `Route` and the call graph are
+# reached from their own layer (Route -> Page, Endpoint -> Method), not from a
+# transition, so they are deliberately absent.
+REACHED_FROM_TRANSITION = {
+    "Endpoint", "DeclaredOutcome", "ExceptionMapping",
+    "Parameter", "Field", "Class", "Check",
+}
+
+
+def test_the_control_flow_can_reach_its_own_evidence():
+    """D-14: provenance is an edge, not a property.
+
+    `source_episode_id` says which ingest produced an element and cannot say
+    which endpoint, outcome or field — so every fact a reviewer or a generator
+    needs must be reachable from the transition itself.
+    """
+    from_transition = {r.to_label for r in ALLOWED_RELATIONSHIPS
+                       if r.from_label == "Transition"}
+    missing = REACHED_FROM_TRANSITION - from_transition
+    assert not missing, f"a transition cannot reach {sorted(missing)}"
 
 
 def test_acceptance_criterion_can_store_its_s19_grade():
@@ -145,7 +242,7 @@ def test_episode_is_exempt_from_source_episode_id():
 
 
 def test_valid_node_passes():
-    assert validate("TestPath", {
+    assert validate("Scenario", {
         "id": "p1", "source_episode_id": "e1", "name": "path",
         "criterion": "all-transitions", "generator_version": "1",
     }).valid
@@ -180,14 +277,42 @@ def test_unknown_relationship_type_is_rejected():
     assert "closed" in result.errors[0]
 
 
-def test_only_two_wildcard_relationships_exist():
-    """Both are documented exceptions, not unenforced holes."""
-    assert set(wildcard_relationships()) == {"HAS_REVISION", "ABOUT"}
+def test_only_one_wildcard_relationship_exists():
+    """A documented exception, not an unenforced hole.
+
+    There were two. `HAS_REVISION` went with `Revision` when it was staged out:
+    a wildcard edge into a label nothing wrote is the widest possible hole in a
+    closed catalogue, and it was there to serve a temporal design that does not
+    exist yet.
+    """
+    assert set(wildcard_relationships()) == {"ABOUT"}
 
 
-def test_invokes_is_transition_to_transition():
-    """Spec M-5a: cross-surface invocation links two transitions."""
-    assert validate_relationship("Transition", "INVOKES", "Transition").valid
+def test_triggering_a_flow_and_observing_it_are_different_edges():
+    """Spec M-5a. One edge conflated two claims and the graph read as though the
+    two flows merged — a page *starts* an API call and then continues its own
+    flow, and a failing call frequently produces no UI transition at all."""
+    assert validate_relationship("UiAction", "TRIGGERS", "ApiCall").valid
+    assert validate_relationship("UiAction", "INVOKES", "ApiCall").valid
+    # Direction is part of the claim: an API call does not start a UI flow.
+    assert not validate_relationship("ApiCall", "TRIGGERS", "UiAction").valid
+    assert not validate_relationship("ApiCall", "INVOKES", "UiAction").valid
+
+
+def test_a_specialisation_narrows_its_parent_and_inherits_the_rest():
+    """`:ApiCall` rides alongside `:Transition`, never instead of it — which is
+    what lets the graph name the two surfaces while the engine keeps one
+    traversal and therefore one definition of a flow."""
+    base = {"id": "t", "source_episode_id": "e", "name": "n", "trigger": "GET /x",
+            "guard_expression": "", "implementation_status": "implemented"}
+    assert validate("ApiCall", {**base, "surface": "api"}).valid
+    assert validate("UiAction", {**base, "surface": "ui"}).valid
+    # The narrowing is real.
+    assert not validate("ApiCall", {**base, "surface": "ui"}).valid
+    # And the inheritance is real: an unguarded transition is normal, and
+    # forgetting to inherit `may_be_empty` would reject every one of them.
+    assert LABELS["ApiCall"].specialises == "Transition"
+    assert "guard_expression" in LABELS["ApiCall"].all_may_be_empty
 
 
 # --------------------------------------------------------------------------
@@ -267,3 +392,28 @@ if __name__ == "__main__":
             print(f"ERROR {t.__name__}: {type(e).__name__}: {e}")
     print(f"\n{len(tests) - failures}/{len(tests)} passed")
     sys.exit(1 if failures else 0)
+
+
+def test_episode_is_reachable_by_property_and_that_is_the_decision():
+    """`Episode` is in no relationship, which reads as a D-1 violation until you
+    see the property.
+
+    Every node carries `source_episode_id` — a baseline requirement — and it is
+    indexed on every non-exempt label, so "everything this ingestion produced"
+    is a lookup rather than a scan. An `Episode -[:PRODUCED]-> *` edge would be
+    one edge per node restating a fact the node already carries, and two
+    representations that can disagree.
+    """
+    from metis_mcp.ontology.labels import BASELINE_EXEMPT, BASELINE_REQUIRED
+    from metis_mcp.ontology.schema import constraints_cypher
+
+    assert "source_episode_id" in BASELINE_REQUIRED
+    assert "Episode" in BASELINE_EXEMPT
+
+    cypher = constraints_cypher()
+    for label in KNOWN_LABELS:
+        if label in BASELINE_EXEMPT:
+            continue
+        assert f"FOR (n:{label}) ON (n.source_episode_id)" in cypher, (
+            f"{label} does not index the provenance property, so reaching its "
+            f"Episode is a full scan")

@@ -89,8 +89,19 @@ def constraints_cypher(edition: str = COMMUNITY) -> str:
                          else f"// [enterprise-only] {statement}")
         # Every reviewable label gets a lifecycle index; labels that name it
         # explicitly must not get it twice.
+        # `source_episode_id` is indexed on every non-exempt label for the same
+        # reason `lifecycle_state` is: it is a baseline property that a real
+        # question filters on. "Everything this ingestion produced" was a full
+        # scan per label, which is why `Episode` looked like an orphan --
+        # reachable by no edge AND expensive to reach by property.
+        #
+        # An `Episode -[:PRODUCED]-> *` edge was the alternative and is worse:
+        # one edge per node, restating a fact the node already carries, and two
+        # representations that can disagree. This session has spent most of its
+        # time on exactly that class of defect.
         indexed = list(dict.fromkeys(
-            (*spec.indexed, *(() if label in BASELINE_EXEMPT else ("lifecycle_state",)))
+            (*spec.indexed, *(() if label in BASELINE_EXEMPT
+                              else ("lifecycle_state", "source_episode_id")))
         ))
         for prop in indexed:
             lines.append(

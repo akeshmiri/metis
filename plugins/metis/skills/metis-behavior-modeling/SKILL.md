@@ -1,47 +1,69 @@
 ---
 name: metis-behavior-modeling
-description: Check a proposed set of State/Transition/Guard/Trigger entities for determinism, completeness, and reachability (CONST-048/049) using Phase 8's real Cypher-based checks — surfaces ambiguous or incomplete state machines as Disputed rather than silently resolving them. Use when a user is defining or reviewing a state machine (lifecycle states, workflow transitions) and wants it checked for well-formedness before relying on it.
+description: Check a state machine for determinism, guard completeness, reachability and observability before anything is generated from it, and report unverifiable guards as the third outcome they are rather than as a pass. Use when a user is defining or reviewing states and transitions and wants them checked for well-formedness.
 ---
 
 # Métis behavior-modeling
 
-Wraps `metis_mcp/behavior_model.py`'s real, tested determinism/completeness/
-reachability checks (Phase 8) as a skill, per `PLAN.md` Phase 10's
-instruction to build "a behavior-modeling skill wrapping Phase 8's work."
-Follows `../shared/knowledge/anti-hallucination-protocol.md`'s RPI gates and
-Stage Confirmation Protocol — read that file once, not repeated here.
+Wraps stage 3 of the pipeline (`docs/metis-application-spec.md` §3.2), the one
+stage that **blocks on any failure** (M-18). Everything downstream — path
+generation, rendering, publication — assumes this ran and passed.
 
-**Standalone mode:** this reviews one Transition set (one `State` machine)
-per invocation — always pauses for confirmation between steps.
+## The four properties, from §2.6
 
-## Scope, disclosed
+| Check | Question | Failure means |
+|---|---|---|
+| **determinism** | does one interaction match two transitions? | the machine is ambiguous; a test cannot say which behaviour it exercised |
+| **guard completeness** | does some interaction match *no* transition? | a real input silently matches nothing — invisible anywhere in the graph |
+| **reachability** | is there a dead state, or a missing transition? | behaviour nobody can reach, or a gap in the walk |
+| **observability** | is each state distinguishable through the surface? | two "states" that no test can tell apart (M-3) |
 
-This skill checks well-formedness of a state machine's STRUCTURE (do two
-transitions genuinely conflict, is every state reachable, is every trigger
-handled) — real, deterministic graph algorithms, per §9's code-vs-LLM
-allocation.
+## The third outcome, which is the point
 
-**Update:** `REQ-METIS-BM-01`'s code-graph corroboration and
-`MicroRequirement` decomposition, both originally out of scope here, are
-now real and callable (see below) — no `ANTHROPIC_API_KEY` was ever set;
-the LLM piece goes through the `claude` CLI instead
-(`metis_mcp/llm_client.py`), and the code graph comes from a real AST-based
-CALLS/IMPORTS/INHERITS extraction pass (`cognify/code_graph_archaeology.py`).
+A guard this checker cannot parse is reported **`unverifiable`** — never assumed
+correct, and never merged into either of the other two. "This is wrong" and "this
+cannot be shown to be right" are different facts, and collapsing them is how an
+unparseable guard reads as a pass (M-17).
+
+`unverifiable` **blocks by default.** An operator who accepts the risk does so
+through `--allow-unverifiable`, which is recorded, not silent.
+
+## Command
+
+```
+python3 -m metis_mcp.mbt.cli validate <model.json>
+python3 -m metis_mcp.mbt.cli validate --journey <j> --surface <s>
+```
+
+Add `--allow-unverifiable` only when the user has explicitly accepted the risk,
+and say in the report that they did.
 
 ## Steps
 
-See `steps/01-research.md`, `steps/02-plan.md`, `steps/03-implementation.md`.
+`steps/01-research.md`, `steps/02-plan.md`, `steps/03-implementation.md`. Read
+`../shared/knowledge/anti-hallucination-protocol.md` once; its gates apply here.
 
-## Real functions this skill calls
+## Naming a technique when you report a gap
 
-- `metis_mcp.behavior_model.load_transition(...)` — lands the proposed
-  State/Transition/Guard/Trigger set into Neo4j.
-- `metis_mcp.behavior_model.check_determinism(session, state_id)` — per
-  `CONST-048`; marks conflicting Transitions `lifecycle_state='Disputed'`
-  with a specific `dispute_reason`, per `CONST-049`.
-- `metis_mcp.behavior_model.check_completeness(session)`
-- `metis_mcp.behavior_model.check_reachability(session, initial_state_id)`
-- `metis_mcp.behavior_model.corroborate_transition(session, transition_id, implementing_method_id, expected_callees)` —
-  `REQ-METIS-BM-01`, against the real CALLS graph.
-- `metis_mcp.microrequirement.decompose_requirement(text)` — real model
-  call, real cost per invocation; use deliberately, not in a loop.
+Guard completeness and boundary coverage are the same question asked twice, and
+the second phrasing is the one a tester acts on. `mbt/criteria.py` implements
+ISO/IEC/IEEE 29119-4's boundary value analysis and equivalence partitioning by
+name, and `mbt/dimensions.py` builds the equivalence classes — so when a guard
+turns on a range, a length or a count, say which technique the gap belongs to.
+`../shared/knowledge/test-techniques-reference.md` is the table to name it from.
+It is a vocabulary, not a checklist: do not run through it looking for
+techniques to apply.
+
+## What this skill must not do
+
+**Do not resolve an ambiguity for the user.** Two transitions on one trigger with
+overlapping guards is a real modelling decision — which one should win, or
+whether they should be one transition. Picking silently produces a machine that
+validates and does not describe the system. Report the conflicting pair with both
+guards verbatim and let a person choose.
+
+**Do not report a cross-surface model as ambiguous without saying what was not
+checked.** A UI transition can inherit its guard from the API transition it
+invokes (M-5c), so a UI model read alone looks ambiguous exactly where the API
+side determines it. If no `INVOKES` guards were supplied, the finding says so —
+carry that caveat into what you tell the user.

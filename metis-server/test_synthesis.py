@@ -6,7 +6,14 @@ Free to run: synthesis is pure.
 import sys
 
 from code_analysis.contract import Anchor, CheckFact, ExtractionReport, OutcomeFact
-from code_analysis.synthesis import INITIAL_STATE, state_name, synthesise
+from code_analysis.synthesis import (
+    INITIAL_STATE,
+    initial_state_for,
+    outcome_state_for,
+    response_body_for,
+    state_name,
+    synthesise,
+)
 
 COMMIT = "a3f21c"
 
@@ -37,35 +44,56 @@ def _outcome(endpoint, status, disc, checks=(), sense=""):
 # this aligned with packs/jvm-structural/query.sc.
 ENDPOINTS = [
     {"id": "e1", "http_method": "GET", "path": "/commit",
-     "handler_method_id": "h1", "anchor": "x"},
+     "handler_method_id": "h1", "handler_type": "CommitController",
+     "handler_name": "getAll", "response_body": "PageDto<CommitDto>", "anchor": "x"},
     {"id": "e2", "http_method": "GET", "path": "/commit/{id}",
-     "handler_method_id": "h2", "anchor": "x"},
+     "handler_method_id": "h2", "handler_type": "CommitController",
+     "handler_name": "getById", "response_body": "CommitDto", "anchor": "x"},
     {"id": "e3", "http_method": "GET", "path": "/repo",
-     "handler_method_id": "h3", "anchor": "x"},
+     "handler_method_id": "h3", "handler_type": "RepoController",
+     "handler_name": "search", "response_body": "RepoDto", "anchor": "x"},
 ]
 
 
-def test_the_fixture_matches_the_field_the_real_pack_emits():
-    """Guards the mismatch above: if the pack renames this field, these tests
-    must fail rather than keep passing against an imaginary shape."""
-    import json
+def test_the_fixture_matches_the_fields_the_real_pack_emits():
+    """Guards the mismatch above: if the pack renames a field, these tests must
+    fail rather than keep passing against an imaginary shape.
+
+    **This caught a real one.** When outcome states became per-endpoint, the
+    fixture still lacked `handler_type`/`handler_name`, so `outcome_state_for`
+    silently took its no-endpoint fallback and every test kept asserting the
+    OLD converged shape — green, against behaviour the pipeline no longer has.
+    Every field synthesis reads is listed here for that reason.
+    """
     import pathlib as _p
     pack = _p.Path("code_analysis/packs/jvm-structural/query.sc").read_text()
-    assert '"handler_method_id"' in pack
-    assert all("handler_method_id" in e for e in ENDPOINTS)
+    for emitted in ("handler_method_id", "handler_type", "handler_name",
+                    "response_body", "response_type", "validated"):
+        assert f'"{emitted}"' in pack, f"the pack no longer emits {emitted}"
+    for required in ("handler_method_id", "handler_type", "handler_name",
+                     "response_body"):
+        assert all(required in e for e in ENDPOINTS), f"fixture missing {required}"
 
 
 # --------------------------------------------------------------------------
-# M-2 / M-3 : outcome states are shared across endpoints
+# M-2 / M-3 : one outcome state per endpoint
 # --------------------------------------------------------------------------
 
-def test_the_same_response_condition_is_one_state_across_all_endpoints():
-    """For an API surface a state IS the observable response condition (M-2).
+def test_each_endpoints_outcome_is_its_own_state():
+    """**These used to converge on one `Ok200` per model, and that was wrong.**
 
-    204-with-no-body is indistinguishable to a client whichever endpoint produced
-    it, so all four converge on one node. Minting a per-endpoint state would
-    claim a distinction the caller cannot observe, which M-3 forbids -- and it
-    would hide that four endpoints share one behaviour.
+    The old reasoning was that a response is indistinguishable to a caller
+    whichever endpoint produced it. It is not: `GET /commit/{id}` returns a
+    `CommitDto` and `GET /commit` a `PageDto<CommitDto>` — 48 distinct body
+    types across athena's 91 endpoints — so merging them erased a difference the
+    surface really does expose, and a generated case could assert the status and
+    never the payload.
+
+    It holds even where two responses are byte-identical. A state is the
+    situation the system is left in, not the bytes on the wire: after
+    `POST /environment` an environment exists and after `POST /project` a project
+    does, both answering `ResponseEntity<Void>`, and a later GET tells them
+    apart.
     """
     check = CheckFact("c1", "t.isEmpty()", 1, _anchor())
     outcomes = []
@@ -77,20 +105,63 @@ def test_the_same_response_condition_is_one_state_across_all_endpoints():
     assert result.ok, result.errors
 
     model = result.model
-    assert set(model.states) == {INITIAL_STATE, "NoContent204", "Ok200"}, (
-        f"expected three shared states, got {sorted(model.states)}"
-    )
-    to_204 = [t for t in model.transitions.values() if t.target == "NoContent204"]
-    assert len(to_204) == 3, "every endpoint returning 204 targets the same node"
-    assert len({t.trigger for t in to_204}) == 3, "but each keeps its own trigger"
+    outcome_states = {sid for sid, st in model.states.items() if not st.is_initial}
+    assert outcome_states == {
+        "CommitGetAllOk200", "CommitGetAllNoContent204",
+        "CommitGetByIdOk200", "CommitGetByIdNoContent204",
+        "RepoSearchOk200", "RepoSearchNoContent204",
+    }, f"one outcome per endpoint, got {sorted(outcome_states)}"
+
+    to_204 = [t for t in model.transitions.values() if t.outcome_status == 204]
+    assert len({t.target for t in to_204}) == 3, "three endpoints, three 204 states"
 
 
-def test_state_naming_is_endpoint_independent():
-    """The name comes from status + helper, never from the route — which is what
-    makes sharing happen naturally rather than by a merge step."""
+def test_the_controller_prefix_is_what_keeps_two_endpoints_apart():
+    """`save`, `getById` and `getAll` recur in every controller in a service, so
+    the method name alone would fuse `RepoController.search`'s outcome with
+    `CommitController.search`'s — the same last-segment collision that
+    `resource_label` exists to avoid."""
+    assert outcome_state_for(
+        {"handler_type": "RepoController", "handler_name": "search"}, 200, "ok"
+    ) == "RepoSearchOk200"
+    assert outcome_state_for(
+        {"handler_type": "CommitController", "handler_name": "search"}, 200, "ok"
+    ) == "CommitSearchOk200"
+
+
+def test_an_unrecovered_handler_falls_back_to_the_status_alone():
+    """Fail-closed: no handler facts means no endpoint-specific name to give it,
+    and inventing one would name a state after a guess."""
+    assert outcome_state_for(None, 200, "ok") == "Ok200"
+    assert outcome_state_for({}, 204, "noContent") == "NoContent204"
+
+
+def test_the_status_label_still_comes_from_the_code_convention():
+    """X-7 tier 2 — the response helper's own name, never the route."""
     assert state_name(204, "noContent") == "NoContent204"
     assert state_name(200, "ok") == "Ok200"
     assert state_name(201, "created") == "Created201"
+
+
+# --------------------------------------------------------------------------
+# The expected response — what a test asserts once it has the status
+# --------------------------------------------------------------------------
+
+def test_the_declared_response_body_rides_on_the_transition():
+    outcomes = [_outcome("h2::GET", 200, "ok")]
+    model = synthesise(_behaviour(outcomes), ENDPOINTS, journey="g").model
+    assert [t.response_body for t in model.transitions.values()] == ["CommitDto"]
+
+
+def test_a_bodyless_status_carries_no_body_whatever_the_signature_declares():
+    """`getById` declares `ResponseEntity<CommitDto>`; its 204 branch sends
+    nothing. Copying the declared type onto the 204 would tell a generated test
+    to assert a `CommitDto` the caller never receives — wrong, not vague."""
+    outcomes = [_outcome("h2::GET", 204, "noContent")]
+    model = synthesise(_behaviour(outcomes), ENDPOINTS, journey="g").model
+    assert [t.response_body for t in model.transitions.values()] == [""]
+    assert response_body_for(204, "CommitDto") == ""
+    assert response_body_for(200, "CommitDto") == "CommitDto"
 
 
 def test_transitions_stay_distinct_even_when_they_share_a_target():
@@ -100,6 +171,8 @@ def test_transitions_stay_distinct_even_when_they_share_a_target():
     model = synthesise(_behaviour(outcomes, [check]), ENDPOINTS, journey="g").model
     assert len(model.transitions) == 2, "shared target must not collapse two transitions"
     assert {t.trigger for t in model.transitions.values()} == {"GET /commit", "GET /commit/{id}"}
+    assert len({t.target for t in model.transitions.values()}) == 2, (
+        "and each lands in its own outcome state")
 
 
 # --------------------------------------------------------------------------
@@ -111,9 +184,9 @@ def test_guard_sense_produces_the_negation():
     outcomes = [_outcome("h1::GET", 204, "noContent", ("c1",), sense=""),
                 _outcome("h1::GET", 200, "ok", ("c1",), sense="!")]
     model = synthesise(_behaviour(outcomes, [check]), ENDPOINTS, journey="g").model
-    guards = {t.target: t.guard for t in model.transitions.values()}
-    assert guards["NoContent204"] == "t.isEmpty()"
-    assert guards["Ok200"] == "NOT (t.isEmpty())"
+    guards = {t.outcome_status: t.guard for t in model.transitions.values()}
+    assert guards[204] == "t.isEmpty()"
+    assert guards[200] == "NOT (t.isEmpty())"
 
 
 def test_an_unguarded_outcome_is_reported_not_invented():
@@ -138,25 +211,41 @@ def test_no_outcomes_names_the_likely_cause():
 def test_declared_versus_constructed_is_triage_not_a_defect_claim():
     """A status declared but not constructed in the handler is most often a
     framework exception handler elsewhere — claiming a defect would manufacture
-    one out of a recovery limitation."""
+    one out of a recovery limitation.
+
+    The 204 below is the case: a declared 2xx nothing built is a recovery gap
+    (the response helper is outside the analysis unit), not a user path. The 400
+    in the same declaration IS a user path and is modelled — see
+    `test_negative_outcomes.py` — so it is deliberately absent from this
+    finding's "not recovered" list, which would otherwise contradict the
+    transition standing beside it.
+    """
     check = CheckFact("c1", "t.isEmpty()", 1, _anchor())
     outcomes = [
         _outcome("h1::POST", 201, "created", ("c1",)),
         OutcomeFact("d1", "h1::POST", "400/declared", 400, "declared",
                     (), "", "declared", _anchor()),
-        OutcomeFact("d2", "h1::POST", "201/declared", 201, "declared",
+        OutcomeFact("d2", "h1::POST", "204/declared", 204, "declared",
+                    (), "", "declared", _anchor()),
+        OutcomeFact("d3", "h1::POST", "201/declared", 201, "declared",
                     (), "", "declared", _anchor()),
     ]
     result = synthesise(_behaviour(outcomes, [check]), ENDPOINTS, journey="g")
-    assert result.findings
-    finding = result.findings[0]
-    assert "Needs triage" in finding
-    assert "exception handler" in finding
-    assert "disagree" not in finding, "must not assert a contradiction it cannot establish"
+    triage = [f for f in result.findings if "Needs triage" in f]
+    assert len(triage) == 1
+    assert "exception handler" in triage[0]
+    assert "Not recovered: [204]" in triage[0], "the 400 was recovered, as a path"
+    assert "disagree" not in triage[0], "must not assert a contradiction it cannot establish"
 
 
-def test_declared_outcomes_do_not_become_transitions():
-    """Declared statuses are evidence, not behaviour this pack recovered."""
+def test_a_declared_success_does_not_become_a_transition():
+    """A declared 2xx that nothing constructed is a *recovery* gap (O-2c).
+
+    Modelling it would claim the pack found a success it did not find. A declared
+    **rejection** is the opposite case — a real user path the handler delegates to
+    an exception handler — and `test_negative_outcomes.py` pins that it IS
+    modelled.
+    """
     outcomes = [OutcomeFact("d1", "h1::GET", "200/declared", 200, "declared",
                             (), "", "declared", _anchor())]
     result = synthesise(_behaviour(outcomes), ENDPOINTS, journey="g")
@@ -167,19 +256,37 @@ def test_declared_outcomes_do_not_become_transitions():
 # Shape
 # --------------------------------------------------------------------------
 
-def test_every_transition_starts_at_the_initial_state():
-    """The synthesised API model is a one-hop star: Ready -> outcome.
+def test_every_transition_starts_at_its_own_resource_state():
+    """The endpoint is the cluster: the HTTP calls on a resource leave its node.
 
-    Honest consequence: every generated path has zero setup, so path *chaining*
-    is not exercised by this model shape. A resource lifecycle would exercise it,
-    but deriving one needs REST-convention inference, which §5.8 excludes.
+    One `Ready` carrying every transition in the model was not a cluster, it was
+    a hairball — 43 edges on a single node in the tms service. Keyed on the
+    resource rather than the exact path, so `/commit` and `/commit/{id}` share a
+    node: they are one resource reached two ways, and splitting them would put a
+    reader in a different cluster from its own creator.
     """
     check = CheckFact("c1", "t.isEmpty()", 1, _anchor())
     outcomes = [_outcome("h1::GET", 204, "noContent", ("c1",)),
                 _outcome("h2::GET", 200, "ok", ("c1",), sense="!")]
     model = synthesise(_behaviour(outcomes, [check]), ENDPOINTS, journey="g").model
-    assert all(t.source == INITIAL_STATE for t in model.transitions.values())
-    assert model.states[INITIAL_STATE].is_initial
+
+    for t in model.transitions.values():
+        assert model.states[t.source].is_initial, "paths start here (P-8)"
+        assert t.source == initial_state_for(t.trigger)
+    assert INITIAL_STATE not in model.states, (
+        "the synthetic fallback is for an UNRESOLVED path only; these resolve")
+
+
+def test_an_unresolved_path_falls_back_rather_than_naming_a_state_after_nothing():
+    """T-9d. `__unresolved__` is a recovery failure, not a resource — deriving a
+    state name from it would mint a node named after a marker."""
+    outcomes = [_outcome("hx::GET", 200, "ok")]
+    model = synthesise(_behaviour(outcomes), [
+        {"id": "hx::GET", "http_method": "GET", "path": "__unresolved__",
+         "handler_method_id": "hx", "parameters": [], "security": [],
+         "anchor": {"file": "X.java", "line": 1, "commit": "sha"}},
+    ], journey="g").model
+    assert [t.source for t in model.transitions.values()] == [INITIAL_STATE]
 
 
 def test_elements_land_at_quarantine():

@@ -121,10 +121,25 @@ def test_transition_query_walks_when_then():
 
 
 def test_invokes_query_is_cross_surface():
-    assert "-[:INVOKES]->" in INVOKES_CYPHER
+    assert ":INVOKES]->" in INVOKES_CYPHER
     assert "$surface" not in INVOKES_CYPHER, (
         "INVOKES spans two surfaces and must not be filtered to one"
     )
+
+
+def test_only_confirmed_invokes_are_honoured():
+    """M-5g / F-7: a proposal is visible, and behaves like nothing until decided.
+
+    An `INVOKES` edge may be stored unconfirmed so a reviewer can see and decide
+    it. Without this filter the stored proposal would lend its guard to a UI
+    transition and credit cross-surface coverage — a machine guess raising a
+    coverage number, which is exactly what "proposed, never asserted" forbids.
+    """
+    from metis_mcp.mbt.graph_loader import INHERITED_GUARDS_CYPHER
+
+    for query in (INVOKES_CYPHER, INHERITED_GUARDS_CYPHER):
+        assert "confirmed_by" in query, (
+            "an unconfirmed proposal must not behave like a confirmed match")
 
 
 # --------------------------------------------------------------------------

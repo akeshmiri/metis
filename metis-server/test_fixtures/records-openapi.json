@@ -1,0 +1,73 @@
+{
+  "openapi": "3.0.3",
+  "info": {"title": "Records API", "version": "2.4.1"},
+  "security": [{"bearerAuth": []}],
+  "components": {
+    "securitySchemes": {"bearerAuth": {"type": "http", "scheme": "bearer"}},
+    "schemas": {
+      "RecordDto": {
+        "type": "object",
+        "required": ["title", "ownerId"],
+        "properties": {
+          "id":      {"type": "integer", "format": "int64"},
+          "title":   {"type": "string", "maxLength": 120, "minLength": 1},
+          "state":   {"type": "string", "enum": ["Draft", "Active", "Archived"]},
+          "ownerId": {"type": "integer", "format": "int64", "nullable": false}
+        }
+      },
+      "ErrorDto": {
+        "type": "object",
+        "properties": {"message": {"type": "string"}, "code": {"type": "string"}}
+      }
+    }
+  },
+  "paths": {
+    "/record/{id}": {
+      "parameters": [
+        {"name": "id", "in": "path", "required": true,
+         "schema": {"type": "integer", "format": "int64", "minimum": 1}}
+      ],
+      "get": {
+        "operationId": "getRecordById",
+        "tags": ["Records"],
+        "parameters": [
+          {"name": "expand", "in": "query", "required": false,
+           "schema": {"type": "string", "enum": ["owner", "attachments"]}},
+          {"name": "session", "in": "cookie",
+           "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {"description": "the record",
+                  "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RecordDto"}}}},
+          "404": {"description": "no such record",
+                  "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorDto"}}}}
+        }
+      },
+      "delete": {
+        "operationId": "archiveRecord",
+        "tags": ["Records"],
+        "security": [{"bearerAuth": ["records:admin"]}],
+        "responses": {
+          "204": {"description": "archived"},
+          "403": {"description": "caller is not an admin"},
+          "404": {"description": "no such record"}
+        }
+      }
+    },
+    "/record": {
+      "post": {
+        "operationId": "createRecord",
+        "tags": ["Records"],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RecordDto"}}}
+        },
+        "responses": {
+          "201": {"description": "created",
+                  "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RecordDto"}}}},
+          "400": {"description": "payload failed validation"}
+        }
+      }
+    }
+  }
+}

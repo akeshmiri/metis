@@ -1,42 +1,56 @@
 # Step 2 — Plan (P)
 
-**Scope Lock (carried from Step 1):** the same one state machine.
+**Scope Lock (carried from Step 1):** the same one `<journey>`-`<surface>`
+model. A cross-surface question is a second model and a second run.
 
 ## Actions
 
-1. For every source State in the set, call
-   `check_determinism(session, state_id)`. Any finding means two real
-   Transitions share a Trigger with guards that provably overlap (or
-   couldn't be verified as exclusive) — per `CONST-049`, this is
-   **surfaced, never silently resolved**. Do not pick which of the two
-   conflicting Transitions is "probably right."
-2. Call `check_completeness(session)` once for the whole set. Every
-   `(state_id, trigger_id)` gap is a real, specific missing case — report
-   each one by name, not just "the state machine is incomplete"
-   (`AF-002`'s specific-reason requirement applies here too).
-3. Call `check_reachability(session, initial_state_id)`. Every unreachable
-   state is either a real design error or genuinely dead specification —
-   ask the user which, don't assume.
-4. Form the recommendation: **Well-formed** (no findings across all three
-   checks) or **Needs resolution**, listing every specific finding from
-   steps 1-3 the user must resolve before treating this state machine as
-   reliable.
+1. **Run all four checks in one command.** They are one gate, not four, and
+   running them together is what makes the output comparable between runs.
+   ```
+   python3 -m metis_mcp.mbt.cli validate --journey <j> --surface <s>
+   python3 -m metis_mcp.mbt.cli validate <model.json>
+   ```
+
+2. **Sort the findings by severity, and keep the three apart.**
+
+   | Severity | Means | What you do with it |
+   |---|---|---|
+   | `blocking` | this is wrong | generation is blocked (M-18); name the elements |
+   | `unverifiable` | this cannot be *shown* to be right | report as its own outcome — never as a pass, never as a failure (M-17) |
+   | `advisory` | neither | report, do not gate on it |
+
+   Quote each finding's `detail` verbatim. "3 problems" is not something anybody
+   can act on, which is why `require_valid` prints the findings and not a count.
+
+3. **For a determinism finding, quote both guards.** The finding names the
+   conflicting pair. Which one should win — or whether they are one transition —
+   is a modelling decision, and picking silently produces a machine that
+   validates and does not describe the system.
+
+4. **For a guard-completeness finding, name the input that matches nothing.**
+   This is the check worth the most: an interaction matching no transition is
+   silent everywhere, including in the graph.
+
+5. **Form the recommendation.** *Well-formed* only when there is no `blocking`
+   and no `unverifiable` finding. A model with unverifiable findings is
+   **not** well-formed — it is unproven, and saying so is the whole point of the
+   third outcome.
 
 ## Confidence tagging
-All three checks' outputs are `VERIFIED` — real Cypher/graph-algorithm
-results, not inference. The recommendation itself is `VERIFIED` if it's a
-direct summary of those outputs; don't add speculative commentary about
-"what the user probably intended" here.
+
+Every finding is `VERIFIED` — it is the checker's real output, not inference.
+The recommendation is `VERIFIED` when it is a direct summary of those findings.
+Do not add commentary about what the author probably meant.
 
 ## Drift check
-Confirm every finding cited actually belongs to this locked state machine
-(check the `source_episode_id`/set membership), not a stale finding from a
-previous session's different state machine still sitting in the graph.
 
-## Stage Confirmation
-```
-[C]ontinue to Implementation
-[R]eview this stage in detail
-[B]ack to Research
-[X]it
-```
+Confirm the findings belong to the model you locked in Step 1 — check the model
+id in the output header, not just the journey you typed. A stale `.review.json`
+overlay is refused rather than applied (E-8), and that refusal is itself a real
+finding to report.
+
+## Output of this stage
+
+Every finding, grouped by the three severities and never merged, each quoted
+verbatim with its elements; and one recommendation. Nothing inferred.

@@ -378,7 +378,8 @@ def test_persist_calls_the_session_once_per_link():
             self.calls.append(params)
 
     session = FakeSession()
-    assert persist_invokes(session, _links()) == 3
+    written, unmatched = persist_invokes(session, _links())
+    assert written == 3 and not unmatched
     assert len(session.calls) == 3
     assert {c["api_id"] for c in session.calls} == {"a-ok", "a-bad", "a-locked"}
 

@@ -4,10 +4,25 @@ Stakeholder specification generation (application spec §18; A-59..A-62).
 Stakeholders should not have to read a model to understand a feature. §9's review
 UI serves operators; this serves everyone else.
 
-**SP-1 -- generated, never authored.** A journey specification is a *rendering* of
-the model, not a second source of truth. The same discipline as test-case
-rendering (T-7), for the same reason: two authorities on one fact diverge, and the
-one people read is rarely the one people maintain.
+**SP-1 -- generated, then edited, and the split is explicit.** A journey
+specification is a rendering of the model's *structure* -- which transitions
+exist, their status, their evidence -- and that half is regenerated every run. Its
+*language* is the other half: a person may rewrite any Given/When/Then into the
+business's own words, and regeneration must not overwrite them.
+
+`name_tier` and `guard_tier` are what make that safe without diffing prose. A
+wording at tier `ac_vocabulary` came from a confirmed acceptance criterion and is
+rendered verbatim; one at `code_convention` was decoded from code and is
+regenerated. The tier IS the machine/human split, the same one
+`identity.carry_human_facts` applies to the graph.
+
+**SP-1a -- the document is re-readable.** Every rule carries a stable
+`AC-<id>` heading matching `spec_kit._AC_HEADING`, and the transition id it came
+from. Without the heading a generated spec parsed back to *zero* criteria, so the
+loop -- code to model to spec to edited spec to model -- was open at its first
+joint. The id is derived from the transition's natural key, never an ordinal:
+athena's 16 positional `AC-4.1` sub-ids are the standing example of what an
+ordinal costs, because inserting one rule shifts every id after it.
 
 **SP-3 -- the model is already Given/When/Then.** `State -[:WHEN]-> Transition
 -[:THEN]-> State` renders almost mechanically, which is why this module needs no
@@ -36,8 +51,37 @@ from metis_mcp.mbt.model import (
     REJECTED,
     Model,
 )
+import hashlib
+
+from metis_mcp.identity import short, transition_key
 from metis_mcp.mbt.validation import ValidationResult
 from metis_mcp.rendering.test_case import humanise
+
+# Wording a person authored, via a confirmed acceptance criterion. Rendered
+# verbatim rather than regenerated -- see SP-1.
+TIER_HUMAN_WORDING = "ac_vocabulary"
+
+
+def wording_fingerprint(given: str, when: str, and_guard: str, then: str) -> str:
+    """A hash over the four clauses, stamped into the document.
+
+    **This is how an edit becomes visible without needing the model.** S-19 says
+    a criterion is documentation "until a person edits or affirms one", so an
+    edit has to be detectable -- and the landing path reads files, not the
+    graph, so it cannot re-derive what the generator would have produced.
+
+    Stamping the fingerprint makes the document self-describing: recompute it
+    from the clauses as they now read, compare with what was stamped, and a
+    difference means a human changed the words. Deterministic, and it needs
+    nothing but the file.
+
+    Over the clauses ALONE -- not the whole block. A lifecycle mark or a
+    `Validated by:` line changes as the graph changes and is not a person
+    rewriting the behaviour, so including them would report an edit on every
+    regeneration.
+    """
+    basis = "|".join(part.strip() for part in (given, when, and_guard, then))
+    return hashlib.sha256(basis.encode()).hexdigest()[:12]
 
 SPEC_VERSION = "metis.journey-specification/1"
 
@@ -57,9 +101,17 @@ class Rule:
     """One transition, as Given/When/Then (spec SP-3)."""
 
     transition_id: str
+    # `AC-<stable id>`. Derived from the transition's natural key so it survives
+    # a rule being inserted above it, a guard being edited, and the document
+    # being regenerated -- which is what lets a human edit this block and have
+    # the edit still match its transition on the way back in.
+    criterion_id: str
     given: str
     when: str
     and_guard: str
+    # The condition as recovered, kept beside the sentence. T-5: the verbatim
+    # form stays authoritative even where the prose reads cleanly.
+    guard_verbatim: str
     then: str
     lifecycle_state: str
     implementation_status: str
@@ -70,10 +122,26 @@ class Rule:
         return self.lifecycle_state == APPROVED
 
     @property
-    def heading(self) -> str:
+    def wording_fingerprint(self) -> str:
+        """Stamped into the block so a later edit to these clauses is visible."""
+        return wording_fingerprint(self.given, self.when, self.and_guard, self.then)
+
+    @property
+    def title(self) -> str:
         """A readable label for this rule: what happens, not which id."""
         when = self.when.removeprefix("they ").strip()
-        return f"{when} → {self.then.removeprefix('they are ').strip()}"
+        then = self.then.removeprefix("they are ").strip()
+        return f"{when} → {then}"
+
+    @property
+    def heading(self) -> str:
+        """`AC-<id>: <what happens>` — the form `spec_kit` can read back.
+
+        The behaviour stays in the heading, because a stakeholder reads this and
+        an element id printed as a section title tells them nothing (SP-1). The
+        id is a prefix, not a replacement.
+        """
+        return f"{self.criterion_id}: {self.title}"
 
     @property
     def mark(self) -> str:
@@ -114,6 +182,25 @@ class Specification:
     def is_fully_settled(self) -> bool:
         return self.unsettled == 0
 
+    @property
+    def content_hash(self) -> str:
+        """Content-derived (D-8), and deliberately **excludes** `generated_at`.
+
+        Landing this document must be idempotent: re-rendering an unchanged
+        model has to MERGE onto the same node with the same values. Hashing the
+        rendered body instead would fold the timestamp in and make every run a
+        new document, which is the opposite of what D-8 asks for.
+        """
+        parts = [self.model_id, self.journey, self.model_version, self.commit]
+        for s in sorted(self.situations, key=lambda x: x.state_id):
+            parts.append(f"S|{s.state_id}|{s.name}|{s.surface}|{s.is_initial}|"
+                         f"{s.lifecycle_state}|{s.observable_as}")
+        for r in sorted(self.rules, key=lambda x: x.criterion_id):
+            parts.append(f"R|{r.criterion_id}|{r.transition_id}|{r.given}|{r.when}|"
+                         f"{r.and_guard}|{r.then}|{r.lifecycle_state}|"
+                         f"{r.implementation_status}")
+        return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
+
 
 # A note against a tempting "improvement": `humanise` splits on `_`, `-` and `.`
 # but leaves CamelCase alone, so `LoggedOut` renders verbatim rather than as
@@ -132,6 +219,74 @@ def _observable_as(name: str, surface: str) -> str:
     if surface == "api":
         return f"the response condition {humanise(name)!r}"
     return f"the screen or message {humanise(name)!r}"
+
+
+def criterion_id_for(model: Model, transition) -> str:
+    """`AC-<stable short id>` from the transition's natural key.
+
+    Never an ordinal. `spec_kit` mints `AC-4.1`, `AC-4.2` positionally for
+    multi-rule blocks, and 16 of athena's 66 criteria sit on that: insert a rule
+    and every id after it shifts, changing the node id and orphaning its
+    approval. The natural key moves only when the behaviour itself does, which
+    is exactly when a criterion *should* be treated as new.
+    """
+    return f"AC-{short(transition_key(model.id, transition, model))[:8]}"
+
+
+def _given_clause(state) -> str:
+    """What must be true to start — in business language where the model has it.
+
+    `state.condition` is set by the M-6 unfolding pass ("no metric exists") and
+    says what the situation IS. The state's name says only what it is *called*,
+    and for a code-derived name that is `MetricGetActionByIdNoContent204`.
+    """
+    if state is None:
+        return "the starting situation is not recorded"
+    condition = (getattr(state, "condition", "") or "").strip()
+    if condition:
+        return condition
+    return f"the user is {humanise(state.name)}"
+
+
+def _then_clause(transition, target) -> str:
+    """What the caller observes — status and body, not the target's node name.
+
+    `they are MetricGetActionByIdNoContent204` is the code's vocabulary in the
+    one position a stakeholder is most likely to read. The status and the
+    response body are the observable result (M-2/M-3), and both are on the model.
+    """
+    status = getattr(transition, "outcome_status", None)
+    body = (getattr(transition, "response_body", "") or "").strip()
+    if status is None:
+        return f"they are {humanise(target.name) if target else transition.target}"
+    if body:
+        return f"{body} is returned ({status})"
+    # Empty body is a FACT, not missing information -- `ResponseEntity<Void>` and
+    # a 204 both genuinely return nothing.
+    return f"nothing is returned ({status}, no body)"
+
+
+def _human_authored(transition) -> bool:
+    """Whether this transition's wording came from a person (SP-1).
+
+    `guard_tier` is `ac_vocabulary` only where a **confirmed** acceptance
+    criterion supplied the words. Regenerating over those would silently revert
+    someone's editing on the next run, which is the one failure that would make
+    "generate once, then maintain the spec" unusable.
+    """
+    return getattr(transition, "guard_tier", "") == TIER_HUMAN_WORDING
+
+
+def _and_clause(transition) -> str:
+    """The precondition, in business language, with the raw guard kept as evidence.
+
+    `guard_wording` is decoded from conventions the model already committed to
+    ("the payload is invalid"), or is a person's own words where a confirmed
+    criterion supplied them. The raw `guard` stays in the block below it: T-5
+    says the verbatim condition is the authoritative statement, and this changes
+    which one is the *sentence*, not which one is authoritative.
+    """
+    return (getattr(transition, "guard_wording", "") or "").strip()
 
 
 def build(model: Model, *, journey: str = "",
@@ -170,10 +325,12 @@ def build(model: Model, *, journey: str = "",
         target = model.states.get(t.target)
         rule = Rule(
             transition_id=tid,
-            given=f"the user is {humanise(source.name) if source else t.source}",
+            criterion_id=criterion_id_for(model, t),
+            given=_given_clause(source),
             when=f"they {humanise(t.trigger).lower()}",
-            and_guard=t.guard,
-            then=f"they are {humanise(target.name) if target else t.target}",
+            and_guard=_and_clause(t) or t.guard,
+            guard_verbatim=t.guard,
+            then=_then_clause(t, target),
             lifecycle_state=t.lifecycle_state,
             implementation_status=t.implementation_status,
             acceptance_criteria=tuple(criteria.get(tid, ())),
@@ -218,15 +375,28 @@ def _rule_block(rule: Rule) -> list[str]:
     lines.append(f"**Given** {rule.given}")
     lines.append(f"**When** {rule.when}")
     if rule.and_guard:
-        # T-5's discipline applied to documents: the verbatim condition is the
-        # authoritative statement, and is shown even where prose reads cleanly.
-        lines.append(f"**And** the condition `{rule.and_guard}` holds")
+        # Where no business wording exists the raw condition IS the clause, and
+        # it stays in backticks — it is a code expression, and setting it as
+        # prose would present `credentials_valid AND NOT account_locked` as
+        # though a person had written it that way.
+        if rule.and_guard == rule.guard_verbatim:
+            lines.append(f"**And** the condition `{rule.and_guard}` holds")
+        else:
+            lines.append(f"**And** {rule.and_guard}")
     lines.append(f"**Then** {rule.then}")
+    if rule.guard_verbatim and rule.guard_verbatim != rule.and_guard:
+        # T-5: the recovered condition stays visible and authoritative. What
+        # changed is which of the two is the *sentence* — a stakeholder reads
+        # "the payload is invalid", and the reviewer checking it can still see
+        # `NOT (payload_valid)` is what the code actually evaluates.
+        lines.append("")
+        lines.append(f"<sub>condition as recovered: `{rule.guard_verbatim}`</sub>")
     if rule.acceptance_criteria:
         lines.append("")
         lines.append("Validated by: " + ", ".join(rule.acceptance_criteria))
     lines.append("")
     lines.append(f"<sub>`{rule.transition_id}`</sub>")
+    lines.append(f"<sub>wording: {rule.wording_fingerprint}</sub>")
     return lines
 
 

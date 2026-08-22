@@ -1,0 +1,78 @@
+{
+  "glossary_version": "metis.glossary/1",
+  "areas": [
+    {"id": "platform-core", "name": "Platform core",
+     "description": "The nouns every other area is scoped by: who is acting, which project, which environment, which version."},
+    {"id": "delivery", "name": "Delivery",
+     "description": "What was built and where it runs — source, pipelines, containers, published contracts."},
+    {"id": "quality", "name": "Quality",
+     "description": "What was tested, when, and how it performed."}
+  ],
+  "entities": [
+    {"id": "project", "name": "project", "area": "platform-core",
+     "description": "A unit of work everything else is reported against.",
+     "impact": ["Deleting a project orphans every version, item and execution scoped to it."],
+     "properties": [{"name": "code", "meaning": "short unique handle used in URLs and imports"}]},
+
+    {"id": "environment", "name": "environment", "area": "platform-core",
+     "description": "A named deployment target a version can be observed in.",
+     "impact": ["Metrics and executions are only comparable within one environment."],
+     "properties": [{"name": "name", "meaning": "the deployment target's handle"}]},
+
+    {"id": "version", "name": "version", "area": "platform-core",
+     "description": "A released state of a project that results can be attributed to.",
+     "impact": ["Attributing a result to the wrong version makes a trend meaningless."]},
+
+    {"id": "user", "name": "user", "area": "platform-core",
+     "description": "The person or service account a recorded action is attributed to.",
+     "impact": ["An action with no user cannot be audited."]},
+
+    {"id": "repository", "name": "repository", "area": "delivery",
+     "description": "A source repository whose commits are tracked against a project.",
+     "impact": ["Removing a repository breaks the commit-to-version attribution chain."]},
+
+    {"id": "commit", "name": "commit", "area": "delivery",
+     "description": "One recorded change in a repository.",
+     "impact": ["A commit is immutable; correcting one means recording another."],
+     "properties": [{"name": "sha", "meaning": "the immutable content identifier"}]},
+
+    {"id": "pipeline", "name": "pipeline", "area": "delivery",
+     "description": "A defined sequence of automated steps that builds or verifies a project.",
+     "impact": ["Changing a pipeline definition changes what every later execution means."]},
+
+    {"id": "pipeline-execution", "name": "pipeline execution", "area": "delivery",
+     "description": "One run of a pipeline, with its status and timings.",
+     "impact": ["A run's status is the evidence a version was buildable at a point in time."],
+     "properties": [{"name": "status", "meaning": "how the run ended",
+                     "values": ["running", "passed", "failed", "aborted"]}]},
+
+    {"id": "pod", "name": "pod", "area": "delivery",
+     "description": "A running container group observed in a Kubernetes cluster.",
+     "impact": ["Pod state is observed, never authored: it reflects the cluster, so it can disagree with what was deployed."]},
+
+    {"id": "api-spec", "name": "api spec", "area": "delivery",
+     "description": "A published contract document a service declares itself by.",
+     "impact": ["A spec that drifts from the running service invalidates every claim derived from it."],
+     "properties": [{"name": "freshness", "meaning": "how recently the document was re-read from the service"}]},
+
+    {"id": "test-item", "name": "test item", "area": "quality",
+     "description": "One thing to be verified, at whatever granularity the team records it.",
+     "impact": ["Changing an item's meaning silently changes what every past execution of it proved."],
+     "properties": [{"name": "priority", "meaning": "how urgently a failure must be acted on"},
+                    {"name": "status", "meaning": "where the item is in its own lifecycle"}]},
+
+    {"id": "test-cycle", "name": "test cycle", "area": "quality",
+     "description": "A bounded set of test items run together against one version.",
+     "impact": ["Reopening a closed cycle changes a result somebody has already reported on."]},
+
+    {"id": "test-execution", "name": "test execution", "area": "quality",
+     "description": "One attempt at one test item, with its outcome.",
+     "impact": ["An execution is the only evidence an item ever passed."],
+     "properties": [{"name": "status", "meaning": "the recorded outcome",
+                     "values": ["passed", "failed", "blocked", "skipped"]}]},
+
+    {"id": "metric", "name": "metric", "area": "quality",
+     "description": "A recorded performance measurement attributable to a version and environment.",
+     "impact": ["A metric without both a version and an environment cannot be compared to any other."]}
+  ]
+}

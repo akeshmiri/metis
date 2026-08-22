@@ -1,21 +1,11 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ printf "%s-connector-manifests" .Release.Name | trunc 63 | trimSuffix "-" }}
-  labels:
-    {{- include "metis.labels" (dict "Release" .Release "Chart" .Chart) | nindent 4 }}
-data:
-  {{- range $path, $bytes := .Files.Glob "files/connectors/*.json" }}
-  {{ base $path }}: |
-    {{- $.Files.Get $path | nindent 4 }}
-  {{- end }}
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ printf "%s-adversarial-corpus" .Release.Name | trunc 63 | trimSuffix "-" }}
-  labels:
-    {{- include "metis.labels" (dict "Release" .Release "Chart" .Chart) | nindent 4 }}
-data:
-  adversarial-injection-corpus.json: |
-    {{- .Files.Get "files/metis-adversarial-injection-corpus.json" | nindent 4 }}
+{{/*
+  The connector-manifests and adversarial-corpus ConfigMaps were removed with
+  the components that mounted them (ingestion-worker and
+  guardrail-corpus-runner). Both belonged to the v1 ingestion and guardrail
+  stack, which the rebuild replaced; a ConfigMap nothing mounts is shipped
+  weight that reads like a live feature.
+
+  The mcp-server's configuration arrives through the metis-config secret
+  (see secrets.yaml) and METIS_HOME, which stays the deployment's source of
+  truth. Nothing else needs a ConfigMap yet — add one here when something does.
+*/}}

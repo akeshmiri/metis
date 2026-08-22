@@ -1,0 +1,76 @@
+# The gate that would have caught every packaging defect in the 0.1.0 review.
+#
+# The suite needs no services and finishes in under ten seconds, so there is no
+# reason for any of this to be run by hand. The three regeneration checks exist
+# because drift here has already happened once: a set of agent files carrying a
+# "GENERATED — do not hand-edit" banner named twelve tools that did not exist.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: metis-server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv venv
+      - run: uv pip install -e '.[test]'
+
+      - name: Test suite
+        run: uv run python -m pytest -q
+
+      # The Cypher schema is generated from ontology/labels.py. A hand-edit is
+      # drift, and drift between the two is unfixable once anything has been
+      # landed against the wrong constraints.
+      - name: Generated schema is current
+        run: |
+          uv run python -m metis_mcp.ontology.schema --write
+          git diff --exit-code -- schema/
+
+      # Agent surfaces are generated from the skills' own frontmatter, for two
+      # clients. Regenerating must be a no-op.
+      - name: Generated agent surfaces are current
+        run: |
+          uv run python -c 'from metis_mcp.agent_generator import write; [print(p) for p in write()]'
+          git diff --exit-code -- ../.github/agents ../plugins/metis/agents
+
+  # The wheel is built, installed into an interpreter that has never seen this
+  # source tree, and the console script's imports are resolved. `pyproject.toml`
+  # once shipped four modules and none of the twelve subpackages; an editable
+  # install resolves by path and hid it completely.
+  wheel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Build
+        run: pip wheel --no-deps -w dist/ ./metis-server
+
+      - name: Install into a clean interpreter and resolve the entry point
+        run: |
+          python -m venv /tmp/clean
+          /tmp/clean/bin/pip install dist/*.whl
+          /tmp/clean/bin/python - <<'PY'
+          from metis_mcp.server import main
+          import metis_mcp.mbt.graph_loader
+          import metis_mcp.ontology.labels
+          import metis_mcp.workflow.stages
+          import code_analysis.openapi
+          assert main.__module__ == "metis_mcp.server"
+          print("entry point resolves; every subpackage imports")
+          PY
+
+      - name: The unused v1 dependencies stay gone
+        run: |
+          if /tmp/clean/bin/pip list --format=freeze | grep -iE '^(psycopg|pillow|lxml|python-pptx|markdown)'; then
+            echo "a dependency with no importer was reintroduced"; exit 1
+          fi

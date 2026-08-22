@@ -466,3 +466,32 @@ if __name__ == "__main__":
             print(f"ERROR {t.__name__}: {type(e).__name__}: {e}")
     print(f"\n{len(tests) - failures}/{len(tests)} passed")
     sys.exit(1 if failures else 0)
+
+
+def test_landing_applies_the_override_log():
+    """§17 makes a human edit a layered fact, and `load_model` applies the log
+    for every file-based command — but `land` read the raw source and dropped
+    them.
+
+    The failure was silent and complete: a guard recorded with `override edit`
+    validated clean on the file, `land` reported "Landed 22 nodes", and the
+    graph got the transition with an empty guard. M-18 then blocked generation
+    for a defect that had already been corrected.
+    """
+    import pathlib
+    import re
+
+    from metis_mcp.mbt import cli
+
+    source = pathlib.Path(cli.__file__).read_text()
+    block = source[source.index("def cmd_land("):]
+    block = block[:block.index("\ndef ")]
+    assert "OverrideLog.load" in block, (
+        "cmd_land does not read the override log — human edits will not reach "
+        "the graph"
+    )
+    assert "apply_overrides" in block, (
+        "cmd_land reads the log but never applies it"
+    )
+    # And it says so, rather than applying edits invisibly.
+    assert re.search(r"applied .*override", block)

@@ -40,3 +40,15 @@ htmlcov/
 .claude/scheduled_tasks.lock
 .claude/settings.local.json
 *.work
+
+# Workflow run records — runtime state, not source. A halted run is durable on
+# the machine that started it; committing one would replay another machine's
+# position and its input fingerprints.
+metis-server/.metis/runs/
+
+# Publication baselines — the same argument. `<model>.published.json` records
+# what THIS deployment last published, written only after a successful
+# publication (drift.record_generation). Committing one would tell another
+# machine that cases were published which never left it, and three-way drift
+# would then read a real manual edit as unchanged.
+*.published.json

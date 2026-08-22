@@ -21,7 +21,7 @@ import json
 import sys
 from pathlib import Path as FsPath
 
-from metis_mcp.mbt.coverage import build_ledger, format_report
+from metis_mcp.mbt.coverage import ComponentRef, build_ledger, format_report
 from metis_mcp.mbt.criteria import DEFAULT_CRITERION, criterion_names
 from metis_mcp.mbt.model import QUARANTINE, Model, State, Transition
 from metis_mcp.mbt.path_generation import DEFAULT_SETUP_CAP, generate
@@ -51,9 +51,11 @@ from metis_mcp.review.state import (
     OverlayResult, ReviewState, default_state_path, overlay, record, summarise,
     source_fingerprint,
 )
-from metis_mcp.mbt.graph_loader import load_from_graph, load_inherited_guards
+from metis_mcp.mbt.graph_loader import (
+    load_component, load_from_graph, load_inherited_guards, load_validating_criteria,
+)
 from metis_mcp.mbt.graph_session import GraphNotConfigured, session
-from metis_mcp.mbt.graph_writer import persist, plan_persist
+from metis_mcp.mbt.graph_writer import GENERATOR_VERSION, persist, plan_persist
 from metis_mcp.model_sources import availability, get as get_source, land, plan_landing
 from metis_mcp.specgen import build as build_spec, dated_export, living_page
 from metis_mcp.specgen import writeback as spec_writeback
@@ -100,6 +102,14 @@ def read_source(path: str) -> Model:
             guard=t.get("guard", ""),
             implementation_status=t.get("implementation_status", "implemented"),
             lifecycle_state=QUARANTINE,
+            # Carried across the file boundary. Dropping unknown keys here meant
+            # a model written by extraction and read back lost everything the
+            # pack had recovered about what a caller must send.
+            outcome_status=t.get("outcome_status"),
+            guard_anchor=t.get("guard_anchor", ""),
+            source_state_unresolved=bool(t.get("source_state_unresolved", False)),
+            inputs=tuple(t.get("inputs", ()) or ()),
+            security=tuple(t.get("security", ()) or ()),
         )
         for t in data["transitions"]
     }
@@ -180,7 +190,7 @@ def _require_approved(model: Model) -> None:
 
 
 CRITERIA_CYPHER = """
-MATCH (a:AcceptanceCriterion)-[:VALIDATES]->(t:Transition)
+MATCH (a:AcceptanceCriterion)-[:VALIDATES]->(t:Transition|ApiCall|UiAction)
 WHERE $journey IN t.functional_areas
 RETURN t.id AS transition, a.id AS criterion_id, a.text AS text
 """
@@ -200,7 +210,7 @@ def _criteria_from_graph(args) -> dict[str, tuple[str, str]]:
 
 PROPOSERS_CYPHER = """
 MATCH (n)
-WHERE ($journey IN n.functional_areas) AND (n:State OR n:Transition)
+WHERE ($journey IN n.functional_areas) AND (n:State OR n:Transition OR n:ApiCall OR n:UiAction)
 MATCH (e:Episode {id: n.source_episode_id})
 RETURN n.id AS element_id, e.proposed_by AS proposed_by
 """
@@ -225,6 +235,74 @@ def _proposers_from_graph(args) -> dict[str, str]:
         return {}
 
 
+GRAPH_CRITERIA_CYPHER = """
+MATCH (a:AcceptanceCriterion)-[:VALIDATES]->(t:Transition|ApiCall|UiAction)
+WHERE $journey IN t.functional_areas
+RETURN DISTINCT a.id AS id, a.text AS text,
+       coalesce(a.provenance, 'code_derived') AS provenance
+"""
+
+
+def _graph_confirmed(args) -> list:
+    """The `VALIDATES` edges, as the confirmed matches they are (spec X-18).
+
+    A `VALIDATES` edge exists only because a human confirmed the match, so it is
+    precisely what `reconcile` means by `confirmed`. Passing an empty list
+    instead -- which this verb did -- made every already-matched criterion report
+    as *unimplemented* and every already-covered transition as *unspecified*: a
+    report that contradicted the graph it was reading from, in the alarming
+    direction.
+    """
+    from metis_mcp.reconciliation.matching import ConfirmedMatch
+
+    if not getattr(args, "journey", None):
+        return []
+    try:
+        with session(getattr(args, "uri", None), getattr(args, "user", None)) as s:
+            return [ConfirmedMatch(
+                        ac_id=r["ac_id"], transition_id=r["transition_id"],
+                        confirmed_by=r["confirmed_by"] or "unknown",
+                        provenance=r["provenance"])
+                    for r in s.run(GRAPH_CONFIRMED_CYPHER, journey=args.journey)]
+    except GraphNotConfigured:
+        return []
+
+
+GRAPH_CONFIRMED_CYPHER = """
+MATCH (a:AcceptanceCriterion)-[v:VALIDATES]->(t:Transition|ApiCall|UiAction)
+WHERE $journey IN t.functional_areas
+RETURN a.id AS ac_id, t.id AS transition_id,
+       coalesce(v.confirmed_by, '') AS confirmed_by,
+       coalesce(a.provenance, 'code_derived') AS provenance
+"""
+
+
+def _graph_criteria(args) -> list:
+    """Acceptance criteria for this journey, carrying their S-19 grade.
+
+    **Scoped through `VALIDATES`, and that is a real limitation worth stating.**
+    An `AcceptanceCriterion` records no journey or functional area of its own, so
+    the only link between a criterion and a scope is a confirmed match to a
+    transition in it. That means this returns the criteria already matched and
+    cannot see one that belongs to this journey but has never been linked --
+    exactly the "criteria with no transition" direction F-4 asks about.
+
+    Reporting the limit is the honest option. The alternative -- returning every
+    criterion in the graph -- would have reconciled all 66 of the pilot estate's
+    criteria against one six-transition service and called 60 of them
+    unimplemented, which is a fabricated finding, not a wider search.
+    """
+    if not getattr(args, "journey", None):
+        return []
+    try:
+        with session(getattr(args, "uri", None), getattr(args, "user", None)) as s:
+            return [AcceptanceCriterion(id=r["id"], text=r["text"] or "",
+                                        provenance=r["provenance"])
+                    for r in s.run(GRAPH_CRITERIA_CYPHER, journey=args.journey)]
+    except GraphNotConfigured:
+        return []
+
+
 def _inherited_from_graph(args) -> dict[str, str] | None:
     """Guards a UI model borrows across INVOKES (M-5c).
 
@@ -239,6 +317,49 @@ def _inherited_from_graph(args) -> dict[str, str] | None:
             return load_inherited_guards(s, args.journey)
     except GraphNotConfigured:
         return None
+
+
+def _coverage_context(args) -> tuple[ComponentRef | None, dict[str, list[str]] | None]:
+    """P-16's version, and the criteria a coverage figure is about.
+
+    Two sources, in the order the caller actually knows them:
+
+      * `--journey` reads the real `Component` and the real `VALIDATES` edges
+        from the graph;
+      * a file-based run has neither, so `--commit`/`--version` name the version
+        explicitly and there are no criteria to load.
+
+    Returns `(None, None)` when neither is available. That is a reported state,
+    not a swallowed one -- `format_report` prints "not recorded for this run"
+    rather than a figure that quietly names no version.
+    """
+    if getattr(args, "journey", None):
+        try:
+            with session(getattr(args, "uri", None), getattr(args, "user", None)) as s:
+                surface = getattr(args, "surface", "api")
+                return (load_component(s, args.journey, surface),
+                        load_validating_criteria(s, args.journey, surface))
+        except GraphNotConfigured:
+            return None, None
+
+    commit = getattr(args, "commit", "") or ""
+    version = getattr(args, "version", "") or ""
+    if not commit and not version:
+        return None, None
+    model_id = getattr(args, "model", "") or ""
+    return ComponentRef(
+        id=f"cli:{model_id}:{commit or version}",
+        component=FsPath(model_id).stem if model_id else "model",
+        version=str(version),
+        commit_sha=str(commit),
+    ), None
+
+
+def _ledger(args, model: Model, result, test_case_ids: dict[str, str] | None = None):
+    """A ledger that always knows what P-16 asks it to state."""
+    component, criteria = _coverage_context(args)
+    return build_ledger(model, result, test_case_ids,
+                        component=component, validating_criteria=criteria)
 
 
 def _load_from_graph(args) -> Model:
@@ -357,8 +478,15 @@ def cmd_publish(args) -> int:
     print(format_batch(batch))
 
     if not args.confirm:
+        # The scope as it was actually given. `args.model` is None when
+        # publishing from the graph (`--journey/--surface`), and interpolating
+        # it printed `publish None --confirm publish` -- an instruction that
+        # fails if a reader copies it, which is the only reason this line
+        # exists.
+        scope = (args.model if args.model
+                 else f"--journey {args.journey} --surface {args.surface}")
         print("\nNothing was sent. Re-run with:")
-        print(f"  ... publish {args.model} --confirm {AFFIRMATIVE} "
+        print(f"  ... publish {scope} --confirm {AFFIRMATIVE} "
               f"--batch-size {batch.size} --as <your-identity>")
         return 0
 
@@ -407,7 +535,7 @@ def cmd_spec(args) -> int:
         # Not gated on approval: an unapproved model simply yields no paths, and
         # saying so is more useful to a reviewer than refusing to render at all.
         result = generate(model, DEFAULT_CRITERION, DEFAULT_SETUP_CAP)
-        summary = build_ledger(model, result).summary()
+        summary = _ledger(args, model, result).summary()
         total = summary["covered"] + summary["uncovered"]
         coverage = (f"{summary['covered']} of {total} transitions covered under the "
                     f"`{summary['criterion']}` criterion "
@@ -458,6 +586,54 @@ def cmd_spec(args) -> int:
             return 1
         for path in result["written"]:
             print(f"  wrote {path}")
+        return 0
+
+    if args.land:
+        # F-12: the graph is the interface consumers query. A specification that
+        # exists only as a file has to be re-rendered by everyone who wants it
+        # and cannot carry an edge to the behaviour it describes.
+        from metis_mcp.mbt.graph_loader import load_component
+        from metis_mcp.model_sources.landing import land
+        from metis_mcp.specgen.documents import plan_spec_document
+
+        journey = args.journey or spec.journey
+        with session(args.uri, args.user) as s:
+            component = load_component(s, journey, args.surface)
+            if component is None:
+                # P-16's absence, said plainly. A document DESCRIBING a component
+                # that was never persisted would be an edge to nothing.
+                print(f"REFUSED: no Component for {journey}-{args.surface}. "
+                      f"Run `persist` first — a specification describes a "
+                      f"component version, and none has been recorded (P-16).")
+                return 1
+            doc_plan = plan_spec_document(
+                spec, component.id, args.episode, document.body, spec.content_hash)
+            if not doc_plan.is_legal:
+                print(f"REFUSED: {len(doc_plan.errors)} validation error(s) — "
+                      f"nothing was written. First: {doc_plan.errors[0]}")
+                return 1
+            outcome = land(s, doc_plan)
+        if not outcome.ok:
+            print(f"REFUSED: {outcome.refused}")
+            return 1
+        print(f"Landed the specification: {outcome.nodes_written} node(s), "
+              f"{outcome.edges_written} edge(s)")
+        print(f"  document:  specdoc-{spec.model_id}")
+        print(f"  describes: {component.id}")
+        # From the plan, not from `len(spec.rules)`. A rule renders whether or
+        # not a real AcceptanceCriterion validates its transition, so the two
+        # numbers differ and only one of them is a fact about the graph.
+        cited = sum(1 for e in doc_plan.edges if e.rel_type == "CITES")
+        print(f"  cites:     {cited} acceptance criterion/criteria "
+              f"(of {len(spec.rules)} rules rendered)")
+        print("  lifecycle: Quarantine — generated is not agreed (S-4)")
+        if outcome.unmatched:
+            print(f"\n  UNMATCHED — {len(outcome.unmatched)} edge group(s) planned "
+                  f"but not written:")
+            for group, shortfall, why in outcome.unmatched:
+                print(f"    {group}: {shortfall}")
+                print(f"        {why}")
+            return 1
         return 0
 
     if args.out:
@@ -556,16 +732,35 @@ def cmd_reconcile(args) -> int:
                 id=entry["id"], text=entry["text"],
                 functional_areas=tuple(entry.get("functional_areas", ())),
                 requirement_id=entry.get("requirement_id")))
+    elif getattr(args, "journey", None):
+        # The criteria already in the graph, with the grade they carry. Reading
+        # them was previously impossible from this verb -- it accepted only a
+        # file -- so reconciling what had actually been landed and reviewed meant
+        # exporting it to JSON by hand first. The grade matters: S-19 makes a
+        # match against a code_derived criterion documentation agreeing with
+        # itself, and dropping the grade here would silently promote it.
+        criteria = _graph_criteria(args)
 
     if not criteria:
-        print("No acceptance criteria supplied — nothing to reconcile against.\n"
+        where = ("nothing in the graph for this journey" if getattr(args, "journey", None)
+                 else "none supplied")
+        print(f"No acceptance criteria to reconcile against — {where}.\n"
               "S-3: a deployment running only code extraction gets coverage, not\n"
-              "correctness. Pass --criteria <file.json> to compare against intent.")
+              "correctness. Pass --criteria <file.json>, or land criteria for this\n"
+              "journey, to compare against intent.")
         return 0
 
     routes = {tid: model.transitions[tid].trigger.split()[-1]
               for tid in model.transition_ids() if model.transitions[tid].trigger}
-    print(format_reconciliation(reconcile(model, criteria, confirmed=[])))
+    confirmed = [] if args.criteria else _graph_confirmed(args)
+    print(format_reconciliation(reconcile(model, criteria, confirmed=confirmed)))
+    if not args.criteria and getattr(args, "journey", None):
+        # F-10: say what this view cannot see, rather than letting its silence
+        # read as "there is nothing there".
+        print("\n  NOTE: criteria were read from the graph, where the only link to a\n"
+              "  journey is a confirmed VALIDATES match. A criterion that belongs to\n"
+              "  this journey but has never been matched is INVISIBLE here, so the\n"
+              "  'no transition' direction is incomplete from this source (F-4).")
     print()
     print("Pre-filter candidates (evidence, NOT a verdict — X-17):")
     for ac in criteria[:8]:
@@ -640,7 +835,7 @@ def cmd_report(args) -> int:
     model, result = _generate(args)
     rendered = render(model, result.paths)
     ids = {c.target_key: c.id for c in rendered.cases}
-    print(format_report(build_ledger(model, result, ids)))
+    print(format_report(_ledger(args, model, result, ids)))
     return 0
 
 
@@ -741,7 +936,7 @@ def _write_lifecycle_to_graph(args, model) -> None:
             s.run("MATCH (n:State {id:$i}) SET n.lifecycle_state=$l, n.name=$n",
                   i=sid, l=state.lifecycle_state, n=state.name)
         for tid, transition in model.transitions.items():
-            s.run("MATCH (n:Transition {id:$i}) SET n.lifecycle_state=$l",
+            s.run("MATCH (n:Transition|ApiCall|UiAction {id:$i}) SET n.lifecycle_state=$l",
                   i=tid, l=transition.lifecycle_state)
 
 
@@ -779,6 +974,86 @@ def _write_criteria_to_graph(args, applied) -> int:
     return len(promotions)
 
 
+def _promote_tier_one(args, model) -> tuple[int, int, int]:
+    """X-7 tier 1, applied to everything a criterion can speak for.
+
+    Runs after a review is applied, because that is the moment the confirmed
+    matches and the reviewer's edits are both current. Landing produces tier 2 --
+    the code's own vocabulary, decoded and rearranged -- and this is the only
+    step that can raise an element to the domain's language, and only where a
+    person confirmed the match (X-9, X-18).
+
+    **It used to promote transition names and nothing else**, so
+    `propose_from_criteria` and `conflicts` had no callers at all: a criterion's
+    Then clause never reached the state it describes, its When clause never
+    reached the guard, and two criteria naming one state in different words were
+    resolved by whichever happened to be written last.
+
+    Returns `(transitions, states, conflicts)`.
+    """
+    from metis_mcp.mbt.naming import (
+        TIER_AC_VOCABULARY,
+        conflicts,
+        guard_wording_from_criterion,
+        propose_from_criteria,
+        split_criterion,
+        transition_display_name,
+    )
+
+    criteria = _criteria_from_graph(args)
+    if not criteria:
+        return 0, 0, 0
+
+    confirmed = {}
+    for tid, (cid, text) in criteria.items():
+        when, then = split_criterion(text or "")
+        if when and then:
+            confirmed[tid] = (cid, when, then)
+
+    proposals = propose_from_criteria(model, confirmed)
+    clashes = conflicts(proposals)
+    if clashes:
+        # S-10: two criteria describing one state in different words disagree
+        # about what that state IS. Reported and left alone -- picking one
+        # silently is how a real disagreement becomes invisible.
+        print(f"\n  {len(clashes)} element(s) have competing names from different "
+              f"criteria — left unchanged for a human to settle (X-10, S-10):")
+        for element_id, competing in sorted(clashes.items()):
+            names = " | ".join(sorted({p.proposed_name for p in competing}))
+            print(f"    {element_id}: {names}")
+
+    state_names = {p.element_id: p.proposed_name for p in proposals
+                   if p.kind == "state" and p.element_id not in clashes}
+
+    transitions = states = 0
+    with session(args.uri, args.user) as s:
+        for tid, (_cid, text) in criteria.items():
+            transition = model.transitions.get(tid)
+            if transition is None or not text:
+                continue
+            name = transition_display_name(transition, model.states,
+                                           criterion_text=text)
+            if not name or tid in clashes:
+                continue
+            # The raw `guard_expression` is deliberately untouched: it is the
+            # anchored fact, and the criterion is a second source about the same
+            # behaviour rather than a correction to it (§4.4).
+            s.run("MATCH (n:Transition|ApiCall|UiAction {id:$i}) "
+                  "SET n.name=$n, n.name_tier=$tier, "
+                  "    n.guard_wording=coalesce($w, n.guard_wording), "
+                  "    n.guard_tier=CASE WHEN $w IS NULL THEN n.guard_tier ELSE $tier END",
+                  i=tid, n=name, tier=TIER_AC_VOCABULARY,
+                  w=guard_wording_from_criterion(text) or None)
+            transitions += 1
+
+        for element_id, proposed in sorted(state_names.items()):
+            s.run("MATCH (n:State {id:$i}) SET n.name=$n, n.name_tier=$tier",
+                  i=element_id, n=proposed, tier=TIER_AC_VOCABULARY)
+            states += 1
+
+    return transitions, states, len(clashes)
+
+
 def cmd_review_export(args) -> int:
     if getattr(args, "journey", None):
         model = _load_from_graph(args)
@@ -790,7 +1065,13 @@ def cmd_review_export(args) -> int:
             FsPath(args.out).write_text(text)
             print(f"Wrote {args.out} — {len(review.items)} item(s) awaiting a decision.")
             print("Set 'reviewer', choose approve/reject/defer per item, then:")
-            print(f"  python3 -m metis_mcp.mbt.cli review apply --journey {args.journey} {args.out}")
+            # `--surface` is not optional here even though it has a default:
+            # the export is scoped to one surface, `apply` defaults to `api`,
+            # and omitting it made the printed command refuse with "review file
+            # is for model 'athena-git-ui', not 'athena-git-api'". An
+            # instruction the tool tells you to run has to run.
+            print(f"  python3 -m metis_mcp.mbt.cli review apply "
+                  f"--journey {args.journey} --surface {args.surface} {args.out}")
         else:
             print(text)
         return 0
@@ -846,12 +1127,18 @@ def cmd_review_apply(args) -> int:
     if graph_mode:
         _write_lifecycle_to_graph(args, model)
         promoted = _write_criteria_to_graph(args, result.applied)
+        renamed, restated, clashing = _promote_tier_one(args, model)
         outstanding = model.unapproved_elements()
         print(f"\nGraph updated — {model.id}: "
               f"{'approved' if not outstanding else f'{len(outstanding)} still outstanding'}")
         if promoted:
             print(f"  {promoted} criterion/criteria promoted to "
                   f"{HUMAN_CONFIRMED} — now readable from the graph (S-19)")
+        if renamed or restated:
+            print(f"  {renamed} transition(s) and {restated} state(s) raised to the "
+                  f"acceptance criteria's own words (X-7 tier 1)")
+        if clashing:
+            print(f"  {clashing} left at tier 2 pending a human decision")
         return 0 if result.applied or not result.refused else 1
 
     # Human facts go to the review-state file. The model source is never written
@@ -867,6 +1154,84 @@ def cmd_review_apply(args) -> int:
     print(f"  {model.id}: "
           f"{'approved' if not outstanding else f'{len(outstanding)} element(s) still outstanding'}")
     return 0 if result.applied or not result.refused else 1
+
+
+def cmd_workflow_list(args) -> int:
+    """What workflows exist, and where each one stops for a human."""
+    from metis_mcp.workflow import format_lint, format_workflows, lint_all
+
+    print(format_workflows())
+    errors = lint_all()
+    if errors:
+        print()
+        print(format_lint(errors))
+        return 1
+    return 0
+
+
+def _workflow_context(args):
+    """Build the run context, loading a model only when one is already available.
+
+    `model-build` starts by extracting, so at the start of that run there is
+    nothing to load and that is not an error. Every other workflow needs an
+    existing model, and a missing one is reported by the stage that wanted it
+    rather than guessed at here.
+    """
+    from metis_mcp.workflow import Context
+
+    context = Context(workflow=args.workflow, scope=args.scope, args=args,
+                      allow_unverifiable=getattr(args, "allow_unverifiable", False))
+    if getattr(args, "journey", None):
+        try:
+            context.model = _load_from_graph(args)
+            context.inherited = _inherited_from_graph(args)
+            context.criteria = _graph_criteria(args)
+            context.confirmed = _graph_confirmed(args)
+        except GraphNotConfigured:
+            context.model = None
+    elif getattr(args, "model", None):
+        context.model = _load(args)
+    return context
+
+
+def _run_workflow(args, resume: bool) -> int:
+    from metis_mcp.workflow import EXIT_HALTED, format_run, get as get_workflow, run
+
+    workflow = get_workflow(args.workflow)
+    if workflow is None:
+        from metis_mcp.workflow import WORKFLOWS
+        print(f"unknown workflow {args.workflow!r}. Known: "
+              f"{', '.join(sorted(WORKFLOWS))}")
+        return 1
+
+    outcome = run(workflow, _workflow_context(args), resume=resume)
+    print(format_run(outcome.record))
+    if outcome.exit_code == EXIT_HALTED:
+        # Distinct from failure on purpose: "a human has not decided yet" is the
+        # designed outcome of a gate, not a broken pipeline (F-8).
+        print(f"\n  exit {EXIT_HALTED}: blocked on a human decision, not a failure.")
+    elif outcome.exit_code:
+        print(f"\nFAILED: {outcome.message}")
+    return outcome.exit_code
+
+
+def cmd_workflow_run(args) -> int:
+    return _run_workflow(args, resume=False)
+
+
+def cmd_workflow_resume(args) -> int:
+    return _run_workflow(args, resume=True)
+
+
+def cmd_workflow_status(args) -> int:
+    from metis_mcp.workflow import RunRecord, format_run, run_path
+
+    record = RunRecord.load(run_path(args.run_id))
+    if record is None:
+        print(f"no run {args.run_id!r} (looked in {run_path(args.run_id)})")
+        return 1
+    print(format_run(record))
+    return 0
 
 
 def cmd_sources(args) -> int:
@@ -887,6 +1252,25 @@ def cmd_land(args) -> int:
         print(f"BLOCKED: source {args.source!r} is unavailable — {source.why_unavailable()}")
         return 2
     result = source.produce(path=args.model, author=args.author)
+
+    # **Human edits have to survive the graph boundary.** §17 makes an override a
+    # layered fact rather than a mutation, and `load_model` applies the log for
+    # every file-based command -- but landing read the raw source and dropped
+    # them. So a correction recorded with `override edit` validated clean on the
+    # file, reported "Landed N nodes", and reached the graph without the edit:
+    # the guard was still empty and M-18 still blocked generation.
+    #
+    # Applied here, on the produced model, so the same three-owner split holds
+    # (I-14, E-1): the source is machine facts, the log is human edits, and
+    # re-extraction replaces the first without touching the second.
+    if args.model:
+        log = OverrideLog.load(
+            FsPath(args.overrides) if getattr(args, "overrides", None)
+            else default_log_path(args.model))
+        if log.entries:
+            result.model = apply_overrides(result.model, log).model
+            print(f"  applied {len(log.entries)} override(s) from "
+                  f"{default_log_path(args.model).name}")
     for element_id, reason in result.skipped:
         print(f"  skipped {element_id}: {reason}")
 
@@ -906,6 +1290,65 @@ def cmd_land(args) -> int:
     print(f"  episode:   {outcome.episode_id}")
     print("  lifecycle: Quarantine — authoring is not approving (spec S-4)")
     print(f"  next:      review export --journey {args.journey} --surface {args.surface}")
+    return 0
+
+
+def cmd_findings_land(args) -> int:
+    """Validation findings and cross-surface divergences -> :Finding in the graph.
+
+    Spec §8.2/F-12: the graph is the interface to consumers, so a divergence that
+    exists only in this command's stdout has to be re-derived by everyone who
+    wants it and cannot be linked to the element it concerns. Every writer this
+    needed already existed and nothing called any of them.
+
+    Lands at `Quarantine` like every other source (S-4). A finding is evidence
+    for a decision, never the decision.
+    """
+    from metis_mcp.mbt.finding_writer import (
+        from_divergences, from_validation, load, plan_load,
+    )
+
+    model = _load(args)
+    result = validate(model, inherited=_inherited_from_graph(args))
+    records = from_validation(result, model)
+
+    if args.divergence_against:
+        counterpart = read_source(args.divergence_against)
+        ui, api = ((model, counterpart) if args.surface == "ui"
+                   else (counterpart, model))
+        found = divergences(ui, api, LinkSet(journey=args.journey or ""))
+        records += from_divergences(found, model)
+
+    if not records:
+        print("No findings — nothing to land.")
+        return 0
+
+    plan = plan_load(
+        model, journey=args.journey or model.id, surface=args.surface,
+        version=args.version, commit=args.commit or "", episode=args.episode,
+        findings=records, run_id=args.run_id, engine=GENERATOR_VERSION,
+        source_fingerprint=source_fingerprint(model),
+    )
+    with session(args.uri, args.user) as s:
+        written = load(s, plan)
+
+    print(f"Landed {written['findings']} findings "
+          f"({written['about']} attached to their element), "
+          f"{written['versions']} component version, {written['runs']} run")
+    print(f"  contains:  {written['contains']} of "
+          f"{len(model.states) + len(model.transitions)} elements")
+    print("  lifecycle: Quarantine — a finding is evidence, not a decision (S-4)")
+    # A Finding whose ABOUT edge did not attach is in the graph and unreachable
+    # from the thing it is about. That is worse than not landing it, so it is
+    # reported as a failure rather than folded into the count above.
+    if written["unmatched"]:
+        print(f"\n  UNMATCHED — {len(written['unmatched'])} statement(s) matched "
+              f"no node:")
+        for item in written["unmatched"][:8]:
+            print(f"    {item}")
+        print("        the element was never landed, or its id is not namespaced "
+              "as {model_id}::{element_id}")
+        return 1
     return 0
 
 
@@ -933,7 +1376,703 @@ def cmd_persist(args) -> int:
         return 1
     print(f"Persisted {outcome.nodes_written} nodes, {outcome.edges_written} edges "
           f"({len(result.paths)} paths, {len(rendered.cases)} cases)")
+    # These counts now come back from Cypher, so they can disagree with the plan
+    # -- and when they do, that difference is the whole finding. A broken
+    # traceability chain reports as two stages that both "succeeded".
+    if outcome.unmatched:
+        print(f"\n  UNMATCHED — {len(outcome.unmatched)} edge group(s) planned but "
+              f"not written:")
+        for group, shortfall, why in outcome.unmatched:
+            print(f"    {group}: {shortfall}")
+            print(f"        {why}")
+        return 1
     return 0
+
+
+# ---------------------------------------------------------------------------
+# knowledge — the knowledge-centre file (§4.5, §4.6; S-13, S-19)
+# ---------------------------------------------------------------------------
+
+def _read_knowledge(path: str):
+    from metis_mcp.model_sources.knowledge import KnowledgeFileRefused, load
+    try:
+        return load(path), ""
+    except (OSError, ValueError, KnowledgeFileRefused) as e:
+        return None, f"{path}: {e}"
+
+
+def cmd_knowledge_check(args) -> int:
+    """Is this file atomic, parseable and grounded? Free: no graph, no model call."""
+    from metis_mcp.model_sources.knowledge import format_problems
+    from metis_mcp.model_sources.knowledge import validate as validate_knowledge
+
+    knowledge, refused = _read_knowledge(args.knowledge)
+    if knowledge is None:
+        print(f"REFUSED: {refused}")
+        return 1
+    problems = validate_knowledge(knowledge)
+    print(format_problems(problems, knowledge))
+    return 1 if problems else 0
+
+
+def cmd_knowledge_compare(args) -> int:
+    """Already specified, contradicting, or new (I-5, I-8) — reported separately.
+
+    Read-only. Nothing is written: this is what a person sees *before* deciding
+    to land anything, and the three answers are never merged into one figure
+    (F-5) because they have different causes and go to different people.
+    """
+    from metis_mcp.identity.matching import ADDED, MODIFIED, REMOVED, UNCHANGED, diff
+    from metis_mcp.model_sources.knowledge import format_problems, to_criteria
+    from metis_mcp.model_sources.knowledge import validate as validate_knowledge
+
+    knowledge, refused = _read_knowledge(args.knowledge)
+    if knowledge is None:
+        print(f"REFUSED: {refused}")
+        return 1
+
+    problems = validate_knowledge(knowledge)
+    if problems:
+        print(format_problems(problems, knowledge))
+        return 1
+
+    source = get_source("ac-mined")
+    try:
+        candidate = source.produce(
+            criteria=to_criteria(knowledge), model_id=knowledge.model_id,
+            surface=knowledge.surface,
+            initial_state=knowledge.initial_state or None).model
+    except ValueError as e:
+        print(f"REFUSED: {e}")
+        return 1
+
+    journey = args.journey or knowledge.model_id.rpartition("-")[0] or knowledge.model_id
+    surface = args.surface or knowledge.surface
+    try:
+        with session(args.uri, args.user) as s:
+            previous = load_from_graph(s, journey, surface).model
+    except GraphNotConfigured as e:
+        print(f"REFUSED: {e}")
+        return 1
+
+    delta = diff(previous, candidate)
+    counts = delta.summary
+
+    print(f"Knowledge — {knowledge.model_id} against {journey}-{surface}")
+    print(f"  already in the model: {counts[UNCHANGED]}")
+    print(f"  contradicting:        {counts[MODIFIED]}")
+    print(f"  new:                  {counts[ADDED]}")
+    if counts[REMOVED]:
+        # Never called "removed". A knowledge file is partial by nature (§4.5);
+        # what it does not mention, it does not propose to delete.
+        print(f"  untouched by this statement: {counts[REMOVED]}")
+    print()
+
+    for change in delta.of(MODIFIED):
+        print(f"  CONTRADICTION  {change.kind} {change.element_id}")
+        print(f"      {change.detail}")
+    for change in delta.of(ADDED):
+        print(f"  NEW            {change.kind} {change.element_id}")
+
+    if counts[MODIFIED]:
+        print()
+        print("  A contradiction is the finding, not an obstacle. Neither side wins")
+        print("  automatically (S-10): the model may be recording a defect, or the")
+        print("  statement may be out of date. A person decides, at G1.")
+    print()
+    print("  Nothing was written. To propose these:")
+    print(f"    ... workflow run knowledge-capture --scope {journey} "
+          f"--knowledge {args.knowledge} --journey {journey} --surface {surface}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# feature — the specification as Gherkin (§18; one Requirement, one Feature)
+# ---------------------------------------------------------------------------
+
+def _read_glossary(path: str):
+    from metis_mcp.model_sources.glossary import GlossaryRefused, load, validate
+    if not path:
+        return None, ""
+    try:
+        glossary = load(path)
+    except (OSError, ValueError, GlossaryRefused) as e:
+        return None, f"{path}: {e}"
+    problems = validate(glossary)
+    if problems:
+        return None, f"{path}: {len(problems)} problem(s); first: {problems[0].describe()}"
+    return glossary, ""
+
+
+def cmd_feature_render(args) -> int:
+    """One Requirement, one Feature; one AcceptanceCriterion, one Scenario."""
+    from metis_mcp.model_sources.knowledge import format_problems
+    from metis_mcp.model_sources.knowledge import validate as validate_knowledge
+    from metis_mcp.specgen.gherkin import build_feature, render_feature
+
+    knowledge, refused = _read_knowledge(args.knowledge)
+    if knowledge is None:
+        print(f"REFUSED: {refused}")
+        return 1
+    problems = validate_knowledge(knowledge)
+    if problems:
+        print(format_problems(problems, knowledge))
+        return 1
+
+    glossary, glossary_refused = _read_glossary(args.glossary or "")
+    if glossary_refused:
+        print(f"REFUSED: {glossary_refused}")
+        return 1
+
+    entity_ids = {}
+    if glossary is not None:
+        # Which nouns each criterion mentions, by the entity's own name. A literal
+        # match, never a guess: an entity absent from the glossary is simply not
+        # tagged, and that omission is visible rather than approximated.
+        for entry in knowledge.entries:
+            lowered = entry.text.lower()
+            entity_ids[entry.id] = [e.id for e in glossary.entities
+                                    if e.name.lower() in lowered]
+
+    feature = build_feature(
+        knowledge.requirement.id, knowledge.requirement.text, knowledge.entries,
+        area=args.area or "", glossary=glossary, entity_ids=entity_ids)
+    text = render_feature(feature)
+    if args.out:
+        FsPath(args.out).write_text(text)
+        print(f"Wrote {args.out} — 1 Feature, {len(feature.scenarios)} Scenario(s)")
+    else:
+        print(text, end="")
+    return 0
+
+
+def cmd_feature_read(args) -> int:
+    """Read a `.feature` back as a requirement and its criteria (the round trip)."""
+    from metis_mcp.model_sources.knowledge import format_problems
+    from metis_mcp.model_sources.knowledge import validate as validate_knowledge
+    from metis_mcp.specgen.gherkin import parse_feature, to_knowledge
+
+    try:
+        text = FsPath(args.feature).read_text()
+    except OSError as e:
+        print(f"REFUSED: {args.feature}: {e}")
+        return 1
+
+    parsed = parse_feature(text)
+    if parsed.problems:
+        print(f"REFUSED: {len(parsed.problems)} problem(s) reading {args.feature}:")
+        for problem in parsed.problems:
+            print(f"  {problem.describe()}")
+        return 1
+
+    knowledge = to_knowledge(parsed, model_id=args.model_id or parsed.requirement_id,
+                             surface=args.surface)
+    problems = validate_knowledge(knowledge)
+    print(format_problems(problems, knowledge))
+    if args.out:
+        FsPath(args.out).write_text(knowledge.to_json())
+        print(f"\nWrote {args.out}")
+    return 1 if problems else 0
+
+
+def cmd_structure_check(args) -> int:
+    """Is the page tree legal and the data tree complete? Free: no graph."""
+    from metis_mcp.model_sources.structure import (
+        StructureRefused, format_problems, load, validate,
+    )
+    try:
+        structure = load(args.structure)
+    except (OSError, ValueError, StructureRefused) as e:
+        print(f"REFUSED: {args.structure}: {e}")
+        return 1
+    problems = validate(structure)
+    print(format_problems(problems, structure))
+    return 1 if problems else 0
+
+
+def cmd_glossary_check(args) -> int:
+    """Is every business noun defined, with its impact stated? Free: no graph."""
+    from metis_mcp.model_sources.glossary import format_problems, load, validate
+    from metis_mcp.model_sources.glossary import GlossaryRefused
+    try:
+        glossary = load(args.glossary)
+    except (OSError, ValueError, GlossaryRefused) as e:
+        print(f"REFUSED: {args.glossary}: {e}")
+        return 1
+    problems = validate(glossary)
+    print(format_problems(problems, glossary))
+    return 1 if problems else 0
+
+
+def cmd_glossary_land(args) -> int:
+    """Areas and entities -> the graph (spec §4.6a, D-13).
+
+    `plan_glossary` has existed and been correct since the glossary was written,
+    and nothing called it -- so `BusinessArea` and `BusinessEntity` were defined,
+    validated and referenced, and never landed. `knowledge land` plans
+    `AcceptanceCriterion-[:REFERENCES]->BusinessEntity` and
+    `Requirement-[:BELONGS_TO]->BusinessArea` against those nodes, so without
+    this the edges matched nothing and were reported as `unmatched`.
+
+    Land the glossary BEFORE the knowledge file that references it.
+    """
+    from metis_mcp.model_sources.glossary import (
+        GlossaryRefused, format_problems, load, plan_glossary, validate,
+    )
+    from metis_mcp.model_sources.landing import land
+
+    try:
+        glossary = load(args.glossary)
+    except (OSError, ValueError, GlossaryRefused) as e:
+        print(f"REFUSED: {args.glossary}: {e}")
+        return 1
+
+    problems = validate(glossary)
+    if problems:
+        print(format_problems(problems, glossary))
+        return 1
+
+    plan = plan_glossary(glossary, job_id=args.job_id, proposed_by=args.author)
+    if not plan.is_legal:
+        print(f"REFUSED: {len(plan.errors)} validation error(s) — nothing was written")
+        for error in plan.errors[:8]:
+            print(f"    {error}")
+        return 1
+
+    with session(args.uri, args.user) as s:
+        outcome = land(s, plan)
+    if not outcome.ok:
+        print(f"REFUSED: {outcome.refused}")
+        return 1
+
+    print(f"Landed {outcome.nodes_written} nodes, {outcome.edges_written} edges")
+    print(f"  episode:   {outcome.episode_id}")
+    print(f"  glossary:  {len(glossary.areas)} area(s), {len(glossary.entities)} entities")
+    print("  lifecycle: Quarantine — a definition is authored, not approved (S-4)")
+    if outcome.unmatched:
+        print(f"\n  UNMATCHED — {len(outcome.unmatched)} edge group(s) planned but not written:")
+        for group, shortfall, why in outcome.unmatched:
+            print(f"    {group}: {shortfall}")
+            print(f"        {why}")
+        return 1
+    return 0
+
+
+def cmd_entity_render(args) -> int:
+    """Render one business entity's specification, or every one (§4.6a, §18).
+
+    Reads the graph and writes back a document node. The document is not a file:
+    F-12 makes the graph the interface consumers query, and a `.md` beside the
+    repo would be a second copy of facts the graph already holds, with no edge
+    to the behaviour it describes.
+    """
+    from metis_mcp.mbt.graph_loader import (
+        load_entities, load_entity, load_entity_criteria,
+    )
+    from metis_mcp.model_sources.landing import land
+    from metis_mcp.specgen.entity import build, render_markdown
+    from metis_mcp.specgen.documents import plan_entity_document
+
+    with session(args.uri, args.user) as s:
+        if args.entity:
+            row = load_entity(s, args.entity)
+            if row is None:
+                print(f"No business entity {args.entity!r}. "
+                      f"Land a glossary first: glossary land <file>")
+                return 1
+            rows = [row]
+        else:
+            rows = load_entities(s, area=args.area or "")
+            if not rows:
+                where = f" in area {args.area!r}" if args.area else ""
+                print(f"No business entities{where}. "
+                      f"Land a glossary first: glossary land <file>")
+                return 1
+
+        specs = []
+        for row in rows:
+            criteria = load_entity_criteria(s, row["id"])
+            specs.append(build(row, criteria, area_name=row.get("area_name") or ""))
+
+        if args.stdout:
+            for spec in specs:
+                print(render_markdown(spec))
+                print()
+            return 0
+
+        written = errors = 0
+        unmatched: list = []
+        for spec in specs:
+            plan = plan_entity_document(spec, episode_id=args.episode)
+            if not plan.is_legal:
+                print(f"REFUSED {spec.entity_id}: {plan.errors[0]}")
+                errors += 1
+                continue
+            outcome = land(s, plan)
+            if not outcome.ok:
+                print(f"REFUSED {spec.entity_id}: {outcome.refused}")
+                errors += 1
+                continue
+            written += outcome.nodes_written
+            unmatched.extend(outcome.unmatched)
+
+    print(f"Rendered {len(specs)} entity document(s), {written} node(s) written")
+    for spec in specs:
+        grade = (f"{len(spec.code_derived_rules)} code-derived"
+                 if spec.code_derived_rules else "all intent")
+        print(f"    {spec.name:<20} {len(spec.rules)} rule(s), {grade}")
+    print("  lifecycle: Quarantine — generated is not agreed (S-4)")
+    if unmatched:
+        print(f"\n  UNMATCHED — {len(unmatched)} edge group(s) planned but not written:")
+        for group, shortfall, why in unmatched:
+            print(f"    {group}: {shortfall}")
+            print(f"        {why}")
+        return 1
+    return 1 if errors else 0
+
+
+def cmd_intake_land(args) -> int:
+    """A UIF document -> Episode, anchor, and what can honestly be derived.
+
+    Spec §3.2 stage 2. This is the half that has been missing since the v1
+    engine: extraction was always real, and nothing carried its output into the
+    graph.
+    """
+    from metis_mcp.model_sources import intake_landing as intake
+    from metis_mcp.model_sources.landing import land
+
+    try:
+        document = intake.load(args.uif)
+    except intake.IntakeRefused as e:
+        print(f"REFUSED: {args.uif}: {e}")
+        return 1
+
+    try:
+        plan = intake.plan_intake(document, job_id=args.job_id,
+                                  proposed_by=args.author)
+    except intake.IntakeRefused as e:
+        print(f"REFUSED: {e}")
+        return 1
+
+    print(intake.describe(plan, document))
+    if not plan.is_legal:
+        print(f"\nREFUSED: {len(plan.errors)} validation error(s) — nothing was "
+              f"written.")
+        for error in plan.errors[:8]:
+            print(f"    {error}")
+        return 1
+
+    if args.dry_run:
+        print("\nNothing was written (--dry-run).")
+        return 0
+
+    with session(args.uri, args.user) as s:
+        outcome = land(s, plan)
+    if not outcome.ok:
+        print(f"\nREFUSED: {outcome.refused}")
+        return 1
+
+    print(f"\nLanded {outcome.nodes_written} nodes, {outcome.edges_written} edges")
+    print("  lifecycle: Quarantine — intake is not agreement (S-4)")
+    if outcome.unmatched:
+        print(f"\n  UNMATCHED — {len(outcome.unmatched)} edge group(s) planned but "
+              f"not written:")
+        for group, shortfall, why in outcome.unmatched:
+            print(f"    {group}: {shortfall}")
+            print(f"        {why}")
+        return 1
+    return 0
+
+
+def cmd_spec_requirement(args) -> int:
+    """A spec-document feature + its EARS statement -> a Requirement (§4.5).
+
+    Lands through `knowledge.plan_documentation`, so there stays exactly one
+    writer of `Requirement` and one set of rules about what reaches the graph.
+    """
+    from metis_mcp.model_sources.knowledge import format_problems, plan_documentation
+    from metis_mcp.model_sources.knowledge import validate as validate_knowledge
+    from metis_mcp.model_sources.landing import land
+    from metis_mcp.model_sources.spec_kit import parse_spec, requirement_from_spec
+
+    try:
+        parsed = parse_spec(args.spec, feature=args.feature or "")
+    except (OSError, ValueError) as e:
+        print(f"REFUSED: {args.spec}: {e}")
+        return 1
+
+    if not parsed.behavioural:
+        print(f"No behavioural criteria in {args.spec}. A requirement with no "
+              f"atomic conditions is a scatter of prose (S-20).")
+        return 1
+
+    knowledge = requirement_from_spec(parsed, args.statement,
+                                      requirement_id=args.requirement_id or "")
+    problems = validate_knowledge(knowledge)
+    if problems:
+        print(format_problems(problems, knowledge))
+        return 1
+
+    plan = plan_documentation(knowledge, args.episode)
+    if not plan.is_legal:
+        print(f"REFUSED: {len(plan.errors)} validation error(s) — nothing was written.")
+        for error in plan.errors[:8]:
+            print(f"    {error}")
+        return 1
+
+    if args.dry_run:
+        print(f"Would land: 1 Requirement, {len(knowledge.entries)} "
+              f"AcceptanceCriterion, all at Quarantine.")
+        print("Nothing was written (--dry-run).")
+        return 0
+
+    with session(args.uri, args.user) as s:
+        outcome = land(s, plan)
+    if not outcome.ok:
+        print(f"REFUSED: {outcome.refused}")
+        return 1
+
+    print(f"Landed {outcome.nodes_written} nodes, {outcome.edges_written} edges")
+    print(f"  requirement: {knowledge.requirement.id} "
+          f"({knowledge.requirement.ears.pattern})")
+    print(f"  criteria:    {len(knowledge.entries)}, all at provenance "
+          f"`code_derived`")
+    print("  lifecycle:   Quarantine — a criterion Métis formalised is not intent")
+    print("               until a person edits or affirms it (S-19). A spec")
+    print("               rendered from the code and used to check that code")
+    print("               proves only that the code does what the code does (§4.1).")
+    if outcome.unmatched:
+        print(f"\n  UNMATCHED — {len(outcome.unmatched)} edge group(s):")
+        for group, shortfall, why in outcome.unmatched:
+            print(f"    {group}: {shortfall}")
+            print(f"        {why}")
+        return 1
+    return 0
+
+
+def _read_intent(path: str):
+    from metis_mcp.model_sources.intent import IntentFileRefused, load
+    try:
+        return load(path), ""
+    except (OSError, ValueError, IntentFileRefused) as e:
+        return None, f"{path}: {e}"
+
+
+def cmd_intent_check(args) -> int:
+    """Is every need specified, and every specification checkable? Free: no graph."""
+    from metis_mcp.model_sources.intent import format_problems, validate
+
+    document, refused = _read_intent(args.file)
+    if document is None:
+        print(f"REFUSED: {refused}")
+        return 1
+    problems = validate(document)
+    print(format_problems(problems, document))
+    return 1 if problems else 0
+
+
+def cmd_intent_land(args) -> int:
+    """Intent + Specification -> the graph. Feature is NOT landed here.
+
+    A feature is a grouping, and a grouping is a claim Métis derives from
+    evidence (`feature derive`) rather than one an author restates by hand.
+    """
+    from metis_mcp.model_sources.intent import format_problems, plan_intent, validate
+    from metis_mcp.model_sources.landing import land
+
+    document, refused = _read_intent(args.file)
+    if document is None:
+        print(f"REFUSED: {refused}")
+        return 1
+    problems = validate(document)
+    if problems:
+        print(format_problems(problems, document))
+        return 1
+
+    plan = plan_intent(document, job_id=args.job_id, proposed_by=args.author)
+    if not plan.is_legal:
+        print(f"REFUSED: {len(plan.errors)} validation error(s) — nothing was written")
+        for error in plan.errors[:8]:
+            print(f"    {error}")
+        return 1
+
+    with session(args.uri, args.user) as s:
+        outcome = land(s, plan)
+    if not outcome.ok:
+        print(f"REFUSED: {outcome.refused}")
+        return 1
+
+    print(f"Landed {outcome.nodes_written} nodes, {outcome.edges_written} edges")
+    print(f"  episode: {outcome.episode_id}")
+    print(f"  {len(document.intents)} need(s), {len(document.specifications)} "
+          f"specification(s), at Quarantine (S-4)")
+    print(f"  next:    feature derive — Métis groups these; it is not authored")
+    if outcome.unmatched:
+        print(f"\n  UNMATCHED — {len(outcome.unmatched)} edge group(s):")
+        for group, shortfall, why in outcome.unmatched:
+            print(f"    {group}: {shortfall}")
+            print(f"        {why}")
+        return 1
+    return 0
+
+
+def cmd_feature_derive(args) -> int:
+    """Group specifications into features, from evidence rather than wording."""
+    from metis_mcp.mbt.graph_loader import (
+        load_known_entity_keys, load_spec_implementations, load_specifications,
+    )
+    from metis_mcp.model_sources.feature import derive, format_derivation, plan_features
+    from metis_mcp.model_sources.landing import land
+
+    with session(args.uri, args.user) as s:
+        specifications = load_specifications(s)
+        if not specifications:
+            print("No specifications in the graph. Land some first: "
+                  "intent land <file>")
+            return 1
+        known = load_known_entity_keys(s)
+        implementations = load_spec_implementations(s)
+
+        result = derive(specifications, known_entities=known,
+                        implementations=implementations)
+        print(format_derivation(result))
+
+        if args.dry_run:
+            print("\nNothing was written (--dry-run).")
+            return 0
+        if not result.features:
+            print("\nNothing to land.")
+            return 1
+
+        plan = plan_features(result, args.episode)
+        if not plan.is_legal:
+            print(f"REFUSED: {len(plan.errors)} validation error(s). "
+                  f"First: {plan.errors[0]}")
+            return 1
+        outcome = land(s, plan)
+
+        # The last hop: which walks demonstrate each capability. Run after the
+        # features land, because it reads them back -- a feature that does not
+        # exist yet cannot be joined to anything.
+        from metis_mcp.mbt.graph_loader import load_feature_scenarios, load_features
+        from metis_mcp.model_sources.feature import (
+            format_links, link_scenarios, plan_scenario_links,
+        )
+
+        by_criterion, by_implementation = load_feature_scenarios(s)
+        links = link_scenarios(load_features(s), by_criterion, by_implementation)
+        print()
+        print(format_links(links))
+        link_plan = plan_scenario_links(links, args.episode)
+        if link_plan.edges:
+            link_outcome = land(s, link_plan)
+            if link_outcome.unmatched:
+                for group, shortfall, why in link_outcome.unmatched:
+                    print(f"    UNMATCHED {group}: {shortfall}")
+                    print(f"        {why}")
+
+    if not outcome.ok:
+        print(f"REFUSED: {outcome.refused}")
+        return 1
+    print(f"\nLanded {outcome.nodes_written} feature(s), {outcome.edges_written} edge(s)")
+    if outcome.unmatched:
+        print(f"\n  UNMATCHED — {len(outcome.unmatched)} edge group(s) planned but "
+              f"not written:")
+        for group, shortfall, why in outcome.unmatched:
+            print(f"    {group}: {shortfall}")
+            print(f"        {why}")
+        return 1
+    return 0
+
+
+def cmd_spec_build(args) -> int:
+    """A specification's contracts -> the declared Endpoint / Page / Action layer.
+
+    Closes the code side of §4.1's comparison: `IMPLEMENTS` is in the catalogue
+    and nothing wrote it, so a `Specification` had intent arriving and nothing
+    else. The specification names a published contract; the CONTRACT is parsed,
+    never the specification's prose.
+    """
+    from metis_mcp.model_sources.intent import CONTRACT_KINDS
+    from metis_mcp.model_sources.landing import land
+    from metis_mcp.model_sources.spec_build import (
+        CONTRACT_BUILDERS, BuildResult, contract_errors, format_build,
+    )
+    from metis_mcp.mbt.graph_loader import load_specifications
+
+    result = BuildResult()
+    with session(args.uri, args.user) as s:
+        specifications = load_specifications(s)
+        if not specifications:
+            print("No specifications in the graph. Land some first: intent land <file>")
+            return 1
+
+        with_contracts = [s for s in specifications
+                          if json.loads(s.get("contracts_json") or "[]")]
+        if not with_contracts:
+            # Said plainly. Reporting "0 endpoints built" here would read as a
+            # result about the contracts rather than the absence of any.
+            print(f"None of the {len(specifications)} specification(s) names a "
+                  f"contract. Add `contracts: [{{kind, path}}]` to the intent "
+                  f"file — a specification builds nothing from its own prose.")
+            return 1
+
+        plans = []
+        for spec in specifications:
+            if args.specification and spec["id"] != args.specification:
+                continue
+            contracts = json.loads(spec.get("contracts_json") or "[]")
+            for contract in contracts:
+                kind, path = contract.get("kind", ""), contract.get("path", "")
+                builder = CONTRACT_BUILDERS.get(kind)
+                if builder is None:
+                    result.refused.append((spec["id"], path,
+                                           f"no builder for contract kind {kind!r}"))
+                    continue
+                try:
+                    plan, notes = builder(spec["id"], path,
+                                          args.journey or "", args.episode)
+                except contract_errors() as e:
+                    # X-5: a contract that will not parse stops its own run
+                    # rather than landing a partial endpoint set. Reported, not
+                    # raised -- one bad document must not take the others down.
+                    result.refused.append((spec["id"], path, str(e)))
+                    continue
+                result.notes.extend(notes)
+                plans.append(plan)
+
+        for plan in plans:
+            result.endpoints += sum(1 for n in plan.nodes if n.label == "Endpoint")
+            result.pages += sum(1 for n in plan.nodes if n.label == "Page")
+            result.actions += sum(1 for n in plan.nodes if n.label == "Action")
+            result.linked += sum(1 for e in plan.edges if e.rel_type == "IMPLEMENTS")
+
+        print(format_build(result))
+        if args.dry_run:
+            print("\nNothing was written (--dry-run).")
+            return 0 if result.ok else 1
+
+        unmatched = []
+        written = 0
+        for plan in plans:
+            if not plan.is_legal:
+                print(f"REFUSED: {plan.errors[0]}")
+                return 1
+            outcome = land(s, plan)
+            if not outcome.ok:
+                print(f"REFUSED: {outcome.refused}")
+                return 1
+            written += outcome.nodes_written
+            unmatched.extend(outcome.unmatched)
+
+    print(f"\nLanded {written} node(s) across {len(plans)} contract(s)")
+    if unmatched:
+        print(f"\n  UNMATCHED — {len(unmatched)} edge group(s) planned but not written:")
+        for group, shortfall, why in unmatched:
+            print(f"    {group}: {shortfall}")
+            print(f"        {why}")
+        return 1
+    return 0 if result.ok else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -965,7 +2104,148 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--allow-unverifiable", action="store_true",
                        help="proceed despite guards this checker cannot verify (M-17). "
                             "Fail-closed is the default; this is recorded, not silent.")
+        # P-16: a coverage figure names the version and commit it is about. With
+        # --journey these come from the real Component; from a file there is no
+        # such node, so they are given here or the report says they were not.
+        p.add_argument("--version", default="",
+                       help="model version this figure refers to (P-16)")
+        p.add_argument("--commit", default="",
+                       help="source commit this figure refers to (P-16)")
         p.set_defaults(handler=handler)
+
+    knowledge_parser = sub.add_parser(
+        "knowledge", help="the knowledge-centre file (§4.5): check it, compare it")
+    knowledge_sub = knowledge_parser.add_subparsers(
+        dest="knowledge_command", required=True)
+
+    kcheck = knowledge_sub.add_parser(
+        "check", help="atomic, parseable and grounded? (free — no graph)")
+    kcheck.add_argument("knowledge", help="knowledge JSON file")
+    kcheck.set_defaults(handler=cmd_knowledge_check)
+
+    kcompare = knowledge_sub.add_parser(
+        "compare", help="already specified, contradicting, or new (I-5)")
+    kcompare.add_argument("knowledge", help="knowledge JSON file")
+    kcompare.add_argument("--journey", default="",
+                          help="defaults to the file's own model_id")
+    kcompare.add_argument("--surface", default="", choices=("", "api", "ui"))
+    add_graph_args(kcompare)
+    kcompare.set_defaults(handler=cmd_knowledge_compare)
+
+    feature_parser = sub.add_parser(
+        "feature", help="the specification as Gherkin (one Requirement, one Feature)")
+    feature_sub = feature_parser.add_subparsers(dest="feature_command", required=True)
+
+    frender = feature_sub.add_parser("render", help="knowledge file -> .feature")
+    frender.add_argument("knowledge", help="knowledge JSON file")
+    frender.add_argument("--glossary", help="business glossary JSON file")
+    frender.add_argument("--area", default="", help="business area tag")
+    frender.add_argument("-o", "--out", help="output path (default: stdout)")
+    frender.set_defaults(handler=cmd_feature_render)
+
+    fread = feature_sub.add_parser("read", help=".feature -> knowledge file")
+    fread.add_argument("feature", help=".feature file")
+    fread.add_argument("--model-id", default="", dest="model_id")
+    fread.add_argument("--surface", default="api", choices=("api", "ui"))
+    fread.add_argument("-o", "--out", help="write the knowledge JSON")
+    fread.set_defaults(handler=cmd_feature_read)
+
+    glossary_parser = sub.add_parser(
+        "glossary", help="the business glossary (§4.6a): areas and entities")
+    glossary_sub = glossary_parser.add_subparsers(dest="glossary_command", required=True)
+    gcheck = glossary_sub.add_parser("check", help="is every noun defined? (free)")
+    gcheck.add_argument("glossary", help="glossary JSON file")
+    gcheck.set_defaults(handler=cmd_glossary_check)
+    gland = glossary_sub.add_parser(
+        "land", help="write areas and entities to the graph")
+    gland.add_argument("glossary", help="glossary JSON file")
+    gland.add_argument("--job-id", dest="job_id", default="manual")
+    gland.add_argument("--author", default="")
+    add_graph_args(gland)
+    gland.set_defaults(handler=cmd_glossary_land)
+
+    specreq_parser = sub.add_parser(
+        "spec-requirement",
+        help="a spec-document feature + an EARS statement -> a Requirement")
+    specreq_parser.add_argument("spec", help="a spec.md from a Spec Kit repo")
+    specreq_parser.add_argument(
+        "--statement", required=True,
+        help="the requirement in EARS, e.g. 'When a user archives a record, "
+             "the system shall hide it from search.' A feature NAME is not a "
+             "requirement; composing one would be guessing (S-13)")
+    specreq_parser.add_argument("--feature", default="")
+    specreq_parser.add_argument("--requirement-id", dest="requirement_id", default="")
+    specreq_parser.add_argument("--episode", default="manual")
+    specreq_parser.add_argument("--dry-run", action="store_true")
+    add_graph_args(specreq_parser)
+    specreq_parser.set_defaults(handler=cmd_spec_requirement)
+
+    intent_parser = sub.add_parser(
+        "intent", help="the intent file: needs and how they behave (§4.1)")
+    intent_sub = intent_parser.add_subparsers(dest="intent_command", required=True)
+    icheck = intent_sub.add_parser("check", help="is every need specified? (free)")
+    icheck.add_argument("file", help="intent JSON file")
+    icheck.set_defaults(handler=cmd_intent_check)
+    iland2 = intent_sub.add_parser("land", help="write Intent and Specification")
+    iland2.add_argument("file", help="intent JSON file")
+    iland2.add_argument("--job-id", dest="job_id", default="manual")
+    iland2.add_argument("--author", default="")
+    add_graph_args(iland2)
+    iland2.set_defaults(handler=cmd_intent_land)
+
+    spec_build = sub.add_parser(
+        "spec-build",
+        help="build Endpoint / Page / Action from a specification's contracts")
+    spec_build.add_argument("--specification", default="",
+                            help="one specification id; omit for all")
+    spec_build.add_argument("--journey", default="")
+    spec_build.add_argument("--episode", default="manual")
+    spec_build.add_argument("--dry-run", action="store_true")
+    add_graph_args(spec_build)
+    spec_build.set_defaults(handler=cmd_spec_build)
+
+    feature_derive = sub.add_parser(
+        "feature-derive", help="group specifications into features, from evidence")
+    feature_derive.add_argument("--episode", default="manual")
+    feature_derive.add_argument("--dry-run", action="store_true",
+                                help="show the grouping and write nothing")
+    add_graph_args(feature_derive)
+    feature_derive.set_defaults(handler=cmd_feature_derive)
+
+    intake_parser = sub.add_parser(
+        "intake", help="land a UIF document (§3.2 stage 2)")
+    intake_sub = intake_parser.add_subparsers(dest="intake_command", required=True)
+    iland = intake_sub.add_parser("land", help="UIF -> Episode + anchor + findings")
+    iland.add_argument("uif", help="UIF JSON file")
+    iland.add_argument("--job-id", dest="job_id", default="manual")
+    iland.add_argument("--author", default="")
+    iland.add_argument("--dry-run", action="store_true",
+                       help="show the plan and write nothing")
+    add_graph_args(iland)
+    iland.set_defaults(handler=cmd_intake_land)
+
+    entity_parser = sub.add_parser(
+        "entity", help="business-entity specifications (§4.6a)")
+    entity_sub = entity_parser.add_subparsers(dest="entity_command", required=True)
+    erender = entity_sub.add_parser(
+        "render", help="render entity documents into the graph")
+    erender.add_argument("entity", nargs="?", default="",
+                         help="one entity by id or name; omit for all")
+    erender.add_argument("--area", default="", help="only entities in this area")
+    erender.add_argument("--episode", default="manual")
+    erender.add_argument("--stdout", action="store_true",
+                         help="print the markdown instead of landing it")
+    add_graph_args(erender)
+    erender.set_defaults(handler=cmd_entity_render)
+
+    structure_parser = sub.add_parser(
+        "structure", help="authored page and data structure (§5.2a, §5.2b)")
+    structure_sub = structure_parser.add_subparsers(
+        dest="structure_command", required=True)
+    scheck = structure_sub.add_parser(
+        "check", help="is the tree legal and complete? (free)")
+    scheck.add_argument("structure", help="structure JSON file")
+    scheck.set_defaults(handler=cmd_structure_check)
 
     review_parser = sub.add_parser("review", help="review-as-code decisions")
     review_sub = review_parser.add_subparsers(dest="review_command", required=True)
@@ -1160,6 +2440,10 @@ def main(argv: list[str] | None = None) -> int:
     spec_parser.add_argument("--confirm", default="",
                              help=f"the literal word {AFFIRMATIVE!r} (T-18)")
     spec_parser.add_argument("--batch-size", type=int, default=-1)
+    spec_parser.add_argument("--land", action="store_true",
+                             help="land the rendered specification as a "
+                                  "SpecDocument node (§18, F-12)")
+    spec_parser.add_argument("--episode", default="manual")
     spec_parser.add_argument("--as", dest="as_identity", default="")
     add_graph_args(spec_parser)
     spec_parser.set_defaults(handler=cmd_spec)
@@ -1174,8 +2458,27 @@ def main(argv: list[str] | None = None) -> int:
     land_parser.add_argument("--source", default="authored")
     land_parser.add_argument("--author", default="")
     land_parser.add_argument("--job-id", dest="job_id", default="manual")
+    land_parser.add_argument("--overrides", help="override log (default: <model>.overrides.json)")
     add_graph_args(land_parser)
     land_parser.set_defaults(handler=cmd_land)
+
+    findings_parser = sub.add_parser(
+        "findings", help="land validation findings and divergences (spec §8.2)")
+    findings_sub = findings_parser.add_subparsers(dest="findings_cmd", required=True)
+    fland = findings_sub.add_parser(
+        "land", help="write :Finding nodes for a model's validation output")
+    fland.add_argument("model", nargs="?")
+    fland.add_argument("--journey")
+    fland.add_argument("--surface", default="api", choices=("api", "ui"))
+    fland.add_argument("--episode", default="manual")
+    fland.add_argument("--run-id", dest="run_id", default="")
+    fland.add_argument("--version", type=int, default=1)
+    fland.add_argument("--commit", default="")
+    fland.add_argument("--divergence-against", dest="divergence_against", default="",
+                       help="the counterpart surface's model, to add M-5f "
+                            "cross-surface divergences")
+    add_graph_args(fland)
+    fland.set_defaults(handler=cmd_findings_land)
 
     persist_parser = sub.add_parser("persist", help="write paths and cases to the graph")
     persist_parser.add_argument("model", nargs="?")
@@ -1198,6 +2501,67 @@ def main(argv: list[str] | None = None) -> int:
                                      "verify (M-17). Fail-closed is the default; "
                                      "this is recorded, not silent.")
     persist_parser.set_defaults(handler=cmd_persist)
+
+    # ---- workflow (spec §3.2) ----
+    # The one entry point that knows the order. Every verb above stays, because
+    # a stage has to be runnable on its own to be debuggable -- but nobody has
+    # to remember the sequence any more.
+    workflow_parser = sub.add_parser(
+        "workflow", help="run a defined workflow with its gates (spec §3.2)")
+    workflow_sub = workflow_parser.add_subparsers(dest="workflow_command",
+                                                  required=True)
+
+    list_wf = workflow_sub.add_parser("list", help="what workflows exist")
+    list_wf.set_defaults(handler=cmd_workflow_list)
+
+    for name, wf_handler, help_text in (
+            ("run", cmd_workflow_run, "start a workflow"),
+            ("resume", cmd_workflow_resume, "continue one that halted at a gate"),
+    ):
+        p = workflow_sub.add_parser(name, help=help_text)
+        p.add_argument("workflow", help="workflow code (see `workflow list`)")
+        p.add_argument("--scope", required=True,
+                       help="what this run is about, e.g. athena-metric-api")
+        p.add_argument("model", nargs="?", help="model JSON, for file-based runs")
+        p.add_argument("--journey")
+        p.add_argument("--surface", default="api", choices=("api", "ui"))
+        p.add_argument("--source", default="authored",
+                       help="authored | code | ac-mined (see `sources`)")
+        p.add_argument("--author", default="")
+        p.add_argument("--endpoints",
+                       help="structural pack report, for --source code")
+        p.add_argument("--service",
+                       help="scope a multi-module pack report to one deployable. "
+                            "Required when the report spans more than one, or the "
+                            "whole estate lands wearing one service's name")
+        p.add_argument("--glossary",
+                       help="business glossary JSON file (§4.6a). Lands the "
+                            "areas and entities, and links each criterion to the "
+                            "nouns it acts on")
+        p.add_argument("--knowledge",
+                       help="knowledge-centre JSON file, for knowledge-capture "
+                            "(§4.5). Named separately from `model` because it is "
+                            "criteria, not a model — a source reads it, not the "
+                            "model loader")
+        p.add_argument("--job-id", default="workflow")
+        p.add_argument("--state", help="review-state file")
+        p.add_argument("--overrides", help="override log")
+        p.add_argument("--criterion", default=DEFAULT_CRITERION,
+                       choices=criterion_names())
+        p.add_argument("--max-setup", type=int, default=DEFAULT_SETUP_CAP)
+        p.add_argument("--confirm", default="",
+                       help=f"the literal word {AFFIRMATIVE!r}, for a gate that "
+                            f"writes externally (T-18)")
+        p.add_argument("--as", dest="as_user", default="", help="acting identity")
+        p.add_argument("--allow-unverifiable", action="store_true",
+                       help="proceed despite guards this checker cannot verify "
+                            "(M-17). Recorded, not silent.")
+        add_graph_args(p)
+        p.set_defaults(handler=wf_handler)
+
+    status_wf = workflow_sub.add_parser("status", help="where a run got to")
+    status_wf.add_argument("run_id")
+    status_wf.set_defaults(handler=cmd_workflow_status)
 
     args = parser.parse_args(argv)
     try:

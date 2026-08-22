@@ -339,3 +339,47 @@ if __name__ == "__main__":
             print(f"ERROR {t.__name__}: {type(e).__name__}: {e}")
     print(f"\n{len(tests) - failures}/{len(tests)} passed")
     sys.exit(1 if failures else 0)
+
+
+def test_printed_next_step_commands_carry_the_scope_they_need():
+    """An instruction the tool tells you to run has to run.
+
+    `review export --journey X --surface ui` printed
+    `review apply --journey X <file>` — no `--surface`. `apply` defaults to
+    `api` and refused with "review file is for model 'athena-git-ui', not
+    'athena-git-api'". The refusal was honest; the instruction that produced it
+    was not runnable.
+
+    The sibling defect: `publish` printed `publish None --confirm publish`,
+    because `args.model` is None when the scope came from the graph.
+    """
+    import pathlib
+    import re
+
+    from metis_mcp.mbt import cli
+
+    source = pathlib.Path(cli.__file__).read_text()
+
+    # Join implicit string concatenation first. These prints span two lines, and
+    # matching one literal at a time captured `"review apply "` — which has no
+    # `--journey`, so every assertion below was skipped and this test passed
+    # with the bug deliberately re-injected. A regex over source has to account
+    # for how the source is actually written.
+    joined = re.sub(r'"\s*\n\s*f?"', "", source)
+
+    printed = re.findall(r'print\(f?"[^"]*metis_mcp\.mbt\.cli ([^"]*)"', joined)
+    assert printed, "no next-step instructions found — the parser missed them"
+    assert any("--journey" in c for c in printed), (
+        "no journey-scoped instruction was found; the parser is not seeing the "
+        "commands this test exists to check"
+    )
+
+    for command in printed:
+        assert "{args.model}" not in command or "--model" in command, (
+            f"instruction interpolates a possibly-None model: {command!r}")
+        # A journey-scoped command is always surface-scoped too: the two
+        # together name one model, and journey alone names two.
+        if "--journey" in command:
+            assert "--surface" in command, (
+                f"journey-scoped instruction omits --surface, so it resolves to "
+                f"the wrong model on a ui scope: {command!r}")

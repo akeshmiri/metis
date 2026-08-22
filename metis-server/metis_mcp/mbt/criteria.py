@@ -26,6 +26,11 @@ GUARD_COVERAGE = "guard-coverage"
 # Opt-in like guard coverage (P-2a): it multiplies cases on every journey, and
 # most journeys do not need that depth.
 BOUNDARY_COVERAGE = "boundary-coverage"
+# Step 5's two techniques (ISO/IEC/IEEE 29119-4). The five above select PATHS
+# through a machine; these select *what to vary* — the prior question, and the
+# one nothing here asked. See `mbt/design.py`.
+DECISION_TABLE = "decision-table"
+PAIRWISE = "pairwise"
 
 # The default. Spec P-2: the criterion whose coverage number is meaningful
 # without qualification and whose cost is predictable.
@@ -239,12 +244,84 @@ def _boundary_coverage(model: Model) -> CriterionResult:
     return result
 
 
+def _decision_table(model: Model) -> CriterionResult:
+    """One target per REACHABLE row of each `(state, trigger)` decision table.
+
+    Guard coverage varies each condition true and false independently, which for
+    three conditions is six cases and says nothing about their **combinations**.
+    A decision table asks what each combination produces, and that is where a
+    missing rule hides: `POST /environment` has three conditions, eight rows,
+    and two combinations no transition covers.
+
+    An uncovered row is `unsatisfiable`, never a target. It is not necessarily a
+    defect — the conditions may be unable to hold together, which is not
+    decidable from the text — so it is reported for a human rather than turned
+    into a test that can never pass.
+    """
+    from metis_mcp.mbt.design import decision_table
+
+    result = CriterionResult(name=DECISION_TABLE)
+    generatable = {t.id for t in model.generatable_transitions()}
+    groups = sorted({(t.source, t.trigger) for t in model.transitions.values()})
+
+    for state, trigger in groups:
+        table = decision_table(model, state, trigger)
+        if not table.is_available:
+            result.unsatisfiable.append(
+                (f"{state}|{trigger}", table.reason_unavailable))
+            continue
+        for row, rule in enumerate(table.rules):
+            key = f"{state}|{trigger}|row{row}"
+            if not rule.is_covered:
+                result.unsatisfiable.append((key, rule.unreachable_note))
+                continue
+            if rule.transition_id not in generatable:
+                continue
+            result.targets.append(CoverageTarget(
+                kind=DECISION_TABLE, key=key,
+                validated_transition_id=rule.transition_id,
+                # M-9: the row is a CONDITION on the data, never a value.
+                data_note=rule.describe()))
+    return result
+
+
+def _pairwise(model: Model) -> CriterionResult:
+    """One target per pairwise case over a transition's varying inputs.
+
+    Most defects involving several inputs are triggered by a *pair*, so covering
+    every pair finds them at a fraction of the product: `GET /environment/all`
+    has seven varying inputs — 128 exhaustive, **7 pairwise**.
+
+    A transition whose inputs cannot be varied without inventing data yields
+    nothing and says so (M-9). P-1a holds: each case is its own single-assertion
+    path, so this adds tests and never assertions.
+    """
+    from metis_mcp.mbt.design import all_pairs, factors_for
+
+    result = CriterionResult(name=PAIRWISE)
+    for t in model.generatable_transitions():
+        factors = factors_for(t)
+        if not factors:
+            result.unsatisfiable.append(
+                (t.id, "no input varies in a way that can be stated without "
+                       "inventing a value (M-9)"))
+            continue
+        for i, case in enumerate(all_pairs(factors)):
+            result.targets.append(CoverageTarget(
+                kind=PAIRWISE, key=f"{t.id}|pair{i}",
+                validated_transition_id=t.id,
+                data_note=", ".join(f"{k} {v}" for k, v in sorted(case.items()))))
+    return result
+
+
 _CRITERIA = {
     ALL_STATES: _all_states,
     ALL_TRANSITIONS: _all_transitions,
     ALL_TRANSITION_PAIRS: _all_transition_pairs,
     GUARD_COVERAGE: _guard_coverage,
     BOUNDARY_COVERAGE: _boundary_coverage,
+    DECISION_TABLE: _decision_table,
+    PAIRWISE: _pairwise,
 }
 
 

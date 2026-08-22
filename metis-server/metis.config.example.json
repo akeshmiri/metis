@@ -10,7 +10,7 @@
     "judge": "REPLACE: model name"
   },
   "corpus": {
-    "glob": "/absolute/path/to/metis-server/corpus/*.md"
+    "glob": "/absolute/path/to/your/documents/*.md"
   },
   "graph": {
     "backend": "REPLACE: local | neo4j",
@@ -40,12 +40,7 @@
   },
   "server": {
     "transport": "REPLACE: stdio | streamable-http",
-    "public_url": "REPLACE: optional Atlas/MCP HTTP URL"
-  },
-  "atlas": {
-    "endpoint_url": "REPLACE: optional HTTP endpoint for Atlas",
-    "auth_token": "REPLACE: optional HTTP bearer token for Atlas",
-    "timeout_seconds": 30
+    "public_url": "REPLACE: optional MCP HTTP URL"
   },
   "security": {
     "jwt_secret": "REPLACE: generate a local development secret of at least 32 bytes"

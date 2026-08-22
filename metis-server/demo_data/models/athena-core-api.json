@@ -20,26 +20,32 @@
       "is_initial": false
     },
     {
-      "id": "Created201",
-      "name": "Created201",
-      "surface": "api",
-      "is_initial": false
-    },
-    {
-      "id": "AlreadyReported208",
-      "name": "AlreadyReported208",
-      "surface": "api",
-      "is_initial": false
-    },
-    {
       "id": "Conflicted409",
       "name": "Conflicted409",
       "surface": "api",
       "is_initial": false
     },
     {
-      "id": "Updated200",
-      "name": "Updated200",
+      "id": "EnvironmentPresent",
+      "name": "EnvironmentPresent",
+      "surface": "api",
+      "is_initial": false
+    },
+    {
+      "id": "ProjectPresent",
+      "name": "ProjectPresent",
+      "surface": "api",
+      "is_initial": false
+    },
+    {
+      "id": "UserPresent",
+      "name": "UserPresent",
+      "surface": "api",
+      "is_initial": false
+    },
+    {
+      "id": "VersionPresent",
+      "name": "VersionPresent",
       "surface": "api",
       "is_initial": false
     }
@@ -51,7 +57,62 @@
       "trigger": "GET /environment/all",
       "target": "Ok200",
       "guard": "",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "page",
+          "location": "query",
+          "type_name": "int",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "size",
+          "location": "query",
+          "type_name": "int",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "sort",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "direction",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "code",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "name",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "project",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.EnvironmentController.search:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String)::GET->NoContent204",
@@ -59,15 +120,55 @@
       "trigger": "GET /environment",
       "target": "NoContent204",
       "guard": "t.isEmpty()",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 204,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "keyword",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": true,
+          "constraints": []
+        },
+        {
+          "name": "project",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.EnvironmentController.search:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String)::GET->Ok200",
-      "source": "Ready",
+      "source": "EnvironmentPresent",
       "trigger": "GET /environment",
       "target": "Ok200",
-      "guard": "NOT (t.isEmpty())",
-      "implementation_status": "implemented"
+      "guard": "",
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "keyword",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": true,
+          "constraints": []
+        },
+        {
+          "name": "project",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.EnvironmentController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204",
@@ -75,31 +176,83 @@
       "trigger": "GET /environment/{id}",
       "target": "NoContent204",
       "guard": "t.isEmpty()",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 204,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "id",
+          "location": "path",
+          "type_name": "java.lang.Long",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.EnvironmentController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->Ok200",
-      "source": "Ready",
+      "source": "EnvironmentPresent",
       "trigger": "GET /environment/{id}",
       "target": "Ok200",
-      "guard": "NOT (t.isEmpty())",
-      "implementation_status": "implemented"
+      "guard": "",
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "id",
+          "location": "path",
+          "type_name": "java.lang.Long",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.EnvironmentController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.core.EnvironmentDto)::POST->Created201",
       "source": "Ready",
       "trigger": "POST /environment",
-      "target": "Created201",
+      "target": "EnvironmentPresent",
       "guard": "NOT (an exception is thrown) AND NOT (ex.getCause() instanceof ConstraintViolationException) AND NOT (dbRecord.isPresent())",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 201,
+      "guard_anchor": "athena-boot-core/src/main/java/org/catools/athena/core/rest/controller/EnvironmentController.java:78@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "environment",
+          "location": "body",
+          "type_name": "org.catools.athena.model.core.EnvironmentDto",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.EnvironmentController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.core.EnvironmentDto)::POST->AlreadyReported208",
-      "source": "Ready",
+      "source": "EnvironmentPresent",
       "trigger": "POST /environment",
-      "target": "AlreadyReported208",
-      "guard": "an exception is thrown AND ex.getCause() instanceof ConstraintViolationException AND dbRecord.isPresent()",
-      "implementation_status": "implemented"
+      "target": "EnvironmentPresent",
+      "guard": "an exception is thrown AND ex.getCause() instanceof ConstraintViolationException",
+      "implementation_status": "implemented",
+      "outcome_status": 208,
+      "guard_anchor": "athena-boot-core/src/main/java/org/catools/athena/core/rest/controller/EnvironmentController.java:82@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "environment",
+          "location": "body",
+          "type_name": "org.catools.athena.model.core.EnvironmentDto",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.EnvironmentController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.core.EnvironmentDto)::POST->Conflicted409",
@@ -107,15 +260,41 @@
       "trigger": "POST /environment",
       "target": "Conflicted409",
       "guard": "an exception is thrown AND NOT (ex.getCause() instanceof ConstraintViolationException) AND NOT (dbRecord.isPresent())",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 409,
+      "guard_anchor": "athena-boot-core/src/main/java/org/catools/athena/core/rest/controller/EnvironmentController.java:84@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "environment",
+          "location": "body",
+          "type_name": "org.catools.athena.model.core.EnvironmentDto",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.EnvironmentController.update:org.springframework.http.ResponseEntity(org.catools.athena.model.core.EnvironmentDto)::PUT->Updated200",
       "source": "Ready",
       "trigger": "PUT /environment",
-      "target": "Updated200",
+      "target": "EnvironmentPresent",
       "guard": "",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "environment",
+          "location": "body",
+          "type_name": "org.catools.athena.model.core.EnvironmentDto",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.ProjectController.getAll:org.springframework.http.ResponseEntity(int,int,java.lang.String,java.lang.String,java.lang.String,java.lang.String)::GET->Ok200",
@@ -123,7 +302,55 @@
       "trigger": "GET /project/all",
       "target": "Ok200",
       "guard": "",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "page",
+          "location": "query",
+          "type_name": "int",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "size",
+          "location": "query",
+          "type_name": "int",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "sort",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "direction",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "code",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "name",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.ProjectController.search:org.springframework.http.ResponseEntity(java.lang.String)::GET->NoContent204",
@@ -131,15 +358,41 @@
       "trigger": "GET /project",
       "target": "NoContent204",
       "guard": "t.isEmpty()",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 204,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "keyword",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.ProjectController.search:org.springframework.http.ResponseEntity(java.lang.String)::GET->Ok200",
-      "source": "Ready",
+      "source": "ProjectPresent",
       "trigger": "GET /project",
       "target": "Ok200",
-      "guard": "NOT (t.isEmpty())",
-      "implementation_status": "implemented"
+      "guard": "",
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "keyword",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.ProjectController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204",
@@ -147,31 +400,83 @@
       "trigger": "GET /project/{id}",
       "target": "NoContent204",
       "guard": "t.isEmpty()",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 204,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "id",
+          "location": "path",
+          "type_name": "java.lang.Long",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.ProjectController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->Ok200",
-      "source": "Ready",
+      "source": "ProjectPresent",
       "trigger": "GET /project/{id}",
       "target": "Ok200",
-      "guard": "NOT (t.isEmpty())",
-      "implementation_status": "implemented"
+      "guard": "",
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "id",
+          "location": "path",
+          "type_name": "java.lang.Long",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.ProjectController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.core.ProjectDto)::POST->Created201",
       "source": "Ready",
       "trigger": "POST /project",
-      "target": "Created201",
+      "target": "ProjectPresent",
       "guard": "NOT (an exception is thrown) AND NOT (ex.getCause() instanceof ConstraintViolationException) AND NOT (dbRecord.isPresent())",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 201,
+      "guard_anchor": "athena-boot-core/src/main/java/org/catools/athena/core/rest/controller/ProjectController.java:78@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "project",
+          "location": "body",
+          "type_name": "org.catools.athena.model.core.ProjectDto",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.ProjectController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.core.ProjectDto)::POST->AlreadyReported208",
-      "source": "Ready",
+      "source": "ProjectPresent",
       "trigger": "POST /project",
-      "target": "AlreadyReported208",
-      "guard": "an exception is thrown AND ex.getCause() instanceof ConstraintViolationException AND dbRecord.isPresent()",
-      "implementation_status": "implemented"
+      "target": "ProjectPresent",
+      "guard": "an exception is thrown AND ex.getCause() instanceof ConstraintViolationException",
+      "implementation_status": "implemented",
+      "outcome_status": 208,
+      "guard_anchor": "athena-boot-core/src/main/java/org/catools/athena/core/rest/controller/ProjectController.java:82@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "project",
+          "location": "body",
+          "type_name": "org.catools.athena.model.core.ProjectDto",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.ProjectController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.core.ProjectDto)::POST->Conflicted409",
@@ -179,15 +484,41 @@
       "trigger": "POST /project",
       "target": "Conflicted409",
       "guard": "an exception is thrown AND NOT (ex.getCause() instanceof ConstraintViolationException) AND NOT (dbRecord.isPresent())",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 409,
+      "guard_anchor": "athena-boot-core/src/main/java/org/catools/athena/core/rest/controller/ProjectController.java:84@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "project",
+          "location": "body",
+          "type_name": "org.catools.athena.model.core.ProjectDto",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.ProjectController.update:org.springframework.http.ResponseEntity(org.catools.athena.model.core.ProjectDto)::PUT->Updated200",
       "source": "Ready",
       "trigger": "PUT /project",
-      "target": "Updated200",
+      "target": "ProjectPresent",
       "guard": "",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "project",
+          "location": "body",
+          "type_name": "org.catools.athena.model.core.ProjectDto",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.UserController.getAll:org.springframework.http.ResponseEntity(int,int,java.lang.String,java.lang.String,java.lang.String,java.lang.String)::GET->Ok200",
@@ -195,7 +526,55 @@
       "trigger": "GET /user/all",
       "target": "Ok200",
       "guard": "",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "page",
+          "location": "query",
+          "type_name": "int",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "size",
+          "location": "query",
+          "type_name": "int",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "sort",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "direction",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "username",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "alias",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.UserController.search:org.springframework.http.ResponseEntity(java.lang.String)::GET->NoContent204",
@@ -203,15 +582,41 @@
       "trigger": "GET /user",
       "target": "NoContent204",
       "guard": "t.isEmpty()",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 204,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "keyword",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.UserController.search:org.springframework.http.ResponseEntity(java.lang.String)::GET->Ok200",
-      "source": "Ready",
+      "source": "UserPresent",
       "trigger": "GET /user",
       "target": "Ok200",
-      "guard": "NOT (t.isEmpty())",
-      "implementation_status": "implemented"
+      "guard": "",
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "keyword",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.UserController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204",
@@ -219,31 +624,83 @@
       "trigger": "GET /user/{id}",
       "target": "NoContent204",
       "guard": "t.isEmpty()",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 204,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "id",
+          "location": "path",
+          "type_name": "java.lang.Long",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.UserController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->Ok200",
-      "source": "Ready",
+      "source": "UserPresent",
       "trigger": "GET /user/{id}",
       "target": "Ok200",
-      "guard": "NOT (t.isEmpty())",
-      "implementation_status": "implemented"
+      "guard": "",
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "id",
+          "location": "path",
+          "type_name": "java.lang.Long",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.UserController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.core.UserDto)::POST->Created201",
       "source": "Ready",
       "trigger": "POST /user",
-      "target": "Created201",
+      "target": "UserPresent",
       "guard": "NOT (an exception is thrown) AND NOT (ex.getCause() instanceof ConstraintViolationException) AND NOT (dbRecord.isPresent())",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 201,
+      "guard_anchor": "athena-boot-core/src/main/java/org/catools/athena/core/rest/controller/UserController.java:80@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "user",
+          "location": "body",
+          "type_name": "org.catools.athena.model.core.UserDto",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.UserController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.core.UserDto)::POST->AlreadyReported208",
-      "source": "Ready",
+      "source": "UserPresent",
       "trigger": "POST /user",
-      "target": "AlreadyReported208",
-      "guard": "an exception is thrown AND ex.getCause() instanceof ConstraintViolationException AND dbRecord.isPresent()",
-      "implementation_status": "implemented"
+      "target": "UserPresent",
+      "guard": "an exception is thrown AND ex.getCause() instanceof ConstraintViolationException",
+      "implementation_status": "implemented",
+      "outcome_status": 208,
+      "guard_anchor": "athena-boot-core/src/main/java/org/catools/athena/core/rest/controller/UserController.java:84@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "user",
+          "location": "body",
+          "type_name": "org.catools.athena.model.core.UserDto",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.UserController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.core.UserDto)::POST->Conflicted409",
@@ -251,23 +708,62 @@
       "trigger": "POST /user",
       "target": "Conflicted409",
       "guard": "an exception is thrown AND NOT (ex.getCause() instanceof ConstraintViolationException) AND NOT (dbRecord.isPresent())",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 409,
+      "guard_anchor": "athena-boot-core/src/main/java/org/catools/athena/core/rest/controller/UserController.java:86@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "user",
+          "location": "body",
+          "type_name": "org.catools.athena.model.core.UserDto",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.UserController.update:org.springframework.http.ResponseEntity(org.catools.athena.model.core.UserDto)::PUT->Updated200",
       "source": "Ready",
       "trigger": "PUT /user",
-      "target": "Updated200",
+      "target": "UserPresent",
       "guard": "NOT (an exception is thrown) AND NOT (ex.getCause() instanceof ConstraintViolationException) AND NOT (dbRecord.isPresent())",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "athena-boot-core/src/main/java/org/catools/athena/core/rest/controller/UserController.java:96@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "user",
+          "location": "body",
+          "type_name": "org.catools.athena.model.core.UserDto",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.UserController.update:org.springframework.http.ResponseEntity(org.catools.athena.model.core.UserDto)::PUT->AlreadyReported208",
-      "source": "Ready",
+      "source": "UserPresent",
       "trigger": "PUT /user",
-      "target": "AlreadyReported208",
-      "guard": "an exception is thrown AND ex.getCause() instanceof ConstraintViolationException AND dbRecord.isPresent()",
-      "implementation_status": "implemented"
+      "target": "UserPresent",
+      "guard": "an exception is thrown AND ex.getCause() instanceof ConstraintViolationException",
+      "implementation_status": "implemented",
+      "outcome_status": 208,
+      "guard_anchor": "athena-boot-core/src/main/java/org/catools/athena/core/rest/controller/UserController.java:100@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "user",
+          "location": "body",
+          "type_name": "org.catools.athena.model.core.UserDto",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.UserController.update:org.springframework.http.ResponseEntity(org.catools.athena.model.core.UserDto)::PUT->Conflicted409",
@@ -275,7 +771,20 @@
       "trigger": "PUT /user",
       "target": "Conflicted409",
       "guard": "an exception is thrown AND NOT (ex.getCause() instanceof ConstraintViolationException) AND NOT (dbRecord.isPresent())",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 409,
+      "guard_anchor": "athena-boot-core/src/main/java/org/catools/athena/core/rest/controller/UserController.java:102@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "user",
+          "location": "body",
+          "type_name": "org.catools.athena.model.core.UserDto",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.VersionController.getAll:org.springframework.http.ResponseEntity(int,int,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String)::GET->Ok200",
@@ -283,7 +792,62 @@
       "trigger": "GET /version/all",
       "target": "Ok200",
       "guard": "",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "page",
+          "location": "query",
+          "type_name": "int",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "size",
+          "location": "query",
+          "type_name": "int",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "sort",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "direction",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "code",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "name",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "project",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.VersionController.search:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String)::GET->NoContent204",
@@ -291,15 +855,55 @@
       "trigger": "GET /version",
       "target": "NoContent204",
       "guard": "t.isEmpty()",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 204,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "keyword",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": true,
+          "constraints": []
+        },
+        {
+          "name": "project",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.VersionController.search:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String)::GET->Ok200",
-      "source": "Ready",
+      "source": "VersionPresent",
       "trigger": "GET /version",
       "target": "Ok200",
-      "guard": "NOT (t.isEmpty())",
-      "implementation_status": "implemented"
+      "guard": "",
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "keyword",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": true,
+          "constraints": []
+        },
+        {
+          "name": "project",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.VersionController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204",
@@ -307,23 +911,62 @@
       "trigger": "GET /version/{id}",
       "target": "NoContent204",
       "guard": "t.isEmpty()",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 204,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "id",
+          "location": "path",
+          "type_name": "java.lang.Long",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.VersionController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->Ok200",
-      "source": "Ready",
+      "source": "VersionPresent",
       "trigger": "GET /version/{id}",
       "target": "Ok200",
-      "guard": "NOT (t.isEmpty())",
-      "implementation_status": "implemented"
+      "guard": "",
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "id",
+          "location": "path",
+          "type_name": "java.lang.Long",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.VersionController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.core.VersionDto)::POST->Created201",
       "source": "Ready",
       "trigger": "POST /version",
-      "target": "Created201",
+      "target": "VersionPresent",
       "guard": "NOT (an exception is thrown) AND NOT (ex.getCause() instanceof ConstraintViolationException) AND NOT (version.getCode() == null) AND NOT (dbRecord.isPresent())",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 201,
+      "guard_anchor": "athena-boot-core/src/main/java/org/catools/athena/core/rest/controller/VersionController.java:72@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "version",
+          "location": "body",
+          "type_name": "org.catools.athena.model.core.VersionDto",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.VersionController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.core.VersionDto)::POST->Conflicted409",
@@ -331,23 +974,62 @@
       "trigger": "POST /version",
       "target": "Conflicted409",
       "guard": "an exception is thrown AND NOT (ex.getCause() instanceof ConstraintViolationException) AND NOT (version.getCode() == null) AND NOT (dbRecord.isPresent())",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 409,
+      "guard_anchor": "athena-boot-core/src/main/java/org/catools/athena/core/rest/controller/VersionController.java:79@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "version",
+          "location": "body",
+          "type_name": "org.catools.athena.model.core.VersionDto",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.VersionController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.core.VersionDto)::POST->AlreadyReported208",
-      "source": "Ready",
+      "source": "VersionPresent",
       "trigger": "POST /version",
-      "target": "AlreadyReported208",
-      "guard": "an exception is thrown AND ex.getCause() instanceof ConstraintViolationException AND dbRecord.isPresent()",
-      "implementation_status": "implemented"
+      "target": "VersionPresent",
+      "guard": "an exception is thrown AND ex.getCause() instanceof ConstraintViolationException",
+      "implementation_status": "implemented",
+      "outcome_status": 208,
+      "guard_anchor": "athena-boot-core/src/main/java/org/catools/athena/core/rest/controller/VersionController.java:77@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "version",
+          "location": "body",
+          "type_name": "org.catools.athena.model.core.VersionDto",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.core.rest.controller.VersionController.update:org.springframework.http.ResponseEntity(org.catools.athena.model.core.VersionDto)::PUT->Updated200",
       "source": "Ready",
       "trigger": "PUT /version",
-      "target": "Updated200",
+      "target": "VersionPresent",
       "guard": "",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "version",
+          "location": "body",
+          "type_name": "org.catools.athena.model.core.VersionDto",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     }
   ]
 }

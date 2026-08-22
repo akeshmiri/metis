@@ -24,14 +24,15 @@ models:
   judge: claude-sonnet-5
 
 corpus:
-  glob: "corpus/*.md"
+  # No corpus ships with Métis; point this at your own documents.
+  glob: "REPLACE: /absolute/path/to/your/documents/*.md"
 
-# Graph backend (Phase 1): 'local' is LocalGraphStore, the dogfooding-corpus
-# BFS-over-dict stand-in used before Neo4j exists. 'neo4j' is Neo4jGraphStore,
-# running real Cypher -- see metis_mcp/neo4j_graph_store.py and
-# load_dogfooding_corpus.py (the one-off script that populates it from this
-# same corpus). password_env names an environment variable holding the
-# actual secret; the secret itself never lives in this checked-in file.
+# Graph backend. The v1 LocalGraphStore/Neo4jGraphStore split is gone --
+# metis_mcp/neo4j_graph_store.py and load_dogfooding_corpus.py went with the v1
+# engine. There is one path now: metis_mcp/mbt/graph_session.py, whose driver
+# import is deferred so every file-based command runs with no database at all.
+# password_env names an environment variable holding the actual secret; the
+# secret never lives in this checked-in file (PLT-005).
 graph:
   backend: local
   neo4j:
@@ -59,10 +60,11 @@ repositories:
   #   classification: public_internal | confidential | restricted
   #   note: "REPLACE: why this classification, in one line"
 
-# Connector connection settings (Phase 2). application_code reads from a mock
-# Athena Postgres in this environment (see connectors/mock_athena_schema.sql
-# for why it's a mock, not real Athena) -- password_env, same indirection
-# pattern as graph.neo4j.password_env above.
+# Connector connection settings. Nothing reads these yet: there is no connector
+# loader in this build -- see connectors/README.md for what would have to exist.
+# The shape is kept because it is the contract a loader would satisfy, and
+# because password_env keeps the same indirection as graph.neo4j.password_env
+# above: the secret comes from the environment, never from this file (PLT-005).
 connectors:
   application_code:
     athena:
@@ -80,7 +82,7 @@ connectors:
 # against to already exist in Neo4j with a real owner_team.
 #
 # public_url: the real externally-reachable Streamable HTTP URL
-# (docs/metis-multi-client-integration.md's REPLACE-metis-host placeholders
+# (docs/historical/design-notes-v1/metis-multi-client-integration.md's REPLACE-metis-host placeholders
 # resolve from here) -- consumed by metis_mcp/copilot_integration.py to
 # generate .github/agents/spec-aware.agent.md. Unset here deliberately: no
 # real hostname/OAuth2 provider has been chosen yet (that doc's own §4).
@@ -91,11 +93,8 @@ server:
 security:
   jwt_secret_env: "METIS_JWT_SECRET"
 
-# §9.1 Headroom-style response compression (metis_mcp/token_optimization.py).
-# Opt-in, off by default -- REQ-METIS-COST-01 treats this as a
-# guardrail-boundary control, not a silent default. Applies only to
-# metis_get_context/metis_get_traceability/metis_impact_analysis; the
-# source_episode_id/source_span provenance fields are never compressed
-# regardless of this setting.
-token_optimization:
-  headroom_enabled: false
+# `token_optimization` was removed: it configured metis_mcp/token_optimization.py
+# for three tools (metis_get_context, metis_get_traceability,
+# metis_impact_analysis), none of which survived the v1 engine. Response size is
+# now a property of the surface itself -- metis_mcp/server.py returns compact,
+# pruned JSON and summarises by default -- not a setting.

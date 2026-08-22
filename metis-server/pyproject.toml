@@ -3,17 +3,22 @@ name = "metis-mcp-server"
 version = "0.1.0"
 description = "Métis MCP server — specification and requirements knowledge graph"
 requires-python = ">=3.10"
+license = "MIT"
+# Only what is imported. Every other distribution that used to be listed here
+# (psycopg, PyJWT, uvicorn, starlette, jsonschema, markdown, python-pptx) was
+# v1 residue with no importer anywhere in the tree.
+#
+#   mcp     metis_mcp/server.py
+#   neo4j   metis_mcp/mbt/graph_session.py — the driver import is deferred
+#           (graph_session.session), so every file-based command and the whole
+#           test suite still run with no database. It stays a hard dependency
+#           because five of the seven MCP tools query the graph: an install of
+#           `metis-mcp-server` that cannot reach one is not a server.
+#   PyYAML  code_analysis/openapi.py
 dependencies = [
     "mcp>=1.0.0,<2.0.0",
-    "PyYAML>=6.0",
     "neo4j>=5.0.0",
-    "psycopg[binary]>=3.0.0",
-    "PyJWT>=2.0.0",
-    "uvicorn>=0.30.0",
-    "starlette>=0.37.0",
-    "jsonschema>=4.0.0",
-    "markdown>=3.5",
-    "python-pptx>=1.0.0",
+    "PyYAML>=6.0",
 ]
 
 [project.scripts]
@@ -24,9 +29,19 @@ test = [
     "pytest>=8.0",
 ]
 
-[tool.setuptools]
-packages = ["metis_mcp"]
+# `packages = ["metis_mcp"]` was a literal list, so the wheel shipped four
+# top-level modules and none of the twelve subpackages -- an editable install
+# resolves by path and hid it. CI now builds, installs and invokes the console
+# script, so this cannot regress unseen.
+[tool.setuptools.packages.find]
+include = ["metis_mcp*", "code_analysis*"]
+
+# The Joern query packs. Nothing resolves them by path at runtime -- a caller
+# passes the pack's already-emitted report -- so they ship for usability, not
+# for import.
+[tool.setuptools.package-data]
+code_analysis = ["packs/**/*.sc", "packs/**/*.yaml"]
 
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=64.0"]
 build-backend = "setuptools.build_meta"

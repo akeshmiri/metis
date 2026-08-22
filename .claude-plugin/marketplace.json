@@ -1,14 +1,14 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "metis",
-  "description": "Métis — AI-driven specification and requirements knowledge-graph platform for Quality Engineering. Skills for reviewing quarantined graph entities, checking state machines, onboarding repositories into ingestion, and rendering quality reports, plus the Métis MCP server itself.",
+  "description": "Métis recovers a behaviour model from code, compares it against what somebody said the system should do, and generates human-executable test cases from the part that survives human review. Nothing auto-approves: an unreviewed model produces no tests.",
   "owner": {
     "name": "Métis"
   },
   "plugins": [
     {
       "name": "metis",
-      "description": "Métis skills: review quarantined items with real graph context, check state machines for determinism/completeness/reachability (CONST-048/049), onboard a repository into the ingestion pipeline, and render quality snapshots as a dated deck or an always-current site. Skills route through the bundled metis agent.",
+      "description": "Five skills for the model-based testing pipeline: recover a behaviour model from a codebase and take it to the approval gate; turn a stated requirement into atomic acceptance criteria and reconcile them against the model; check a state machine for determinism, guard completeness, reachability and observability; extract Jira, Confluence, OpenAPI, Zephyr Scale, code or a database into one normalized intake document; and walk a reviewer through the model-approval gate. Skills route through the bundled metis agent, which is generated from the workflow registry.",
       "author": {
         "name": "Métis"
       },
@@ -17,7 +17,7 @@
     },
     {
       "name": "metis-mcp",
-      "description": "The Métis MCP server: traceability, coverage, impact analysis, quality and release reporting, test-design reporting, two-stage intake mining (Requirement + AcceptanceCriterion derivation from any Episode), and skill discovery. Install alongside the metis plugin to give its skills a live graph to work against.",
+      "description": "The Métis MCP server: seven read-only tools over the behaviour graph — list workflows, route a request to one, read a model, validate it for well-formedness, report its coverage ledger, check where a run got to, and explain why the surface cannot decide anything. Read-only by construction (N-8): approval, landing and publication go through the gated CLI, because a decision needs evidence a chat session cannot present. Install alongside the metis plugin to give its skills a live graph to work against.",
       "author": {
         "name": "Métis"
       },

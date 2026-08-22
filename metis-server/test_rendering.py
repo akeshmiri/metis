@@ -11,6 +11,7 @@ from metis_mcp.mbt import ALL_TRANSITIONS, GUARD_COVERAGE, generate
 from metis_mcp.mbt.coverage import (
     DIRECT,
     INDIRECT,
+    ComponentRef,
     build_ledger,
     credit_indirect,
     format_report,
@@ -25,6 +26,7 @@ from metis_mcp.rendering import (
     render,
     unrecoverable_fields,
 )
+from metis_mcp.rendering.test_case import render_path
 from mbt_fixtures import login_model
 
 
@@ -163,48 +165,48 @@ def test_t10_case_id_is_stable_across_runs():
     assert {k: v.id for k, v in a.items()} == {k: v.id for k, v in b.items()}
 
 
-def test_t10_same_walk_under_two_criteria_yields_the_same_case_id():
-    """The criterion is metadata, not identity."""
+def test_t10_the_criterion_is_metadata_not_identity():
+    """T-10's actual claim: two criteria selecting the same walk **with the same
+    data** yield one case.
+
+    It is asserted per-criterion-pair rather than globally because of T-10a. When
+    this was written no criterion varied data, so "same walk" and "same case"
+    coincided. Boundary analysis and pairwise both produce several cases over ONE
+    walk — `attempts = 4`, `= 5`, `= 6` — and under the global form all five
+    boundary cases hashed to a single id, so publishing them wrote one and
+    silently discarded four. The technique appeared to run and produced one test.
+    """
     model = login_model()
-    by_transition = {}
-    for criterion in (ALL_TRANSITIONS, GUARD_COVERAGE):
-        result = generate(model, criterion)
-        for case in render(model, result.paths).cases:
-            key = (case.act_step.transition_id, case.precondition_group)
-            by_transition.setdefault(key, set()).add(case.id)
-    collisions = {k: v for k, v in by_transition.items() if len(v) > 1}
-    assert not collisions, f"same walk produced differing ids: {collisions}"
+    by_walk: dict[tuple, set[str]] = {}
+    for criterion in ("all-states", "all-transitions"):
+        for path in generate(model, criterion, 10).paths:
+            key = (path.validated_transition_id, tuple(path.setup_transition_ids),
+                   path.data_note or "")
+            by_walk.setdefault(key, set()).add(render_path(model, path).id)
+
+    clashes = {k: v for k, v in by_walk.items() if len(v) > 1}
+    assert not clashes, f"same walk and data produced differing ids: {clashes}"
 
 
-# --------------------------------------------------------------------------
-# A-38 : shared preconditions survive into rendering
-# --------------------------------------------------------------------------
+def test_t10a_a_data_varying_technique_gets_one_id_per_case():
+    """The case T-10 did not anticipate, and the reason it needed T-10a.
 
-def test_a38_precondition_group_carried_into_cases():
-    _, _, rendered = _rendered()
-    from_initial = [c for c in rendered.cases if c.precondition_group == ()]
-    assert len(from_initial) == 3, (
-        f"three transitions leave the initial state, got {len(from_initial)}"
-    )
-    for case in from_initial:
-        assert case.precondition_steps == (), "no-setup group must render no precondition steps"
+    Five boundary cases over one transition are five tests. Sharing an id makes
+    four of them unpublishable and untrackable — `TestCase` merges on it.
+    """
+    model = login_model()
+    paths = [p for p in generate(model, "boundary-coverage", 10).paths]
+    over_one_walk: dict[tuple, list] = {}
+    for path in paths:
+        over_one_walk.setdefault(
+            (path.validated_transition_id, tuple(path.setup_transition_ids)), []).append(path)
 
-
-# --------------------------------------------------------------------------
-# A-41 / A-42 : the automation payload restates model facts; unknowns are marked
-# --------------------------------------------------------------------------
-
-def test_a41_payload_restates_only_model_facts():
-    model, _, rendered = _rendered()
-    case = next(c for c in rendered.cases if c.act_step.transition_id == "t06")
-    payload = build_payload(model, case)
-    assert payload["act"]["transition_id"] == "t06"
-    assert payload["act"]["guard"] == model.transitions["t06"].guard
-    assert payload["act"]["from_state"] == "Failed4"
-    assert payload["act"]["to_state"] == "AccountLocked"
-    assert [s["transition_id"] for s in payload["setup"]] == ["t02", "t03", "t04", "t05"]
-    assert payload["act"]["is_assertion"] is True
-    assert all(s["is_assertion"] is False for s in payload["setup"])
+    varied = max(over_one_walk.values(), key=len)
+    assert len(varied) > 1, "no walk carried several boundary cases to check"
+    ids = {render_path(model, p).id for p in varied}
+    assert len(ids) == len(varied), (
+        f"{len(varied)} cases over one walk share {len(ids)} id(s) — "
+        f"publishing would write one and discard the rest")
 
 
 def test_a42_unrecoverable_details_are_marked_not_guessed():
@@ -279,6 +281,87 @@ def test_report_always_states_its_criterion_and_the_tested_not_working_caveat():
 
 
 # --------------------------------------------------------------------------
+# P-16 -- the version a coverage figure is about
+# --------------------------------------------------------------------------
+
+_COMPONENT = ComponentRef(id="cmp-abc", component="login-api",
+                          version="3", commit_sha="a3f21c9")
+
+
+def test_p16_report_states_the_version_and_commit_it_refers_to():
+    model, result, _ = _rendered()
+    text = format_report(build_ledger(model, result, component=_COMPONENT))
+    assert "login-api v3 @ a3f21c9" in text, (
+        "spec P-16: a coverage report states the model version and commit"
+    )
+
+
+def test_p16_a_ledger_with_no_component_says_so_rather_than_omitting_it():
+    """The failure this replaces: a figure that quietly named no version at all.
+
+    Printing the number and staying silent about the missing version reads as
+    though the omission were not there. Naming it is the whole point.
+    """
+    model, result, _ = _rendered()
+    text = format_report(build_ledger(model, result))
+    assert "not recorded for this run (P-16)" in text
+    summary = build_ledger(model, result).summary()
+    assert summary["version"] is None and summary["commit"] is None
+
+
+def test_summary_carries_component_version_and_commit():
+    model, result, _ = _rendered()
+    summary = build_ledger(model, result, component=_COMPONENT).summary()
+    assert summary["component"] == "login-api"
+    assert summary["version"] == "3"
+    assert summary["commit"] == "a3f21c9"
+
+
+# --------------------------------------------------------------------------
+# Criterion coverage, without any execution result (C-10)
+# --------------------------------------------------------------------------
+
+def test_criteria_coverage_counts_acs_on_covered_transitions():
+    model, result, rendered = _rendered()
+    ids = {c.target_key: c.id for c in rendered.cases}
+    ledger = build_ledger(model, result, ids,
+                          validating_criteria={"t01": ["AC-001", "AC-002"],
+                                               "t02": ["AC-003"]})
+    assert ledger.criteria_covered() == ["AC-001", "AC-002", "AC-003"]
+    assert ledger.criteria_uncovered() == []
+    row = next(r for r in ledger.rows if r.transition_id == "t01")
+    assert row.criterion_ids == ("AC-001", "AC-002")
+
+
+def test_an_ac_on_an_uncovered_transition_counts_against_the_figure():
+    """The denominator must not shrink to what was covered.
+
+    `t17` is `planned` and therefore excluded from generation (P-11). An AC
+    validating it is real and uncovered; deriving the criteria denominator from
+    the ledger's rows would drop it, and the figure would rise by ignoring what
+    it missed.
+    """
+    model, result, _ = _rendered()
+    ledger = build_ledger(model, result,
+                          validating_criteria={"t01": ["AC-001"], "t17": ["AC-099"]})
+    assert ledger.criteria_covered() == ["AC-001"]
+    assert ledger.criteria_uncovered() == ["AC-099"]
+    assert ledger.summary()["criteria_uncovered"] == 1
+
+
+def test_the_report_never_mentions_execution_results():
+    """C-10/C-11: the ledger records coverage, not outcome."""
+    model, result, _ = _rendered()
+    text = format_report(build_ledger(model, result, component=_COMPONENT,
+                                      validating_criteria={"t01": ["AC-001"]}))
+    lowered = text.lower()
+    for forbidden in ("passed", "failed", "execution", "test run"):
+        assert forbidden not in lowered, (
+            f"{forbidden!r} implies an outcome; coverage is not an outcome (C-11)"
+        )
+
+
+# --------------------------------------------------------------------------
 # End-to-end shape
 # --------------------------------------------------------------------------
 
@@ -308,3 +391,88 @@ if __name__ == "__main__":
             print(f"ERROR {t.__name__}: {type(e).__name__}: {e}")
     print(f"\n{len(tests) - failures}/{len(tests)} passed")
     sys.exit(1 if failures else 0)
+
+
+# --------------------------------------------------------------------------
+# Request data (spec §7.4, T-9c). Until the pack recovered parameters, a case
+# for `POST /metric` printed no data requirements at all -- readable, unrunnable.
+# --------------------------------------------------------------------------
+
+def test_an_input_is_rendered_as_a_condition_never_a_value():
+    """M-9: Métis states what the data must satisfy; it does not invent data."""
+    from metis_mcp.rendering.test_case import input_condition
+
+    text = input_condition({"name": "metricDto", "location": "body",
+                            "type_name": "org.catools.athena.model.metrics.MetricDto",
+                            "required": True, "constraints": []})
+    assert text == "body.metricDto is a required MetricDto"
+    # Nothing that looks like a value.
+    assert "=" not in text and "{" not in text
+
+
+def test_an_optional_input_says_so():
+    from metis_mcp.rendering.test_case import input_condition
+
+    text = input_condition({"name": "page", "location": "query",
+                            "type_name": "int", "required": False, "constraints": []})
+    assert "optional" in text and "query.page" in text
+
+
+def test_declared_constraints_are_quoted_not_interpreted():
+    from metis_mcp.rendering.test_case import input_condition
+
+    text = input_condition({"name": "code", "location": "body", "type_name": "String",
+                            "required": True, "constraints": ["@Size(max = 15)"]})
+    assert "@Size(max = 15)" in text, "carried verbatim (M-8)"
+
+
+def test_inputs_and_guards_are_reported_separately():
+    """"What you must send" and "what must already be true" are prepared
+    differently; one undifferentiated list hides that."""
+    from metis_mcp.mbt.model import APPROVED, Model, State, Transition
+    from metis_mcp.mbt.path_generation import generate
+    from metis_mcp.rendering import format_case, render
+
+    model = Model(
+        id="p-api",
+        states={"Ready": State(id="Ready", name="Ready", surface="api",
+                               is_initial=True, lifecycle_state=APPROVED),
+                "Ok200": State(id="Ok200", name="Ok200", surface="api",
+                               lifecycle_state=APPROVED)},
+        transitions={"t": Transition(
+            id="t", source="Ready", trigger="POST /thing", target="Ok200",
+            guard="caller.isKnown()", lifecycle_state=APPROVED, outcome_status=200,
+            inputs=({"name": "body", "location": "body", "type_name": "ThingDto",
+                     "required": True, "constraints": []},))},
+    )
+    text = format_case(render(model, generate(model, "all-transitions", 5).paths).cases[0])
+    assert "Request data required:" in text
+    assert "body.body is a required ThingDto" in text
+    assert "Test data requirements:" in text
+    assert "caller.isKnown()" in text
+
+
+def test_the_payload_reports_method_and_path_it_actually_holds():
+    """T-9d marks what is unknown. Marking a field we hold says the wrong thing."""
+    from metis_mcp.mbt.model import APPROVED, Model, State, Transition
+    from metis_mcp.mbt.path_generation import generate
+    from metis_mcp.rendering import build_payload, render
+    from metis_mcp.rendering.payload import UNRECOVERABLE
+
+    model = Model(
+        id="p-api",
+        states={"Ready": State(id="Ready", name="Ready", surface="api",
+                               is_initial=True, lifecycle_state=APPROVED),
+                "Ok200": State(id="Ok200", name="Ok200", surface="api",
+                               lifecycle_state=APPROVED)},
+        transitions={"t": Transition(
+            id="t", source="Ready", trigger="GET /thing/{id}", target="Ok200",
+            lifecycle_state=APPROVED, outcome_status=200,
+            guard_anchor="Thing.java:12@abc")},
+    )
+    case = render(model, generate(model, "all-transitions", 5).paths).cases[0]
+    act = build_payload(model, case)["act"]["act"]
+    assert act["method"] == "GET" and act["path"] == "/thing/{id}"
+    assert act["expected_status"] == 200
+    assert build_payload(model, case)["act"]["anchor"] == "Thing.java:12@abc"
+    assert UNRECOVERABLE not in (act["method"], act["path"])

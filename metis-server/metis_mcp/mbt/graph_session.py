@@ -67,9 +67,44 @@ def session(uri: str | None = None, user: str | None = None):
             "the neo4j driver is not installed; run: pip install neo4j"
         ) from e
 
+    # **Notifications are deliberately NOT filtered.** The obvious tidy-up here
+    # is to disable the `UNRECOGNIZED` classification: querying a graph that has
+    # not been populated yet is a normal state (`entity render` before a
+    # glossary is landed), and Neo4j answers with a multi-line notice per unknown
+    # property key that buries the command's own message.
+    #
+    # That was tried and reverted. The same classification carries "label does
+    # not exist" -- which is precisely how a query written against `:Transition`
+    # announces that it matched nothing because the nodes carry `:ApiCall`. That
+    # is the failure mode this codebase has been bitten by repeatedly, and it is
+    # silent everywhere else. Trading it away to quieten an empty-graph notice is
+    # the wrong side of the deal.
+    #
+    # If the noise needs solving, solve it where it is displayed, not by asking
+    # the server to stop reporting.
     driver = GraphDatabase.driver(config.uri, auth=(config.user, config.password))
+
     try:
         with driver.session() as s:
             yield s
     finally:
         driver.close()
+
+
+def count_written(result) -> int:
+    """The `written` column of a `RETURN count(...) AS written`.
+
+    Lives here because both writers need it and neither may import the other:
+    `model_sources.landing` already imports from `mbt`, so the helper cannot sit
+    on either side of that edge.
+
+    A real driver always returns a `Result`; `None` only comes from a recording
+    fake in a test, and crashing on one would make the writers untestable
+    without a container. Zero is the honest answer there — the stub did not
+    claim to write anything.
+    """
+    if result is None:
+        return 0
+    for row in result:
+        return int(row["written"])
+    return 0

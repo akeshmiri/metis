@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "protocol": "mcp_client",
   "mcp_config": {
-    "server_provider": "Same GitHub/Git MCP server -- Locust scripts live in-repo, per Atlas's existing locust-workflow skill convention",
+    "server_provider": "Same GitHub/Git MCP server -- Locust scripts live in-repo, which is the convention this connector assumes",
     "server_address_or_command": "REPLACE: same repo access as application-code, scoped to the locust/performance test path",
     "transport": "stdio",
     "auth_type": "personal_access_token",

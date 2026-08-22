@@ -42,23 +42,72 @@ def _step_payload(model: Model, step: Step) -> dict:
 
     # T-9d: fields we cannot recover are present and explicitly marked, so an
     # automation layer can distinguish "not applicable" from "not yet known".
-    payload["act"] = _act_detail(source.surface, transition.trigger)
+    payload["act"] = _act_detail(source.surface, transition.trigger, transition, model)
     payload["assert"] = (
         {"expected_state": target.name, "observable": UNRECOVERABLE}
         if step.is_assertion else None
     )
-    payload["anchor"] = UNRECOVERABLE  # populated once extraction lands (M-14)
+    # M-14 / T-9a: the guard's own `file:line@commit`. This was marked
+    # unrecoverable while the pack was already emitting it and synthesis was
+    # throwing it away.
+    payload["anchor"] = transition.guard_anchor or UNRECOVERABLE
     return payload
 
 
-def _act_detail(surface: str, trigger: str) -> dict:
-    """Surface-specific act detail, with unknowns marked rather than invented."""
+def _act_detail(surface: str, trigger: str, transition=None, model=None) -> dict:
+    """Surface-specific act detail, with unknowns marked rather than invented.
+
+    **Method and path are not unknowns.** They were marked `UNRECOVERABLE` while
+    the trigger sitting beside them read `GET /metric/{id}` -- T-9d exists so an
+    automation layer can tell "not applicable" from "not yet known", and marking
+    a field we hold makes it say the wrong one.
+    """
     if surface == "api":
-        return {"kind": "api_call", "method": UNRECOVERABLE, "path": UNRECOVERABLE,
-                "derived_from_trigger": trigger}
+        verb, _, path = trigger.partition(" ")
+        detail = {"kind": "api_call",
+                  "method": verb.upper() if verb.isalpha() else UNRECOVERABLE,
+                  "path": path.strip() or UNRECOVERABLE,
+                  "derived_from_trigger": trigger}
+        if transition is not None:
+            # Conditions on the request, never values (T-9c).
+            detail["inputs"] = [dict(p) for p in (transition.inputs or ())]
+            detail["security"] = [dict(s) for s in (transition.security or ())]
+            if transition.outcome_status is not None:
+                detail["expected_status"] = transition.outcome_status
+        return detail
     if surface == "ui":
-        return {"kind": "ui_action", "action": UNRECOVERABLE, "element": UNRECOVERABLE,
-                "derived_from_trigger": trigger}
+        # Same defect the API branch had: both fields were marked unrecoverable
+        # while the trigger beside them read `click toggle`. T-9d exists so an
+        # automation layer can tell "not applicable" from "not yet known", and
+        # marking a field we hold makes it say the wrong one.
+        #
+        # The split is honest about what each pack recovers: `js-ui` gives a real
+        # event and a receiver *variable* (never a selector, which it refuses to
+        # guess); `react-ui` gives no action at all, because JSX handler bindings
+        # are not structurally recoverable — so that stays marked.
+        verb, _, rest = trigger.partition(" ")
+        known_events = ("click", "submit", "change", "input", "scroll", "open")
+        recognised = verb.lower() in known_events
+        detail = {"kind": "ui_action",
+                  "action": verb.lower() if recognised else UNRECOVERABLE,
+                  # Only meaningful when the trigger really is `<event> <target>`.
+                  # `react-ui` triggers read "the summary request completes", and
+                  # splitting that on the first space yields a fragment of a
+                  # sentence — a field that looks like a target and is not.
+                  "element_hint": (rest.strip() or UNRECOVERABLE) if recognised
+                                  else UNRECOVERABLE,
+                  # Never a selector: `js-ui` refuses to guess one, and an
+                  # automation layer must not bind to a variable name as if it
+                  # were one.
+                  "element": UNRECOVERABLE,
+                  "derived_from_trigger": trigger}
+        if transition is not None:
+            state = model.states.get(transition.target) if model else None
+            if state is not None and getattr(state, "condition", ""):
+                # The expected page condition — what a tester actually asserts.
+                detail["expected_condition"] = state.condition
+                detail["page"] = getattr(state, "page", "")
+        return detail
     return {"kind": "unknown_surface", "derived_from_trigger": trigger}
 
 
@@ -76,7 +125,7 @@ def build_payload(model: Model, case: TestCase) -> dict:
         # Structured, not flattened to strings: an automation layer needs to know
         # which steps each condition applies to (T-9c -- conditions, not values).
         "data_requirements": [
-            {"condition": r.condition, "steps": list(r.steps)}
+            {"condition": r.condition, "steps": list(r.steps), "kind": r.kind}
             for r in case.data_requirements
         ],
         "labels": list(case.labels),

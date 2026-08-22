@@ -1,6 +1,6 @@
 {
   "name": "metis",
-  "description": "Métis skills for Quality Engineering against a requirements knowledge graph: review-assist (walk one Quarantine-tier item to an honest Approve/Reject), behavior-modeling (determinism/completeness/reachability checks per CONST-048/049), onboarding (the 6-step runbook for adding a repository to ingestion), deck-renderer (dated .pptx quality snapshot) and site-renderer (always-current static site).",
+  "description": "M\u00e9tis skills for Quality Engineering against a behaviour knowledge graph: knowledge-capture (turn a stated requirement into atomic acceptance criteria, then report what the model already has, what contradicts it, and what is new), model-build (recover a model from a code property graph and take it to the approval gate), review-assist (walk a reviewer through G1 to a recorded decision), behavior-modeling (determinism, guard completeness, reachability and observability), and intake-processor (extract a real source into one Unified Intake Format document). Every skill proposes; nothing approves.",
   "version": "0.1.0",
   "keywords": [
     "requirements",

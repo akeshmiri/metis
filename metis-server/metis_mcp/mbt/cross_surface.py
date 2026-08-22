@@ -71,9 +71,32 @@ class LinkSet:
 
     journey: str
     links: list[InvokesLink] = field(default_factory=list)
+    # What a UI action **starts** (M-5a's `TRIGGERS`), kept separate from what it
+    # **observed** (`INVOKES`). Same record shape, different claim — and a
+    # different cardinality: a trigger fans out, an observation is one-to-one.
+    triggers: list[InvokesLink] = field(default_factory=list)
 
     def confirmed(self) -> list[InvokesLink]:
         return [l for l in self.links if l.is_confirmed]
+
+    def confirmed_triggers(self) -> list[InvokesLink]:
+        return [l for l in self.triggers if l.is_confirmed]
+
+    def triggered_map(self, confirmed_only: bool = True) -> dict[str, list[str]]:
+        """`{ui_transition_id: [api_transition_id, ...]}` — **all** of them.
+
+        A dict of lists rather than a dict, because a page opening three panels
+        starts three calls. Storing this in the one-to-one `as_map` shape kept
+        one and silently dropped the rest.
+        """
+        source = self.confirmed_triggers() if confirmed_only else self.triggers
+        out: dict[str, list[str]] = {}
+        for link in source:
+            out.setdefault(link.ui_transition_id, []).append(link.api_transition_id)
+        return out
+
+    def triggered_api_ids(self, confirmed_only: bool = True) -> set[str]:
+        return {i for ids in self.triggered_map(confirmed_only).values() for i in ids}
 
     def as_map(self, confirmed_only: bool = True) -> dict[str, str]:
         """The `{ui_transition_id: api_transition_id}` shape `coverage.credit_indirect`
@@ -275,7 +298,12 @@ def divergences(ui_model: Model, api_model: Model, links: LinkSet,
     # API-only: reachable by a client but never exposed through the UI.
     for tid in api_model.transition_ids():
         transition = api_model.transitions[tid]
-        if transition.implementation_status != IMPLEMENTED or tid in invoked:
+        if (transition.implementation_status != IMPLEMENTED
+                or tid in invoked
+                or tid in links.triggered_api_ids(confirmed_only)):
+            # A triggered-but-unobserved call is not API-only — the UI does reach
+            # it. That is the unhandled-outcome finding below, and reporting both
+            # would double-count one problem as two.
             continue
         findings.append(Divergence(
             kind=API_ONLY, element_id=tid, counterpart_id="",
@@ -297,19 +325,36 @@ def divergences(ui_model: Model, api_model: Model, links: LinkSet,
                         f"model any more"),
                 remedy="re-extract the API surface, or retire the UI transition"))
 
-    # Unhandled outcome: the UI cannot render a response the API can produce.
+    # Unhandled outcome: the UI *starts* this call and can never render this
+    # result. **This is a direct query now.** It used to be inferred from a
+    # same-trigger heuristic over the invokes map, because one edge type could
+    # not distinguish "the UI starts this flow" from "the UI rendered this
+    # outcome". With `TRIGGERS` separate, the question is exactly:
+    #
+    #     triggered by some UiAction, and observed by none.
+    triggered = links.triggered_api_ids(confirmed_only)
     ui_targets = {t.target for t in ui_model.transitions.values()}
     reverse: dict[str, list[str]] = {}
     for ui_id, api_id in links.as_map(confirmed_only).items():
         reverse.setdefault(api_id, []).append(ui_id)
+
     for tid in api_model.transition_ids():
         api_transition = api_model.transitions[tid]
-        if api_transition.implementation_status != IMPLEMENTED:
+        if api_transition.implementation_status != IMPLEMENTED or tid in reverse:
             continue
-        if tid in reverse or not ui_targets:
+        if tid in triggered:
+            findings.append(Divergence(
+                kind=UNHANDLED_OUTCOME, element_id=tid, counterpart_id="",
+                detail=(f"the UI starts {api_transition.trigger!r} but has no "
+                        f"transition for the {api_transition.target} outcome — the "
+                        f"call is made and this result can never be rendered (M-5f)"),
+                remedy="add the UI transition that renders this outcome (M-5b), or "
+                       "confirm the outcome is genuinely unreachable from the UI"))
             continue
-        # Reported only where the UI models this trigger at all; otherwise the
-        # whole flow is simply absent, which API_ONLY already says.
+        if not ui_targets:
+            continue
+        # No TRIGGERS recorded: fall back to the older same-trigger inference, so
+        # a journey whose links predate this split still reports something.
         same_trigger = [l for l in links.as_map(confirmed_only).values()
                         if l in api_model.transitions
                         and api_model.transitions[l].trigger == api_transition.trigger]
@@ -431,14 +476,30 @@ def format_divergences(findings: list[Divergence]) -> str:
 # Persistence
 # --------------------------------------------------------------------------
 
+# `confirmed_by` is a HUMAN fact: **an empty value never clears a real one.**
+#
+# It was in the unconditional SET, so re-running the proposal step — which passes
+# an empty `confirmed_by`, because a fresh proposal has no confirmation —
+# **wiped every confirmation that existed**. Silently, and on a step whose whole
+# purpose is to be re-runnable.
+#
+# `ON CREATE SET` is the wrong fix here, because confirming travels through this
+# same statement (`persist_invokes(..., confirmed_only=True)`) and would then
+# never write. The condition below serves both callers: a proposal leaves an
+# existing confirmation alone, and a confirmation always lands.
 INVOKES_CYPHER = """
-MATCH (ui:Transition {id: $ui_id})
-MATCH (api:Transition {id: $api_id})
+MATCH (ui:Transition|ApiCall|UiAction {id: $ui_id})
+MATCH (api:Transition|ApiCall|UiAction {id: $api_id})
 MERGE (ui)-[r:INVOKES]->(api)
 SET r.proposed_by = $proposed_by,
-    r.confirmed_by = $confirmed_by,
-    r.evidence = $evidence
+    r.evidence = $evidence,
+    r.confirmed_by = CASE WHEN $confirmed_by <> ''
+                          THEN $confirmed_by
+                          ELSE coalesce(r.confirmed_by, '') END
 """
+
+# Same shape, different claim: this interaction *starts* that flow.
+TRIGGERS_CYPHER = INVOKES_CYPHER.replace("[r:INVOKES]", "[r:TRIGGERS]")
 
 
 def plan_invokes_writes(links: LinkSet, confirmed_only: bool = True) -> list[dict]:
@@ -458,10 +519,66 @@ def plan_invokes_writes(links: LinkSet, confirmed_only: bool = True) -> list[dic
     } for link in sorted(source, key=lambda l: (l.ui_transition_id, l.api_transition_id))]
 
 
-def persist_invokes(session, links: LinkSet, confirmed_only: bool = True) -> int:
-    """Write the links. Confirmed only by default (M-5g)."""
+def persist_triggers(session, links: LinkSet,
+                     confirmed_only: bool = True) -> tuple[int, list[tuple[str, str]]]:
+    """Write the `TRIGGERS` edges. Same honesty about what actually landed."""
+    return _persist(session, TRIGGERS_CYPHER,
+                    links.confirmed_triggers() if confirmed_only else links.triggers,
+                    "TRIGGERS")
+
+
+def persist_invokes(session, links: LinkSet,
+                    confirmed_only: bool = True) -> tuple[int, list[tuple[str, str]]]:
+    """Write the links. Confirmed only by default (M-5g).
+
+    Returns `(written, unmatched)` — and the second half is the point.
+
+    **It used to count rows it planned, not writes it made.** `INVOKES_CYPHER`
+    opens with two `MATCH`es; if either transition id is absent the statement
+    matches nothing and merges nothing, and the old counter incremented anyway.
+    That is how a rebuild reported "91 INVOKES proposal(s)" into a graph holding
+    zero of them: the UI transition ids had changed under a new synthesiser, and
+    every single link silently referred to a transition that no longer existed.
+
+    A write path that cannot tell success from silence will always eventually
+    report the wrong number, so this asks the database what it did.
+    """
+    return _persist(session, INVOKES_CYPHER,
+                    links.confirmed() if confirmed_only else links.links, "INVOKES")
+
+
+def _persist(session, cypher: str, source, rel_type: str
+             ) -> tuple[int, list[tuple[str, str]]]:
     written = 0
-    for params in plan_invokes_writes(links, confirmed_only):
-        session.run(INVOKES_CYPHER, **params)
-        written += 1
-    return written
+    unmatched: list[tuple[str, str]] = []
+    for params in [{"ui_id": l.ui_transition_id, "api_id": l.api_transition_id,
+                    "proposed_by": l.proposed_by, "confirmed_by": l.confirmed_by,
+                    "evidence": ", ".join(f"{k}={v}" for k, v in sorted(l.evidence.items()))}
+                   for l in source]:
+        result = session.run(cypher, **params)
+        summary = getattr(result, "consume", lambda: None)()
+        counters = getattr(summary, "counters", None)
+        created = getattr(counters, "relationships_created", None)
+        if created is None:
+            # A stub session with no counters: fall back to the planned count
+            # rather than reporting zero, and do not claim to have verified it.
+            written += 1
+            continue
+        if created or _edge_exists(session, params, rel_type):
+            written += 1
+        else:
+            unmatched.append((params["ui_id"], params["api_id"]))
+    return written, unmatched
+
+
+def _edge_exists(session, params: dict, rel_type: str = "INVOKES") -> bool:
+    """Whether the MERGE landed on an edge that was already there.
+
+    `relationships_created` is 0 both when nothing matched and when the edge
+    already existed. Only the second is a success, so the two are told apart
+    rather than guessed at.
+    """
+    rows = list(session.run(
+        f"MATCH (:Transition|ApiCall|UiAction {{id:$ui_id}})-[r:{rel_type}]->(:Transition|ApiCall|UiAction {{id:$api_id}}) "
+        f"RETURN count(r) AS n", ui_id=params["ui_id"], api_id=params["api_id"]))
+    return bool(rows and rows[0]["n"])

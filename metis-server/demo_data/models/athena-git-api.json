@@ -20,8 +20,14 @@
       "is_initial": false
     },
     {
-      "id": "Created201",
-      "name": "Created201",
+      "id": "CommitPresent",
+      "name": "CommitPresent",
+      "surface": "api",
+      "is_initial": false
+    },
+    {
+      "id": "RepoPresent",
+      "name": "RepoPresent",
       "surface": "api",
       "is_initial": false
     }
@@ -33,15 +39,41 @@
       "trigger": "GET /commit",
       "target": "NoContent204",
       "guard": "t.isEmpty()",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 204,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "hash",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.git.rest.controller.CommitController.search:org.springframework.http.ResponseEntity(java.lang.String)::GET->Ok200",
-      "source": "Ready",
+      "source": "CommitPresent",
       "trigger": "GET /commit",
       "target": "Ok200",
-      "guard": "NOT (t.isEmpty())",
-      "implementation_status": "implemented"
+      "guard": "",
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "hash",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.git.rest.controller.CommitController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204",
@@ -49,23 +81,62 @@
       "trigger": "GET /commit/{id}",
       "target": "NoContent204",
       "guard": "t.isEmpty()",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 204,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "id",
+          "location": "path",
+          "type_name": "java.lang.Long",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.git.rest.controller.CommitController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->Ok200",
-      "source": "Ready",
+      "source": "CommitPresent",
       "trigger": "GET /commit/{id}",
       "target": "Ok200",
-      "guard": "NOT (t.isEmpty())",
-      "implementation_status": "implemented"
+      "guard": "",
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "id",
+          "location": "path",
+          "type_name": "java.lang.Long",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.git.rest.controller.CommitController.saveOrUpdate:org.springframework.http.ResponseEntity(org.catools.athena.model.git.CommitDto)::POST->Created201",
       "source": "Ready",
       "trigger": "POST /commit",
-      "target": "Created201",
+      "target": "CommitPresent",
       "guard": "",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 201,
+      "guard_anchor": "",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "commit",
+          "location": "body",
+          "type_name": "org.catools.athena.model.git.CommitDto",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.git.rest.controller.GitRepositoryController.getSummary:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String,java.lang.String,java.lang.Integer)::GET->Ok200",
@@ -73,7 +144,41 @@
       "trigger": "GET /summary",
       "target": "Ok200",
       "guard": "",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "keyword",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "host",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "freshness",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "windowDays",
+          "location": "query",
+          "type_name": "java.lang.Integer",
+          "required": false,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.git.rest.controller.GitRepositoryController.getTrend:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String,java.lang.String,java.lang.Integer)::GET->Ok200",
@@ -81,7 +186,41 @@
       "trigger": "GET /trend",
       "target": "Ok200",
       "guard": "",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "keyword",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "host",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "freshness",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "windowDays",
+          "location": "query",
+          "type_name": "java.lang.Integer",
+          "required": false,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.git.rest.controller.GitRepositoryController.getAll:org.springframework.http.ResponseEntity(int,int,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String)::GET->Ok200",
@@ -89,7 +228,62 @@
       "trigger": "GET /all",
       "target": "Ok200",
       "guard": "",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "page",
+          "location": "query",
+          "type_name": "int",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "size",
+          "location": "query",
+          "type_name": "int",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "sort",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "direction",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "keyword",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "host",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "freshness",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.git.rest.controller.GitRepositoryController.search:org.springframework.http.ResponseEntity(java.lang.String)::GET->NoContent204",
@@ -97,15 +291,41 @@
       "trigger": "GET /repo",
       "target": "NoContent204",
       "guard": "t.isEmpty()",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 204,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "keyword",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.git.rest.controller.GitRepositoryController.search:org.springframework.http.ResponseEntity(java.lang.String)::GET->Ok200",
-      "source": "Ready",
+      "source": "RepoPresent",
       "trigger": "GET /repo",
       "target": "Ok200",
-      "guard": "NOT (t.isEmpty())",
-      "implementation_status": "implemented"
+      "guard": "",
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "keyword",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.git.rest.controller.GitRepositoryController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204",
@@ -113,23 +333,62 @@
       "trigger": "GET /repo/{id}",
       "target": "NoContent204",
       "guard": "t.isEmpty()",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 204,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "id",
+          "location": "path",
+          "type_name": "java.lang.Long",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.git.rest.controller.GitRepositoryController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->Ok200",
-      "source": "Ready",
+      "source": "RepoPresent",
       "trigger": "GET /repo/{id}",
       "target": "Ok200",
-      "guard": "NOT (t.isEmpty())",
-      "implementation_status": "implemented"
+      "guard": "",
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "id",
+          "location": "path",
+          "type_name": "java.lang.Long",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.git.rest.controller.GitRepositoryController.saveOrUpdate:org.springframework.http.ResponseEntity(org.catools.athena.model.git.GitRepositoryDto)::POST->Created201",
       "source": "Ready",
       "trigger": "POST /repo",
-      "target": "Created201",
+      "target": "RepoPresent",
       "guard": "",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 201,
+      "guard_anchor": "",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "repository",
+          "location": "body",
+          "type_name": "org.catools.athena.model.git.GitRepositoryDto",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     }
   ]
 }

@@ -34,6 +34,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from metis_mcp.behavior_model import split_conjuncts
 from metis_mcp.mbt.model import IMPLEMENTED, Model
 from metis_mcp.reconciliation.matching import CODE_DERIVED, AcceptanceCriterion
 
@@ -41,6 +42,43 @@ from metis_mcp.reconciliation.matching import CODE_DERIVED, AcceptanceCriterion
 # restates the code adds nothing; the value is in the edits.
 REVIEW_PROMPT = ("Is this what the system SHOULD do? Edit it if not. "
                  "Confirming it unchanged leaves it code_derived (S-19).")
+
+# An acceptance criterion is **atomic**: one condition, one action, one
+# validation. A drafted criterion that carried a whole compound guard in its
+# `and` clause was not one criterion -- it was several wearing one id, and a
+# reviewer could only approve or reject the bundle.
+ATOMIC = "atomic"
+NOT_DECOMPOSABLE = "not_decomposable"
+
+
+def decompose_guard(guard: str) -> tuple[tuple[str, ...], str, str]:
+    """`(preconditions, deciding_condition, atomicity)` -- GD-2's own split.
+
+    **Not one criterion per conjunct.** That reading is false: from
+    `authenticated AND !authorized -> 403`, "when a request is made, and
+    authenticated, then 403" claims something the system does not do. Being
+    authenticated alone produces no rejection.
+
+    GD-2 already says what the parts mean. A rejection guard is
+    `(dimensions 1..k-1 all pass) AND (dimension k fails)`: the prefix is the
+    **context the interaction happens in**, and only the last dimension is the
+    **condition under test**. So the prefix belongs in the Given, where context
+    belongs, and the deciding condition is the criterion's single condition.
+    Nothing is dropped -- each part is placed by the role it actually plays.
+
+    Order comes from `split_conjuncts`, which preserves source order, and source
+    order is precedence order for a recovered guard (§5.4a).
+
+    Fails closed. A guard containing an `OR` is a disjunction, and deciding which
+    branch is the deciding one needs real boolean reasoning (M-17). It is
+    returned whole and marked `NOT_DECOMPOSABLE` rather than split on a guess.
+    """
+    parts = split_conjuncts(guard)
+    if parts is None:
+        # Either empty -- an unguarded transition, which is atomic already -- or
+        # a disjunction this cannot honestly take apart.
+        return (), guard.strip(), ATOMIC if not guard.strip() else NOT_DECOMPOSABLE
+    return tuple(parts[:-1]), parts[-1], ATOMIC
 
 
 def _humanise_trigger(trigger: str) -> str:
@@ -69,7 +107,12 @@ def _humanise_state(name: str) -> str:
 
 @dataclass(frozen=True)
 class DraftCriterion:
-    """One drafted criterion, always `CODE_DERIVED` (spec S-19)."""
+    """One drafted criterion, always `CODE_DERIVED` (spec S-19), and atomic.
+
+    `and_guard` holds the **single** condition under test. Everything the guard
+    required in order to reach that condition sits in `preconditions`, rendered
+    into the Given where context belongs (GD-2, `decompose_guard`).
+    """
 
     id: str
     transition_id: str
@@ -79,15 +122,22 @@ class DraftCriterion:
     then: str
     model_id: str
     anchor: str = ""
+    preconditions: tuple[str, ...] = ()
+    atomicity: str = ATOMIC
 
     @property
     def provenance(self) -> str:
         return CODE_DERIVED
 
     @property
+    def is_atomic(self) -> bool:
+        return self.atomicity == ATOMIC
+
+    @property
     def text(self) -> str:
+        context = "".join(f" and {p}" for p in self.preconditions)
         middle = f", and {self.and_guard}" if self.and_guard else ""
-        return f"Given {self.given}, when {self.when}{middle}, then {self.then}."
+        return f"Given {self.given}{context}, when {self.when}{middle}, then {self.then}."
 
     def to_criterion(self) -> AcceptanceCriterion:
         return AcceptanceCriterion(id=self.id, text=self.text,
@@ -100,6 +150,11 @@ class DraftSet:
     model_id: str
     drafts: list[DraftCriterion] = field(default_factory=list)
     skipped: list[tuple[str, str]] = field(default_factory=list)
+    # Drafted, but carrying more than one condition. **Deliberately not in
+    # `skipped`**: "nothing was written for this transition" and "something was
+    # written and it is not atomic" have different causes and different fixes,
+    # and one list holding both makes the coverage figure mean two things.
+    not_atomic: list[tuple[str, str]] = field(default_factory=list)
 
     @property
     def coverage(self) -> str:
@@ -127,15 +182,25 @@ def draft_from_model(model: Model, prefix: str = "DRAFT") -> DraftSet:
         source = model.states.get(t.source)
         target = model.states.get(t.target)
         n += 1
+        preconditions, deciding, atomicity = decompose_guard(t.guard)
         out.drafts.append(DraftCriterion(
             id=f"{prefix}-{n:03d}",
             transition_id=tid,
             given=f"the system is {_humanise_state(source.name) if source else t.source}",
             when=_humanise_trigger(t.trigger),
-            and_guard=t.guard,
+            and_guard=deciding,
             then=f"the result is {_humanise_state(target.name) if target else t.target}",
             model_id=model.id,
+            preconditions=preconditions,
+            atomicity=atomicity,
         ))
+        if atomicity == NOT_DECOMPOSABLE:
+            # Reported, not hidden. The draft is still emitted -- a reviewer
+            # disagreeing with a compound sentence is more use than no sentence --
+            # but it is not presented as though it were atomic.
+            out.not_atomic.append(
+                (tid, f"guard is a disjunction and was not split; the criterion "
+                      f"carries more than one condition: {t.guard}"))
     return out
 
 
@@ -148,6 +213,14 @@ def format_drafts(drafts: DraftSet) -> str:
         lines.append(f"      {d.text}")
     if len(drafts.drafts) > 12:
         lines.append(f"  ... and {len(drafts.drafts) - 12} more")
+    if drafts.not_atomic:
+        lines += ["",
+                  "  Not atomic — these carry more than one condition, because "
+                  "their guard is a",
+                  "  disjunction and splitting it would require guessing which "
+                  "branch decides (M-17):"]
+        for tid, reason in drafts.not_atomic:
+            lines.append(f"    {tid:<12} {reason}")
     lines += ["",
               "  EVERY draft above is code_derived: it was written FROM the",
               "  behaviour it describes. None of it can support a correctness",

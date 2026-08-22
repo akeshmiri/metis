@@ -7,6 +7,7 @@ import sys
 
 from metis_mcp.mbt.model import IMPLEMENTED, PLANNED, Model, State, Transition
 from metis_mcp.mbt.validation import (
+    AC_ATOMICITY,
     ADVISORY,
     BLOCKING,
     DETERMINISM,
@@ -15,6 +16,7 @@ from metis_mcp.mbt.validation import (
     REACHABILITY,
     UNVERIFIABLE,
     ValidationFailed,
+    check_ac_atomicity,
     check_ac_coverage,
     check_determinism,
     check_guard_completeness,
@@ -24,6 +26,7 @@ from metis_mcp.mbt.validation import (
     require_valid,
     validate,
 )
+from metis_mcp.behavior_model import _guard_coverage_gap
 from mbt_fixtures import login_model
 
 
@@ -400,6 +403,115 @@ def test_findings_are_deterministic_across_runs():
     first = [f.describe() for f in validate(model).findings]
     second = [f.describe() for f in validate(model).findings]
     assert first == second and first
+
+
+# --------------------------------------------------------------------------
+# Joint exhaustiveness of a boolean case-split (M-17).
+# --------------------------------------------------------------------------
+
+def test_a_three_way_boolean_case_split_is_provably_complete():
+    """The shape a modelled rejection produces, and it was reported unverifiable.
+
+    `NOT (request_accepted)` takes everything outside `request_accepted`; inside
+    it, the two senses of `t.isEmpty()` partition what is left. No interpretation
+    of either atom is needed to see that.
+    """
+    assert _guard_coverage_gap([
+        "request_accepted AND t.isEmpty()",
+        "request_accepted AND NOT (t.isEmpty())",
+        "NOT (request_accepted)",
+    ]) is None
+
+
+def test_an_uncovered_combination_is_named_but_never_called_a_gap():
+    """Completeness is provable here; INCOMPLETENESS is not.
+
+    The atoms are opaque strings and may be dependent -- `t.isEmpty()` and
+    `t.isPresent()` cannot both hold. So an uncovered row may be a row that
+    cannot occur, and promoting it to a blocking finding would assert a defect
+    the checker cannot establish. It is named, and left unverifiable.
+    """
+    reason = _guard_coverage_gap([
+        "request_accepted AND t.isEmpty()",
+        "NOT (request_accepted)",
+    ])
+    assert reason is not None
+    assert "request_accepted AND NOT (t.isEmpty())" in reason
+    # The two phrases validation.py promotes to BLOCKING must not appear.
+    assert "gap in guard coverage" not in reason
+    assert "no guard covers" not in reason
+
+
+def test_the_named_combination_is_reported_as_unverifiable_not_blocking():
+    """The severity, not just the wording -- the coupling above is by substring,
+    so it is checked through the real checker rather than assumed."""
+    model = _model(
+        [("A", True), ("B", False)],
+        [("t1", "A", "go", "B", "request_accepted AND t.isEmpty()"),
+         ("t2", "A", "go", "B", "NOT (request_accepted)")],
+    )
+    findings = check_guard_completeness(model)
+    assert [f.severity for f in findings] == [UNVERIFIABLE]
+
+
+def test_numeric_thresholds_are_still_decided_by_intervals():
+    """Treating `attempts < 5` and `attempts >= 5` as independent booleans would
+    invent an impossible row and report a gap the interval pass rightly does
+    not see."""
+    assert _guard_coverage_gap(["attempts < 5", "attempts >= 5"]) is None
+
+
+def test_a_real_numeric_gap_is_still_found_and_still_blocks():
+    reason = _guard_coverage_gap(["severity >= 0.9", "severity < 0.5"])
+    assert reason is not None and "gap in guard coverage" in reason
+
+
+# --------------------------------------------------------------------------
+# AC atomicity — one condition, one action, one validation
+# --------------------------------------------------------------------------
+
+def _one_transition(guard: str) -> Model:
+    return Model(
+        id="atom-api",
+        states={"Ready": State(id="Ready", name="Ready", surface="api", is_initial=True),
+                "Done": State(id="Done", name="Done", surface="api")},
+        transitions={"t": Transition(id="t", source="Ready", trigger="go",
+                                     target="Done", guard=guard)},
+    )
+
+
+def test_a_conjunctive_guard_is_atomic_because_gd2_decomposes_it():
+    """`a AND b` is fine: GD-2 puts the prefix in the Given and keeps one
+    condition under test. Only a disjunction genuinely fails to decompose."""
+    assert check_ac_atomicity(_one_transition("authenticated AND NOT authorized")) == []
+    assert check_ac_atomicity(_one_transition("")) == [], "an unguarded transition is atomic"
+
+
+def test_a_disjunctive_guard_is_reported_as_non_atomic():
+    findings = check_ac_atomicity(_one_transition("admin_unlocked OR lockout_elapsed"))
+    assert len(findings) == 1
+    assert findings[0].check == AC_ATOMICITY
+    assert findings[0].severity == ADVISORY, (
+        "the transition is well-formed; only the criterion's shape is imperfect. "
+        "Blocking generation over document wording would stop tests for sound "
+        "behaviour, and unverifiable would overstate it"
+    )
+
+
+def test_ac_atomicity_never_blocks_generation():
+    result = validate(_one_transition("admin_unlocked OR lockout_elapsed"))
+    assert any(f.check == AC_ATOMICITY for f in result.advisory)
+    assert result.is_valid(), "an advisory finding must not gate M-18"
+
+
+def test_planned_transitions_are_not_checked_for_atomicity():
+    model = _one_transition("a OR b")
+    model.transitions["t"] = Transition(
+        id="t", source="Ready", trigger="go", target="Done", guard="a OR b",
+        implementation_status=PLANNED)
+    assert check_ac_atomicity(model) == [], (
+        "P-11: behaviour nobody has built yet carries no criterion to be atomic"
+    )
 
 
 if __name__ == "__main__":

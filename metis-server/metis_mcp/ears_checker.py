@@ -1,5 +1,5 @@
 """
-REQ-METIS-ONT-04: EARS (Easy Approach to Requirements Syntax) structural
+§2.6: EARS (Easy Approach to Requirements Syntax) structural
 conformance -- deterministic regex, per §9's code-vs-LLM allocation table
 ("EARS check" is explicitly listed as deterministic code, not judgment).
 
@@ -15,7 +15,7 @@ fallback) because Ubiquitous's pattern is a strict subset shape of the
 other four's tail clause -- checking it first would misclassify every
 Event/State/Unwanted/Optional sentence as Ubiquitous.
 
-Structural conformance only, per CONST-047's explicit distinction: this
+Structural conformance only, per §2.6's explicit distinction: this
 does NOT check ISO/IEC/IEEE 29148's substantive characteristics (singular,
 verifiable, etc.) -- a sentence can pass this and still fail that
 checklist (deliberately out of scope here, a separate check).

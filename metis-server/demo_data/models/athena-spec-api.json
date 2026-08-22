@@ -14,14 +14,14 @@
       "is_initial": false
     },
     {
-      "id": "Created201",
-      "name": "Created201",
+      "id": "NoContent204",
+      "name": "NoContent204",
       "surface": "api",
       "is_initial": false
     },
     {
-      "id": "NoContent204",
-      "name": "NoContent204",
+      "id": "SpecPresent",
+      "name": "SpecPresent",
       "surface": "api",
       "is_initial": false
     }
@@ -33,7 +33,55 @@
       "trigger": "GET /spec/summary",
       "target": "Ok200",
       "guard": "",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "project",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "name",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "title",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "version",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "freshness",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "windowDays",
+          "location": "query",
+          "type_name": "java.lang.Integer",
+          "required": false,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.spec.rest.controller.ApiSpecController.getFreshness:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.Integer)::GET->Ok200",
@@ -41,7 +89,55 @@
       "trigger": "GET /spec/freshness",
       "target": "Ok200",
       "guard": "",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "project",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "name",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "title",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "version",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "freshness",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "windowDays",
+          "location": "query",
+          "type_name": "java.lang.Integer",
+          "required": false,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.spec.rest.controller.ApiSpecController.getDrift:org.springframework.http.ResponseEntity(int,int,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String)::GET->Ok200",
@@ -49,7 +145,76 @@
       "trigger": "GET /spec/drift",
       "target": "Ok200",
       "guard": "",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "page",
+          "location": "query",
+          "type_name": "int",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "size",
+          "location": "query",
+          "type_name": "int",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "sort",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "direction",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "project",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "name",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "title",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "version",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "freshness",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.spec.rest.controller.ApiSpecController.getAll:org.springframework.http.ResponseEntity(int,int,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String)::GET->Ok200",
@@ -57,15 +222,97 @@
       "trigger": "GET /spec/all",
       "target": "Ok200",
       "guard": "",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "page",
+          "location": "query",
+          "type_name": "int",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "size",
+          "location": "query",
+          "type_name": "int",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "sort",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "direction",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "project",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "name",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "title",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "version",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "freshness",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.spec.rest.controller.ApiSpecController.saveOrUpdate:org.springframework.http.ResponseEntity(org.catools.athena.model.apispec.ApiSpecDto)::POST->Created201",
       "source": "Ready",
       "trigger": "POST /spec",
-      "target": "Created201",
+      "target": "SpecPresent",
       "guard": "",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 201,
+      "guard_anchor": "",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "apiSpecDto",
+          "location": "body",
+          "type_name": "org.catools.athena.model.apispec.ApiSpecDto",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.spec.rest.controller.ApiSpecController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204",
@@ -73,15 +320,41 @@
       "trigger": "GET /spec/{id}",
       "target": "NoContent204",
       "guard": "t.isEmpty()",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 204,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "id",
+          "location": "path",
+          "type_name": "java.lang.Long",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.spec.rest.controller.ApiSpecController.getById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->Ok200",
-      "source": "Ready",
+      "source": "SpecPresent",
       "trigger": "GET /spec/{id}",
       "target": "Ok200",
-      "guard": "NOT (t.isEmpty())",
-      "implementation_status": "implemented"
+      "guard": "",
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "id",
+          "location": "path",
+          "type_name": "java.lang.Long",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.spec.rest.controller.ApiSpecController.search:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String)::GET->NoContent204",
@@ -89,15 +362,55 @@
       "trigger": "GET /spec",
       "target": "NoContent204",
       "guard": "t.isEmpty()",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 204,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "project",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": true,
+          "constraints": []
+        },
+        {
+          "name": "name",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.spec.rest.controller.ApiSpecController.search:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String)::GET->Ok200",
-      "source": "Ready",
+      "source": "SpecPresent",
       "trigger": "GET /spec",
       "target": "Ok200",
-      "guard": "NOT (t.isEmpty())",
-      "implementation_status": "implemented"
+      "guard": "",
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "project",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": true,
+          "constraints": []
+        },
+        {
+          "name": "name",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     }
   ]
 }

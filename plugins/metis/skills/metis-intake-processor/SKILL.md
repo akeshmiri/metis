@@ -1,29 +1,16 @@
 ---
 name: metis-intake-processor
-description: Extract evidence from Jira, Confluence, Swagger/OpenAPI, Zephyr Scale, source code or a database, normalize it to one Unified Intake Format (UIF) document, and land it in the Métis graph as an Episode so its Requirements and AcceptanceCriteria can be mined. Use when a user wants to get a real source into Métis — not for mining an Episode that already exists (call metis_mine_requirements directly for that).
+description: Extract a real source — Jira, Confluence, Swagger/OpenAPI, Zephyr Scale, source code or a database — into one Unified Intake Format (UIF) document, every field traced to the response it came from, nothing inferred. Use when a user wants a source captured in a normalized, reviewable shape. The landing half has no implementation in this build and says so rather than pretending.
 ---
 
 # Métis intake-processor
 
-**Ported from Atlas** (`.agents/skills/intake-processor`), then rewired: the
-extractors are unchanged real code, but the output no longer stops at a UIF file
-on disk — it lands in the Métis graph.
+Extract one real source into one Unified Intake Format document. Every field
+traces to the response it came from; nothing is inferred.
 
-The extractors were the cleanly-portable part of Atlas's tree: they import only
-the standard library and each other, with no dependency on Atlas's shared
-runtime (`_shared_loader`, `config_provider`, `artifact_provider`). That is why
-this skill was ported first.
-
-## What changed from the Atlas original
-
-| | Atlas | Métis |
-|---|---|---|
-| Output | UIF JSON written to `~/.atlas/tmp/uif/<source>/<scope-id>.json` | UIF landed as an `Episode` carrying `raw_content` |
-| Consumer | Downstream Atlas skills read the file | `metis_mine_requirements` mines the Episode |
-| Schema | `.agents/skills/shared/schemas/` | `plugins/metis/skills/shared/schemas/` |
-
-Writing a UIF file is still supported and useful for inspection, but it is no
-longer the end of the pipeline.
+Writing a UIF file is supported and useful for inspection. It is not the end of
+the pipeline — see **What this build cannot do** below before promising a user
+that anything reaches the graph.
 
 ## Supported sources
 
@@ -42,17 +29,26 @@ every source above.
 ## The pipeline this feeds
 
 ```
-source → extractor → UIF → Episode(raw_content) → metis_mine_requirements
+source → extractor → UIF   (the file is the deliverable)
                                                     ├─ Stage 1 deterministic triage (free)
                                                     ├─ Stage 2 model mining (only the ambiguous remainder)
                                                     └─ Stage 4 Requirement + AC + TestDesign, at Quarantine
 ```
 
-`metis_mcp/uif_intake.py` performs the UIF→Episode step. It renders the UIF's
-*prose* — acceptance criteria, business rules, flows, facts, error scenarios — as
-markdown, and drops ids, timestamps and extractor metadata. That is deliberate:
-Stage 1 triages prose for behavioural cues, and handing it raw JSON would get
-every block discarded.
+## What this build cannot do
+
+**The UIF→Episode step no longer exists.** It ran through
+`metis_mcp/uif_intake.py`, which was removed with the v1 engine; `--land` now
+refuses with that reason rather than writing nothing and reporting success.
+Extraction is unaffected and real.
+
+Say this to the user before they run an extraction expecting the graph to
+change. A refusal they were warned about is a limitation; the same refusal
+after they have staged a source is a waste of their time.
+
+When the step returns, it will render the UIF to markdown and drop ids,
+timestamps and extractor metadata. That is deliberate: Stage 1 triages prose for
+behavioural cues, and handing it raw JSON would get every block discarded.
 
 ## Non-negotiable rules
 
@@ -72,10 +68,49 @@ every block discarded.
 ## Verification
 
 ```bash
-cd metis-server
-.venv/bin/python3.13 test_uif_intake.py      # 10 tests, no Neo4j, no model calls
+cd plugins/metis/skills/metis-intake-processor
+python3 -m pytest tests/ -q      # extractor tests: no Neo4j, no model calls
 ```
 
-The load-bearing test is `test_rendered_content_is_minable_by_stage_1`: it runs
-the real Stage 1 segmenter over the real rendered output, so "the extractor feeds
-the miner" is verified rather than assumed.
+Three files: `tests/test_jira_extractor.py`, `tests/test_validators.py`,
+`tests/test_hard_format_constraints.py`.
+
+**13 of the 14 pass. `test_empty_source_references` fails, and it is a real gap,
+not a flaky test.** `validators.py` checks `uif_version`, `scope`, `metadata` and
+`links` and **never looks at `traceability` at all** — so a UIF with no
+provenance whatsoever validates clean. The schema requires
+`traceability.source_references`, all six extractors emit it, and this skill's
+whole claim is that every field is traced to the response it came from. The two
+tests also disagree with each other: `test_valid_uif`'s fixture carries no
+`traceability` either and expects to pass. Deciding which is right is a semantic
+call about this component, not a cleanup, so it is stated here rather than
+guessed at.
+
+**This used to name `metis-server/test_intake_processor.py`, which does not
+exist** — it tested the UIF→Episode landing that went with the v1 engine, and it
+was removed with it. A verification section naming a file nobody can run is worse
+than none: it reads as evidence.
+
+## Where this came from
+
+Below the operational content deliberately: it is provenance, and it was costing
+a full screen ahead of the instructions on every invocation.
+
+**Ported from Atlas** (`.agents/skills/intake-processor`), then rewired. The
+extractors are unchanged real code; what changed is where the output goes. They
+were the cleanly-portable part of Atlas's tree — standard library and each
+other, no dependency on Atlas's shared runtime (`_shared_loader`,
+`config_provider`, `artifact_provider`) — which is why this skill was ported
+first.
+
+The first port took Jira alone and said so. The remaining five — Confluence,
+Swagger/OpenAPI, Zephyr Scale, code, database — followed because they are the
+sources Requirements have to be built from, and reaching into another project's
+tree for them was the one real coupling Métis had left.
+
+| | Atlas | Métis |
+|---|---|---|
+| Output | UIF JSON at `~/.atlas/tmp/uif/<source>/<scope-id>.json` | UIF intended to land as an `Episode` carrying `raw_content` |
+| Consumer | The UIF file itself, for review or later ingestion | The graph — **not implemented in this build** |
+| Schema | `.agents/skills/shared/schemas/` | `plugins/metis/skills/shared/schemas/` |
+| Sources | six extractors | six extractors |

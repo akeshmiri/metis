@@ -1,45 +1,37 @@
 # Step 2 — Plan (P)
 
-**Scope Lock (carried from Step 1):** still the same single node id.
+Form a recommendation per element. Do not apply anything in this stage.
 
 ## Actions
 
-1. Call `metis_check_coverage(target_id=<the node id>)`. Record `covered`
-   and `covering_items` verbatim — this is the real, current coverage
-   state, not an assumption carried over from Step 1's traceability data
-   (traceability and coverage are computed differently; don't conflate
-   them, per Forbidden Substitutions).
+1. **Group the outstanding elements by what the evidence says**, not by kind:
 
-2. Form a recommendation: **Approve**, **Reject**, or **Needs more
-   information**. The recommendation must cite which specific `VERIFIED`
-   facts from Step 1 support it. If the strongest support you have is
-   `INFERRED`, say so explicitly in the recommendation — don't present an
-   inference with the same confidence as a verified fact.
+   | Group | Evidence | Usual recommendation |
+   |---|---|---|
+   | Clean | no findings, matched by an intent-backed criterion | approve |
+   | Unspecified | real behaviour, no criterion describes it | approve the *behaviour* if it is real, and record the specification gap |
+   | Unverifiable guard | M-17 finding | do not approve silently — the reviewer accepts the risk explicitly or the guard gets checked |
+   | Blocking finding | determinism, reachability, observability | reject or fix; approving leaves a model that generates confidently wrong tests |
 
-3. If `covered: false` and this item's real kind suggests it's meant to be
-   traceable (e.g. a `Requirement`, `TestCase`, or `AcceptanceCriterion`),
-   the recommendation should default toward **Needs more information**,
-   not Approve — an uncorroborated item passing review because nobody
-   checked coverage is exactly the false-confidence failure mode DQ-017
-   describes.
+2. **For each item carrying a criterion**, decide which of three applies, and say
+   which — they are different acts with different consequences (S-19):
 
-## Confidence tagging
+   - the criterion is right → approve, leaving it `code_derived`;
+   - the criterion is *nearly* right → **edit `criterion_text`**, which promotes
+     it to `human_confirmed`;
+   - the criterion is right and the reviewer has genuinely checked it against
+     what the business intends → set `affirmed_as_intent: true`.
 
-Tag the recommendation itself: is it `VERIFIED` (every input fact was
-VERIFIED), `INFERRED` (built partly on inference), or does it depend on an
-`UNVERIFIED` gap the human needs to close first? Surface this plainly —
-don't let an inference-based recommendation read as more certain than it is.
+   Never recommend the third across a batch. Affirming without editing is
+   legitimate for one criterion somebody thought about; it is not legitimate for
+   two hundred.
 
-## Drift check
+3. **Confidence-tag every recommendation** `VERIFIED` / `INFERRED` /
+   `UNVERIFIED`, and never carry an `UNVERIFIED` item into step 3 without saying
+   so to the user.
 
-Confirm the recommendation is actually about the locked node id, not a
-generalization about "items like this" or the whole quarantine queue.
+## Gate
 
-## Stage Confirmation
-
-```
-[C]ontinue to Implementation
-[R]eview this stage in detail
-[B]ack to Research
-[X]it
-```
+Show the user the grouped recommendation and **wait**. This is the point of the
+whole skill: the reviewer decides, and they need the evidence in front of them
+when they do.

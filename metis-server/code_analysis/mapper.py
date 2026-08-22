@@ -78,6 +78,20 @@ def map_report(report: ExtractionReport) -> MappedReport:
             "path": endpoint.path,
             "handler": endpoint.handler_method_id,
             "anchor": str(endpoint.anchor),
+            # Carried through, not projected away. This mapping used to keep five
+            # keys, so anything the pack learned about what a caller must send was
+            # discarded one hop after it was recovered.
+            "parameters": [
+                {"name": p.name, "location": p.location, "type_name": p.type_name,
+                 "required": p.required, "constraints": list(p.constraints)}
+                for p in endpoint.parameters
+            ],
+            "security": [
+                {"scheme": s.scheme, "expression": s.expression, "roles": list(s.roles)}
+                for s in endpoint.security
+            ],
+            "consumes": list(endpoint.consumes),
+            "produces": list(endpoint.produces),
         })
 
     by_type: dict[str, dict[str, str]] = {}

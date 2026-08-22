@@ -17,7 +17,7 @@
     { "source_shape": "Test method carrying its project's configured traceability-ID indicator (v1.1.0: per-project, NOT a single global @TestId convention -- see project_test_id_conventions below)", "target_entity_type": "TestCase.VERIFIES edge to Requirement", "target_episode_type": "TestTraceabilityLinkVerified" }
   ],
   "project_test_id_conventions": {
-    "$comment": "REQ-METIS-CONN-06 (new, this revision): each project resolves its own traceability-indicator pattern -- there is no single platform-wide @TestId convention. Resolution order mirrors atlas-config-manager's existing pattern (project-level config first, host-level fallback, first-found-wins, no merge). Every entry below is a REPLACE placeholder -- none of these patterns are assumed to be real; they're the shape a project's entry takes, not a guess at your actual conventions.",
+    "$comment": "REQ-METIS-CONN-06 (new, this revision): each project resolves its own traceability-indicator pattern -- there is no single platform-wide @TestId convention. Resolution order is project-level config first, host-level fallback, first-found-wins, no merge. Every entry below is a REPLACE placeholder -- none of these patterns are assumed to be real; they're the shape a project's entry takes, not a guess at your actual conventions.",
     "resolution_order": ["project-level config file (e.g. .agents/configs/test-id-convention.json in that project's own repo)", "host-level fallback default", "if neither exists: connector halts ingestion for that project and surfaces a setup gap -- it does NOT fall back to guessing a pattern, per the same discipline as REQ-METIS-CONN-04's no-fabrication rule"],
     "per_project_entries": [
       {

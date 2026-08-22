@@ -197,3 +197,102 @@ if __name__ == "__main__":
             print(f"ERROR {t.__name__}: {type(e).__name__}: {e}")
     print(f"\n{len(tests) - failures}/{len(tests)} passed")
     sys.exit(1 if failures else 0)
+
+
+# --------------------------------------------------------------------------
+# A spec document -> a Requirement (§4.5; S-13, S-19, §4.1)
+# --------------------------------------------------------------------------
+
+def _feature():
+    from metis_mcp.model_sources.spec_kit import SpecCriterion, SpecFeature
+
+    return SpecFeature(name="Archive a record", criteria=[
+        SpecCriterion(id="AC-1", title="hides it", feature="Archive a record",
+                      text="Given admin, when they archive a record, then it is hidden",
+                      is_behavioural=True),
+        SpecCriterion(id="AC-2", title="a narrative note", feature="Archive a record",
+                      text="Verified by an e2e suite", is_behavioural=False),
+    ])
+
+
+EARS = "When a user archives a record, the system shall hide it from search."
+
+
+def test_only_behavioural_criteria_become_entries():
+    """A readiness gate or an architectural constraint is a genuine criterion
+    and genuinely not a state transition — it must not be forced into a shape it
+    does not have (S-13)."""
+    from metis_mcp.model_sources.spec_kit import requirement_from_spec
+
+    knowledge = requirement_from_spec(_feature(), EARS)
+    assert [e.id for e in knowledge.entries] == ["AC-1"]
+
+
+def test_the_statement_is_carried_onto_every_entry():
+    """Each criterion claims to formalise it, and a claim nobody can check
+    against its source is not evidence."""
+    from metis_mcp.model_sources.spec_kit import requirement_from_spec
+
+    knowledge = requirement_from_spec(_feature(), EARS)
+    assert all(e.source_statement == EARS for e in knowledge.entries)
+
+
+def test_the_requirement_carries_the_ears_statement_not_the_feature_name():
+    """A feature is named "Archive a record"; a requirement is a sentence.
+    Composing one from the other is composition, not extraction (S-13)."""
+    from metis_mcp.model_sources.spec_kit import requirement_from_spec
+
+    knowledge = requirement_from_spec(_feature(), EARS)
+    assert knowledge.requirement.text == EARS
+    assert knowledge.requirement.ears.pattern == "EventDriven"
+
+
+def test_a_non_ears_statement_is_reported_by_the_existing_validator():
+    """Not reimplemented here: `knowledge.validate` already refuses it, and one
+    definition of the rule is the point of routing through that writer."""
+    from metis_mcp.model_sources.knowledge import validate
+    from metis_mcp.model_sources.spec_kit import requirement_from_spec
+
+    problems = validate(requirement_from_spec(_feature(), "Archive a record"))
+    assert any(p.kind == "requirement_not_ears" for p in problems)
+
+
+def test_every_criterion_lands_at_the_weakest_grade():
+    """§4.1: a spec rendered from the code model, parsed back into a
+    requirement, then used to check that code proves only that the code does
+    what the code does. Nothing here upgrades a grade — `promotion_for` does,
+    on a real edit or an explicit affirmation.
+    """
+    from metis_mcp.model_sources.spec_kit import requirement_from_spec
+
+    knowledge = requirement_from_spec(_feature(), EARS)
+    assert all(e.provenance == "code_derived" for e in knowledge.entries)
+
+
+def test_edited_by_hand_is_not_read_as_consent():
+    """It says the wording changed, not that a person affirmed the claim."""
+    import dataclasses
+
+    from metis_mcp.model_sources.spec_kit import requirement_from_spec
+
+    feature = _feature()
+    feature.criteria = [dataclasses.replace(feature.criteria[0], edited_by_hand=True),
+                        feature.criteria[1]]
+    knowledge = requirement_from_spec(feature, EARS)
+    assert knowledge.entries[0].provenance == "code_derived"
+
+
+def test_landing_goes_through_the_one_requirement_writer():
+    """`knowledge.plan_documentation` is the only writer of `Requirement`. A
+    second one is how two halves of a graph disagree about what `Approved`
+    means."""
+    from metis_mcp.model_sources.knowledge import plan_documentation
+    from metis_mcp.model_sources.spec_kit import requirement_from_spec
+
+    plan = plan_documentation(requirement_from_spec(_feature(), EARS), "ep-1")
+    assert plan.is_legal, plan.errors[:3]
+    labels = [n.label for n in plan.nodes]
+    assert labels.count("Requirement") == 1
+    assert labels.count("AcceptanceCriterion") == 1
+    assert ("Requirement", "HAS_AC", "AcceptanceCriterion") in {
+        (e.from_label, e.rel_type, e.to_label) for e in plan.edges}

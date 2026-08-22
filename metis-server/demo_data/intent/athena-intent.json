@@ -1,0 +1,90 @@
+{
+  "intent_version": "metis.intent/1",
+  "area": "platform-core",
+  "intents": [
+    {"id": "int-scoping",   "statement": "Everything recorded in Athena should be attributable to a project, a version and an environment."},
+    {"id": "int-source",    "statement": "A team should be able to see which commit a recorded result came from."},
+    {"id": "int-delivery",  "statement": "A team should be able to see whether a version was buildable and where it is running."},
+    {"id": "int-contract",  "statement": "A team should be able to tell when a service's published contract no longer matches the service."},
+    {"id": "int-testing",   "statement": "A team should be able to record what was tested against a version and what the outcome was."},
+    {"id": "int-perf",      "statement": "A team should be able to compare performance between two versions of the same service."},
+    {"id": "int-identity",  "statement": "Every recorded action should name the user it is attributed to."}
+  ],
+  "specifications": [
+    {"id": "spec-project-crud", "intent": "int-scoping", "entities": ["project"],
+     "provenance": "independently_authored",
+     "statement": "When a project is created with a code that is already in use, the request is rejected with 409 and no project is created."},
+
+    {"id": "spec-project-read", "intent": "int-scoping", "entities": ["project"],
+     "provenance": "independently_authored",
+     "statement": "When a project id that does not exist is requested, the response is 204 with no body, not 200 with an empty object."},
+
+    {"id": "spec-environment", "intent": "int-scoping", "entities": ["environment", "project"],
+     "provenance": "independently_authored",
+     "statement": "An environment always belongs to exactly one project, and creating one against an unknown project id is rejected."},
+
+    {"id": "spec-version", "intent": "int-scoping", "entities": ["version", "project"],
+     "provenance": "independently_authored",
+     "statement": "A version name is unique within its project, so two versions of one project cannot share a name."},
+
+    {"id": "spec-user-attribution", "intent": "int-identity", "entities": ["user"],
+     "provenance": "independently_authored",
+     "statement": "Every write records the user that made it, and a write with no resolvable user is rejected rather than recorded as anonymous."},
+
+    {"id": "spec-repo-register", "intent": "int-source", "entities": ["repository"],
+     "provenance": "independently_authored",
+     "statement": "Registering a repository that is already registered returns the existing repository rather than creating a second one."},
+
+    {"id": "spec-commit-immutable", "intent": "int-source", "entities": ["commit", "repository"],
+     "provenance": "independently_authored",
+     "statement": "A commit sha is recorded once; re-posting the same sha for the same repository does not change the stored record."},
+
+    {"id": "spec-commit-trend", "intent": "int-source", "entities": ["commit"],
+     "provenance": "independently_authored",
+     "statement": "A commit trend covers a requested date range, and a range with no commits returns 204 rather than an empty 200."},
+
+    {"id": "spec-pipeline-def", "intent": "int-delivery", "entities": ["pipeline", "project"],
+     "provenance": "independently_authored",
+     "statement": "A pipeline is scoped to one project and one environment, and both must exist before it can be created."},
+
+    {"id": "spec-pipeline-exec", "intent": "int-delivery", "entities": ["pipeline-execution", "pipeline"],
+     "provenance": "independently_authored",
+     "statement": "A pipeline execution ends in exactly one of running, passed, failed or aborted, and a status outside that set is rejected."},
+
+    {"id": "spec-pod-observed", "intent": "int-delivery", "entities": ["pod"],
+     "provenance": "independently_authored",
+     "statement": "Pod records are read from the cluster and are never created by a client, so a client POST to the pod collection is rejected."},
+
+    {"id": "spec-spec-drift", "intent": "int-contract", "entities": ["api-spec"],
+     "provenance": "independently_authored",
+     "statement": "A drift report names each endpoint that the published spec declares and the running service does not answer, and each the service answers and the spec omits."},
+
+    {"id": "spec-spec-freshness", "intent": "int-contract", "entities": ["api-spec"],
+     "provenance": "independently_authored",
+     "statement": "A spec freshness response states when the document was last read from the service, and a spec never read reports no timestamp rather than the epoch."},
+
+    {"id": "spec-item-identity", "intent": "int-testing", "entities": ["test-item"],
+     "provenance": "independently_authored",
+     "statement": "A test item keeps its identity when its title is edited, so past executions stay attached to it."},
+
+    {"id": "spec-item-priority", "intent": "int-testing", "entities": ["test-item"],
+     "provenance": "independently_authored",
+     "statement": "A test item references a priority and a status that already exist, and a reference to an unknown one is rejected with 400."},
+
+    {"id": "spec-cycle-scope", "intent": "int-testing", "entities": ["test-cycle", "version"],
+     "provenance": "independently_authored",
+     "statement": "A test cycle names exactly one version, and every execution inside it is attributed to that version."},
+
+    {"id": "spec-execution-outcome", "intent": "int-testing", "entities": ["test-execution", "test-item"],
+     "provenance": "independently_authored",
+     "statement": "A test execution records one of passed, failed, blocked or skipped, and re-running an item adds an execution rather than overwriting the previous one."},
+
+    {"id": "spec-metric-scope", "intent": "int-perf", "entities": ["metric", "version", "environment"],
+     "provenance": "independently_authored",
+     "statement": "A metric is stored with both a version and an environment, and a metric missing either is rejected at write time."},
+
+    {"id": "spec-metric-trend", "intent": "int-perf", "entities": ["metric"],
+     "provenance": "independently_authored",
+     "statement": "A metric trend compares only metrics that share a name, a project and an environment, so two environments are never averaged together."}
+  ]
+}

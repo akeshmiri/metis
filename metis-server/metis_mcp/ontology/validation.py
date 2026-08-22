@@ -1,5 +1,5 @@
 """
-Structural validation for the twelve-label ontology (application spec D-2, ONT-002).
+Structural validation for the closed ontology (application spec D-2, ONT-002).
 
 The enforcement half of labels.py. Two checks, both pure:
 
@@ -9,8 +9,8 @@ The enforcement half of labels.py. Two checks, both pure:
 **A candidate that does not match is rejected — never auto-created to make the
 rule fit the data** (ONT-002). That discipline is the reason the ontology stays
 closed: the cheapest way to "fix" a validation failure is to widen the ontology,
-and refusing to do so automatically is what keeps it twelve labels rather than
-forty-five again.
+and refusing to do so automatically is what keeps it twenty-four labels rather
+than forty-five again.
 """
 from __future__ import annotations
 
@@ -57,15 +57,20 @@ def validate(label: str, properties: dict) -> ValidationResult:
         # Present-but-empty is a distinct case from absent, and only some
         # properties may legitimately be empty (see LabelSpec.may_be_empty).
         if (isinstance(value, str) and not value.strip()
-                and prop not in spec.may_be_empty):
+                and prop not in spec.all_may_be_empty):
             errors.append(f"{label}: required property {prop!r} is empty")
 
-    for prop, allowed in spec.enums.items():
+    for prop, allowed in spec.all_enums.items():
         value = properties.get(prop)
         if value is not None and value not in allowed:
             # A Neo4j property-existence constraint cannot express enum
             # membership (spec ONT-012); the schema guarantees presence and this
             # gate guarantees membership. Both are required.
+            #
+            # `all_enums` rather than `enums`, so a specialisation is checked
+            # against its own narrowed values (`ApiCall.surface = api`) *and*
+            # everything its parent declares. Reading only its own would let a
+            # `UiAction` carry any `implementation_status` at all.
             errors.append(
                 f"{label}.{prop} = {value!r} is not one of {', '.join(allowed)}"
             )
@@ -98,7 +103,7 @@ def validate_update(label: str, properties: dict) -> ValidationResult:
 
     spec = LABELS[label]
     errors: list[str] = []
-    for prop, allowed in spec.enums.items():
+    for prop, allowed in spec.all_enums.items():
         if prop not in properties:
             continue
         value = properties[prop]

@@ -1,5 +1,5 @@
 """
-Phase 8: State-machine well-formedness checks (CONST-048/049,
+Phase 8: State-machine well-formedness checks (§2.6,
 REQ-METIS-BM-04) -- determinism, completeness, reachability, implemented
 as real Cypher queries against a real Transition graph, per
 metis-standards-integration.md §2's UML Behavior State Machine grounding.
@@ -15,9 +15,9 @@ the deterministic checks specifically, per §9's code-vs-LLM allocation.
 REQ-METIS-BM-01's code-graph corroboration (below,
 `corroborate_transition`) is also deterministic -- it checks whether a
 Transition's claimed implementing Method actually has the real CALLS
-edges it claims, via cognify/code_graph_archaeology.py's real graph. A
+edges it claims, via the evidence layer's `CALLS` edges. A
 mismatch is a real disagreement between spec and code, surfaced the same
-way as any other contradiction (CONST-046/049) -- never silently resolved
+way as any other contradiction (I-8) -- never silently resolved
 toward either side.
 
 Entities/relationships (schema-01 declares State/Transition as real
@@ -30,10 +30,10 @@ structurally is: the State it's reached from is the implicit "Given",
 WHEN it fires is this edge, THEN this State results is the other) read
 as one continuous forward path, State to State, through the Transition --
 not two edges both originating at the Transition:
-  (:State)-[:WHEN]->(:Transition)-[:THEN]->(:State)
-  (:Transition {trigger, guard_expression})
+  (:State)-[:WHEN]->(:Transition|ApiCall|UiAction)-[:THEN]->(:State)
+  (:Transition|ApiCall|UiAction {trigger, guard_expression})
 
-Per CONST-049: a determinism/completeness violation is surfaced as a
+Per M-17: a determinism/completeness violation is surfaced as a
 Disputed-adjacent flag on the affected nodes (lifecycle_state='Disputed',
 reusing Phase 4's own vocabulary), never silently resolved by picking one
 interpretation.
@@ -108,12 +108,18 @@ def _literal(term: str) -> tuple[str, bool]:
     return t, False
 
 
-def _conjuncts(expression: str) -> set[tuple[str, bool]] | None:
-    """Split on top-level ` AND `. Returns None if an OR is present.
+def split_conjuncts(expression: str) -> list[str] | None:
+    """Top-level ` AND ` parts, **in source order**. None if an OR is present.
 
     An OR makes the expression a disjunction, and deciding complementarity over
     disjunctions needs real boolean reasoning -- out of scope, and pretending
     otherwise is exactly what M-17 forbids.
+
+    **Ordered, and that is why it is separate from `_conjuncts`.** The set that
+    function returns is right for asking whether two guards oppose each other,
+    and wrong for anything that GENERATES from the parts: Python randomises str
+    hashing per process, so iterating the set would emit atomic criteria in a
+    different order on every run and break TR-6's byte-identical guarantee.
     """
     text = _strip_parens(expression)
     if not text:
@@ -130,7 +136,16 @@ def _conjuncts(expression: str) -> set[tuple[str, bool]] | None:
         depth += token.count("(") - token.count(")")
         current += token
     parts.append(current)
-    out = {_literal(p) for p in parts if p.strip()}
+    ordered = [p.strip() for p in parts if p.strip()]
+    return ordered or None
+
+
+def _conjuncts(expression: str) -> set[tuple[str, bool]] | None:
+    """`split_conjuncts`, reduced to the (atom, negated) set relation needs."""
+    ordered = split_conjuncts(expression)
+    if ordered is None:
+        return None
+    out = {_literal(p) for p in ordered}
     return out or None
 
 
@@ -252,6 +267,71 @@ def guards_conflict(guard_a: str, guard_b: str) -> tuple[bool, str]:
     return False, f"'{guard_a}' and '{guard_b}' are provably mutually exclusive on '{var_a}'."
 
 
+# Sentinel: this guard set is not a pure boolean case-split, so the boolean pass
+# has no opinion and the interval machinery decides. Distinct from `None`, which
+# is a real verdict meaning "jointly exhaustive".
+_NOT_BOOLEAN = object()
+
+# 2**n assignments. Real recovered case-splits use two or three atoms; the cap
+# only stops a pathological group from being enumerated.
+_MAX_BOOLEAN_ATOMS = 10
+
+
+def _boolean_coverage_gap(guards: list[str]):
+    """Joint exhaustiveness of a boolean case-split, by truth table.
+
+    `syntactic_relation` above decides the two-guard case. Three or more is the
+    shape a rejection path produces and it was reported unverifiable:
+
+        request_accepted AND t.isEmpty()          (204)
+        request_accepted AND NOT (t.isEmpty())    (200)
+        NOT (request_accepted)                    (400)
+
+    Those cover the domain, provably: `NOT (request_accepted)` takes everything
+    outside `request_accepted`, and inside it the two senses of `t.isEmpty()`
+    partition what is left. No interpretation of either atom is required.
+
+    **Completeness is proved here; incompleteness is not.** The atoms are opaque
+    strings and may be semantically dependent -- `t.isEmpty()` and
+    `t.isPresent()` look independent and cannot both hold. An assignment covered
+    by no guard may therefore be an assignment that cannot occur, so an
+    uncovered row is reported as *unverifiable with the row named*, never as a
+    gap. The other direction is sound whatever the dependencies are: covering
+    every assignment necessarily covers every reachable one.
+
+    Numeric thresholds are handed straight back. Treating `attempts < 5` and
+    `attempts >= 5` as independent booleans would invent an impossible row and
+    report a gap the interval pass correctly does not see.
+    """
+    literals = [_conjuncts(g) for g in guards]
+    if any(c is None or not c for c in literals):
+        return _NOT_BOOLEAN                      # an OR, or an empty guard
+
+    atoms = sorted({atom for clause in literals for atom, _ in clause})
+    if not atoms or len(atoms) > _MAX_BOOLEAN_ATOMS:
+        return _NOT_BOOLEAN
+    if any(_parse_guard(atom) is not None for atom in atoms):
+        return _NOT_BOOLEAN                      # intervals, not booleans
+
+    index = {atom: i for i, atom in enumerate(atoms)}
+    for row in range(1 << len(atoms)):
+        def holds(clause) -> bool:
+            return all(bool(row >> index[atom] & 1) is not negated
+                       for atom, negated in clause)
+        if any(holds(clause) for clause in literals):
+            continue
+        uncovered = " AND ".join(
+            atom if row >> index[atom] & 1 else f"NOT ({atom})" for atom in atoms)
+        # Worded to avoid `validation.py`'s two verifiable-severity phrases
+        # ("gap in guard coverage", "no guard covers"), and deliberately so: this
+        # row may be unreachable, and promoting it to a blocking finding would
+        # assert a defect the checker cannot establish.
+        return (f"no transition is guarded for the combination '{uncovered}' -- "
+                f"either a real input there matches nothing, or these conditions "
+                f"cannot hold together, which is not decidable from the text alone")
+    return None
+
+
 def _guard_coverage_gap(guards: list[str]) -> str | None:
     """The completeness-side sibling of guards_conflict()'s atomicity
     check: given guard expressions that all share the same (from_state,
@@ -264,6 +344,10 @@ def _guard_coverage_gap(guards: list[str]) -> str | None:
     if len(guards) == 2 and syntactic_relation(guards[0], guards[1]) == "complementary":
         # X and NOT X cover the whole domain between them, by structure.
         return None
+
+    boolean = _boolean_coverage_gap(guards)
+    if boolean is not _NOT_BOOLEAN:
+        return boolean
 
     parsed = [(g, _parse_guard(g)) for g in guards]
     unparseable = [g for g, p in parsed if p is None]
@@ -302,7 +386,7 @@ class GuardCoverageGap:
 
 
 def check_guard_completeness(session, state_machine_id: str | None = None) -> list[GuardCoverageGap]:
-    """Not one of CONST-048/049's original determinism/completeness
+    """Not one of §2.6's original determinism/completeness
     checks -- a real, requested extension: for every (from_state,
     trigger) with >=2 real Transitions, verifies their guards jointly
     cover the whole domain, not just that they don't overlap
@@ -314,7 +398,7 @@ def check_guard_completeness(session, state_machine_id: str | None = None) -> li
     is check_completeness()'s job, not this one's."""
     rows = session.run(
         """
-                MATCH (s:State)-[:WHEN]->(t:Transition)
+                MATCH (s:State)-[:WHEN]->(t:Transition|ApiCall|UiAction)
                 WHERE t.trigger IS NOT NULL AND t.guard_expression IS NOT NULL
                     AND ($state_machine_id IS NULL OR t.state_machine_id = $state_machine_id)
         RETURN s.id AS from_state, t.trigger AS trigger, t.id AS transition_id,
@@ -341,62 +425,26 @@ def check_guard_completeness(session, state_machine_id: str | None = None) -> li
     return findings
 
 
-def load_transition(session, transition_id: str, source_episode_id: str, from_state: str,
-                     to_state: str, trigger: str, guard_expression: str,
-                     implementing_method_id: str | None = None,
-                     performance_sla_critical: bool = False,
-                     state_machine_id: str | None = None) -> None:
-    """MERGE-based, idempotent -- reusable for any real Transition set, not
-    tied to a specific illustrative scenario.
-
-    implementing_method_id (optional): the real Method this Transition's
-    behavior is implemented by -- used by Stage 3's Pyramid-Gap Check
-    (metis_mcp/pyramid_gap_check.py) to find existing test coverage via
-    real CALLS/VERIFIES edges. Not validated against the graph here (that's
-    REQ-METIS-BM-01's job, metis_mcp/behavior_model.py's own
-    corroborate_transition) -- this just records the claim.
-
-    performance_sla_critical: per metis-behavior-model-test-pipeline.md
-    §3, gates whether Stage 3 also proposes a performance test skeleton."""
-    def _write(tx):
-        tx.run(
-            """
-            MERGE (from:State {id: $from_state})
-            SET from.source_episode_id = $episode, from.name = $from_name,
-                from.name_source = 'source', from.name_quality = 'verified'
-            MERGE (to:State {id: $to_state})
-            SET to.source_episode_id = $episode, to.name = $to_name,
-                to.name_source = 'source', to.name_quality = 'verified'
-            MERGE (t:Transition {id: $transition_id})
-            SET from.state_machine_id = coalesce($state_machine_id, from.state_machine_id),
-                to.state_machine_id = coalesce($state_machine_id, to.state_machine_id),
-                t.source_episode_id = $episode, t.name = $transition_name,
-                t.name_source = 'derived', t.name_quality = 'derived',
-                t.trigger = $trigger,
-                t.guard_expression = $guard_expression,
-                t.implementing_method_id = $implementing_method_id,
-                t.performance_sla_critical = $performance_sla_critical,
-                t.state_machine_id = coalesce($state_machine_id, t.state_machine_id)
-            MERGE (from)-[:WHEN]->(t)
-            MERGE (t)-[:THEN]->(to)
-            """,
-            transition_id=transition_id, episode=source_episode_id, from_state=from_state,
-            to_state=to_state, trigger=trigger, guard_expression=guard_expression,
-            from_name=from_state, to_name=to_state, transition_name=trigger or transition_id,
-            implementing_method_id=implementing_method_id,
-            performance_sla_critical=performance_sla_critical, state_machine_id=state_machine_id,
-        )
-    session.execute_write(_write)
+# `load_transition` was removed here. It MERGE-d `(:Transition {id: $transition_id})`
+# with a bare id, while `model_sources/landing.py` -- the actual writer -- writes
+# `:ApiCall`/`:UiAction` with `{model_id}::{id}`. Calling it against a landed
+# model would therefore have created a SECOND node per transition rather than
+# updating the first, and nothing would have reported it.
+#
+# It had no caller, which is the only reason it never did. A second writer for
+# an element type is how two halves of one graph come to disagree, and the fix
+# for an unwired one is to remove it, not to keep it correct in parallel.
+# Transitions reach the graph through `landing.plan_landing` and nowhere else.
 
 
 def check_determinism(session, state_id: str,
                       state_machine_id: str | None = None) -> DeterminismResult:
-    """CONST-048/REQ-METIS-BM-04: no two Transitions from the same source
+    """§2.6: no two Transitions from the same source
     State should fire on the same Trigger with overlapping Guards."""
     rows = session.run(
         """
-                MATCH (s:State {id: $state_id})-[:WHEN]->(t1:Transition)
-        MATCH (s)-[:WHEN]->(t2:Transition)
+                MATCH (s:State {id: $state_id})-[:WHEN]->(t1:Transition|ApiCall|UiAction)
+        MATCH (s)-[:WHEN]->(t2:Transition|ApiCall|UiAction)
                 WHERE t1.id < t2.id AND t1.trigger = t2.trigger
                     AND ($state_machine_id IS NULL OR (
                             t1.state_machine_id = $state_machine_id
@@ -419,11 +467,11 @@ def check_determinism(session, state_id: str,
             ))
 
     if findings:
-        # CONST-049: surfaced as Disputed, not silently resolved.
+        # M-17: surfaced as Disputed, not silently resolved.
         def _mark(tx):
             for f in findings:
                 tx.run(
-                    "MATCH (t:Transition) WHERE t.id IN [$a, $b] "
+                    "MATCH (t:Transition|ApiCall|UiAction) WHERE t.id IN [$a, $b] "
                     "SET t.lifecycle_state = 'Disputed', t.dispute_reason = $reason",
                     a=f.transition_a, b=f.transition_b, reason=f.reason,
                 )
@@ -445,14 +493,14 @@ def check_completeness(session, state_machine_id: str | None = None) -> list[Com
     Transition set (not an externally-imposed list)."""
     gaps = session.run(
         """
-                MATCH (any:Transition)
+                MATCH (any:Transition|ApiCall|UiAction)
                 WHERE any.trigger IS NOT NULL
                     AND ($state_machine_id IS NULL OR any.state_machine_id = $state_machine_id)
         WITH DISTINCT any.trigger AS trigger
         MATCH (s:State)
                 WHERE ($state_machine_id IS NULL OR s.state_machine_id = $state_machine_id)
                     AND NOT EXISTS {
-                        MATCH (s)-[:WHEN]->(t:Transition)
+                        MATCH (s)-[:WHEN]->(t:Transition|ApiCall|UiAction)
                         WHERE t.trigger = trigger
                             AND ($state_machine_id IS NULL OR t.state_machine_id = $state_machine_id)
         }
@@ -485,7 +533,7 @@ def check_reachability(session, initial_state_id: str,
     ).data()}
     edges = session.run(
         """
-        MATCH (a:State)-[:WHEN]->(t:Transition)-[:THEN]->(b:State)
+        MATCH (a:State)-[:WHEN]->(t:Transition|ApiCall|UiAction)-[:THEN]->(b:State)
         WHERE $state_machine_id IS NULL OR (
             a.state_machine_id = $state_machine_id
             AND t.state_machine_id = $state_machine_id
@@ -522,12 +570,23 @@ class CorroborationResult:
 
 def corroborate_transition(session, transition_id: str, implementing_method_id: str,
                             expected_callees: list[str]) -> CorroborationResult:
-    """REQ-METIS-BM-01: does a proposed Transition's claimed implementing
-    Method actually call what the Transition's Guard/Action claims it
-    does, per the REAL code graph (cognify/code_graph_archaeology.py's
-    CALLS edges)? A mismatch is a real spec-vs-code disagreement -- per
-    CONST-046/049, surfaced as Disputed, never silently resolved toward
-    either the spec or the code."""
+    """Does a Transition's claimed implementing Method actually call what the
+    Transition claims it does, per the real `CALLS` graph?
+
+    A mismatch is a genuine spec-vs-code disagreement, surfaced as `Disputed`
+    and never silently resolved toward either side (I-8, S-10) -- neither
+    automatically wins, because a precedence rule would decide a question only a
+    person can.
+
+    **Unwired.** Nothing calls this, and the evidence layer it reads (`Method`
+    and its `CALLS` edges) only exists after `raw_landing` has run. Its Cypher
+    is correct -- `MATCH (t:Transition|ApiCall|UiAction)` handles the
+    specialisation -- but a caller must pass an id in the form landing wrote,
+    `{model_id}::{id}`, or the write matches nothing.
+
+    The reference this used to carry, `the evidence layer`, went
+    with the v1 engine.
+    """
     method_exists = session.run(
         "MATCH (m:Method {id: $id}) RETURN m LIMIT 1", id=implementing_method_id
     ).single()
@@ -556,7 +615,7 @@ def corroborate_transition(session, transition_id: str, implementing_method_id: 
 
         def _mark(tx):
             tx.run(
-                "MATCH (t:Transition {id: $id}) SET t.lifecycle_state = 'Disputed', "
+                "MATCH (t:Transition|ApiCall|UiAction {id: $id}) SET t.lifecycle_state = 'Disputed', "
                 "t.dispute_reason = $reason", id=transition_id, reason=reason,
             )
         session.execute_write(_mark)

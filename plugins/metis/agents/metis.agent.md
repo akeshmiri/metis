@@ -1,46 +1,75 @@
 ---
 name: metis
-description: Métis's own top-level skill router. Built independently, on the same Quick-Routing-table pattern Atlas's atlas.agent.md uses -- not a copy of it, not a registration inside it. No Atlas installation, shared runtime, or shared router is required to use anything below.
+description: Métis's workflow router. Turns a request into a defined workflow with ordered stages and explicit human gates, rather than a set of CLI verbs whose order somebody has to remember.
 ---
 
-# Métis — Skill Router
+<!-- generated from metis_mcp/workflow/stages.py — do not edit by hand -->
 
-`REQ-METIS-SKL-01`/`REQ-METIS-SKL-02` (`docs/metis-specification.md` §4.6):
-every Métis skill lives in Métis's own tree (`plugins/metis/skills/<name>/`,
-`SKILL.md` + `steps/` + this project's own
-`skills/shared/knowledge/anti-hallucination-protocol.md`) and registers here, in
-Métis's own router — modeled on Atlas's `atlas.agent.md` Quick Routing
-table as a *pattern*, reimplemented independently. If an org runs both
-Atlas and Métis, this file and Atlas's are two separate, non-overlapping
-entry points; neither depends on the other's installation.
+# Métis — Workflow Router
+
+Every request to Métis runs a **defined workflow**: an ordered set of
+stages with explicit gates, rather than a set of commands somebody has to
+remember the order of. This table is generated from the workflow registry
+(`metis_mcp/workflow/stages.py`); a test fails if it drifts.
 
 ## Quick Routing
 
-| Trigger | Skill | Use when |
+| Ask for | Workflow | What it does |
 |---|---|---|
-| "review this quarantined item" / "help me approve or reject \<id\>" / "walk me through the review queue" | [`metis-review-assist`](../skills/metis-review-assist/SKILL.md) | A human reviewer wants help deciding an Approve/Reject call on one specific Quarantine-tier entity — not batch-processing the whole queue. |
-| "check this state machine" / "is this workflow well-formed" / "review these transitions" | [`metis-behavior-modeling`](../skills/metis-behavior-modeling/SKILL.md) | A user is defining or reviewing a state machine (lifecycle states, workflow transitions) and wants determinism/completeness/reachability checked before relying on it (CONST-048/049). |
-| "onboard a new repo" / "add a new project to Métis" / "set up ingestion for \<repo\>" | [`metis-onboarding`](../skills/metis-onboarding/SKILL.md) | A user wants to onboard a new repository/project into Métis's ingestion pipeline — walks the real 6-step runbook from `metis-gap-remediation.md` §6. |
-| "build a quality deck" / "generate a slide deck" / "I need a PowerPoint for \<review\>" | [`metis-deck-renderer`](../skills/metis-deck-renderer/SKILL.md) | A user wants a shareable, dated `.pptx` quality-score snapshot for a periodic report or leadership review — point-in-time by design, never auto-refreshed. |
-| "generate the site" / "build the docs site" / "publish the Academy pages" | [`metis-site-renderer`](../skills/metis-site-renderer/SKILL.md) | A user wants a browsable, always-current static HTML reference site — not a dated, shareable snapshot (use `metis-deck-renderer` for that). |
-| "ingest this ticket" / "pull \<source\> into Métis" / "extract requirements from \<Jira\|Confluence\|Swagger\|code\>" | [`metis-intake-processor`](../skills/metis-intake-processor/SKILL.md) | A user wants a real source brought into Métis — extract to UIF, land it as an Episode, then mine Requirements/AcceptanceCriteria from it. Not for mining an Episode that already exists (call `metis_mine_requirements` directly). |
+| "coverage for <scope>" / "how covered is <scope>" | `coverage-report` | Report coverage for a scope. Read-only; no gates. |
+| "capture knowledge for <scope>" / "record a requirement for <scope>" / "add a rule to <scope>" | `knowledge-capture` | Turn a stated requirement into atomic acceptance criteria, compare them against the model, and land what is new at Quarantine. |
+| "build a model for <scope>" / "model <repo>" / "extract behaviour from <repo>" | `model-build` | Recover behaviour from code, work out what it should do, and settle that with a human before anything is generated from it. |
+| "write back the spec for <scope>" / "update the spec for <scope>" | `spec-writeback` | Regenerate the stakeholder specification and write it back (§18). |
+| "generate tests for <scope>" / "generate test cases for <scope>" | `test-generate` | Generate covering paths and render them as test cases. |
 
-No trigger above match? Don't guess which skill applies — ask the user
-which of the five real workflows above they actually want, or whether
-they need a real MCP tool call instead (`metis_get_context`/
-`metis_get_traceability`/etc., §11.1) rather than a multi-step skill at
-all. Inventing a fourth routing entry with no real skill behind it would
-violate the same no-fabrication discipline every skill below already
-follows.
+## What each workflow stops for
 
-## What's deliberately not routed here
+| Workflow | Stages | Gate |
+|---|---|---|
+| `coverage-report` | report | none |
+| `knowledge-capture` | check → mine → compare → land → model-approval | model-approval |
+| `model-build` | extract → ac-draft → land → validate → reconcile → model-approval | model-approval |
+| `spec-writeback` | spec → write-back | write-back |
+| `test-generate` | generate-paths → render → publication-confirmation → publish | publication-confirmation |
 
-- Direct MCP tool calls (`metis_get_context`, `metis_get_traceability`,
-  `metis_check_coverage`, `metis_impact_analysis`, `metis_explain_decision`,
-  `metis_explain_answer`, `metis_propose_test_skeleton`,
-  `metis_submit_episode`, `metis_quality_score`) — these are single-call
-  tools, not multi-stage skills; call them directly, no routing needed.
-- Anything not listed above genuinely doesn't have a skill yet. Adding a
-  routing entry with no real skill folder behind it is exactly the kind
-  of fabrication this file exists to avoid — extend this table only when
-  a real `plugins/metis/skills/<name>/SKILL.md` exists to point at.
+## Running one
+
+```
+python3 -m metis_mcp.mbt.cli workflow list
+python3 -m metis_mcp.mbt.cli workflow run <code> --scope <scope> [...]
+python3 -m metis_mcp.mbt.cli workflow status <code>--<scope>
+python3 -m metis_mcp.mbt.cli workflow resume <code> --scope <scope> [...]
+```
+
+Exit `0` complete · **`5` blocked on a human decision, not a failure** ·
+anything else failed.
+
+## Preconditions are checked, not remembered
+
+- `spec-writeback` requires: `model_is_approved`
+- `test-generate` requires: `model_is_approved`
+
+These are registered predicates evaluated before the first stage runs —
+so "this workflow needs that one to have happened first" is enforced,
+not documented.
+
+## No match
+
+If a request matches nothing above, or matches two workflows equally,
+**ask which one the user wants**. Do not guess: a run started in the
+wrong workflow produces a confident artefact about the wrong thing.
+
+## Skills
+
+| Skill | Use when |
+|---|---|
+| `metis-behavior-modeling` | A user is defining or reviewing states and transitions and wants them checked for well-formedness |
+| `metis-intake-processor` | A user wants a source captured in a normalized, reviewable shape |
+| `metis-knowledge-capture` | Someone tells Métis a rule the system should follow and wants it formalised and reconciled |
+| `metis-model-build` | Someone asks to build or rebuild a model for a service, or to re-extract after code changed |
+| `metis-review-assist` | A workflow has halted at model-approval, or when a user wants help deciding approve/reject on a model's elements |
+
+Direct CLI verbs (`paths`, `render`, `report`, `spec`, `coverage-gap`,
+`drift`, `publish`) remain available for single steps and automation;
+they are stages, and running one by hand skips the ordering the workflow
+enforces.

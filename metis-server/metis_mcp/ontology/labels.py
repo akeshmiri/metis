@@ -1,5 +1,14 @@
 """
-The twelve-label ontology (application spec §8.2, §8.3).
+The ontology (application spec §8.2, §8.3).
+
+Fifty-two labels in six layers: a **control-flow** model (State, Transition and
+friends), the **evidence** layer it is derived from (Endpoint, Parameter, Class,
+Field, Method, DeclaredOutcome, Check, ExceptionMapping, Route), a small
+**business** layer (BusinessArea, BusinessEntity) giving the nouns a criterion
+uses a definition of their own, the **intake anchors** (JiraItem and its five
+siblings) recording which artefact in the world a requirement came from, and the
+**documents** (SpecDocument, EntityDocument) that are rendered into the graph
+rather than into files beside it.
 
 **This module is the single source for two of the four governance places** the
 spec's D-2 rule names: the structural validator reads it directly, and the Cypher
@@ -10,10 +19,11 @@ The remaining two -- the catalogue in §8.2/§8.3 of the specification, and this
 docstring -- are human-readable and are checked against this module by
 test_ontology.py.
 
-Why twelve and not forty-five: D-1. A label is included only when something in
-§§2-7 writes it and something reads it. The other thirty-three would advertise
-capability that does not exist, which is the failure this whole specification
-corrects. §8.7 lists them with the trigger that would bring each back.
+Why fifty-two, and why that number should worry you: see D-1 and the note in
+`test_ontology`. A label is included only when something writes it AND something
+reads it -- the second half is the one that is easy to skip, and a writer alone
+is how an ontology accretes. §8.7 lists the deliberately-excluded labels with
+the trigger that would bring each back.
 """
 from __future__ import annotations
 
@@ -48,6 +58,26 @@ PROVENANCE_GRADES = (CODE_DERIVED, HUMAN_CONFIRMED, INDEPENDENTLY_AUTHORED)
 ANY_LABEL = "*"
 
 
+def specialisations_of(label: str) -> tuple[str, ...]:
+    """Every label that specialises `label`, plus `label` itself.
+
+    One definition of "any transition", so the ~30 Cypher sites that used to say
+    `:Transition` cannot drift apart as specialisations are added.
+    """
+    return (label, *sorted(n for n, spec in LABELS.items()
+                           if spec.specialises == label))
+
+
+def label_expression(label: str) -> str:
+    """`Transition|ApiCall|UiAction` -- a Cypher label disjunction.
+
+    Needed because a specialisation *replaces* its parent label: a query that
+    still said `:Transition` would silently return only the unclassified ones,
+    which is the failure mode of making the generic label mean something.
+    """
+    return "|".join(specialisations_of(label))
+
+
 @dataclass(frozen=True)
 class LabelSpec:
     name: str
@@ -61,11 +91,45 @@ class LabelSpec:
     may_be_empty: tuple[str, ...] = ()
     enums: dict[str, tuple[str, ...]] = field(default_factory=dict)
     indexed: tuple[str, ...] = ()
+    # A label this one specialises. The specialisation is written **instead of**
+    # its parent, not alongside it: a node that is known to be an `ApiCall` does
+    # not also carry `:Transition`.
+    #
+    # That leaves the generic label meaning something useful -- **unclassified**.
+    # `MATCH (t:Transition)` is then a worklist of transitions whose surface
+    # nothing has established, rather than a synonym for "all of them", and a
+    # query can find and resolve them.
+    #
+    # A specialisation inherits its parent's required properties rather than
+    # restating them, so the two cannot drift.
+    specialises: str = ""
+
+    @property
+    def is_specialisation(self) -> bool:
+        return bool(self.specialises)
 
     @property
     def all_required(self) -> tuple[str, ...]:
         base = () if self.name in BASELINE_EXEMPT else BASELINE_REQUIRED
-        return tuple(dict.fromkeys((*base, *self.required)))
+        inherited = ()
+        if self.specialises:
+            inherited = LABELS[self.specialises].all_required
+        return tuple(dict.fromkeys((*base, *inherited, *self.required)))
+
+    @property
+    def all_may_be_empty(self) -> tuple[str, ...]:
+        """Inherited too — an unguarded `ApiCall` is normal, exactly as an
+        unguarded `Transition` is, and forgetting to inherit this rejects every
+        transition whose guard is legitimately empty."""
+        inherited = (LABELS[self.specialises].all_may_be_empty
+                     if self.specialises else ())
+        return tuple(dict.fromkeys((*inherited, *self.may_be_empty)))
+
+    @property
+    def all_enums(self) -> dict:
+        merged = dict(LABELS[self.specialises].all_enums) if self.specialises else {}
+        merged.update(self.enums)
+        return merged
 
 
 LABELS: dict[str, LabelSpec] = {
@@ -74,11 +138,151 @@ LABELS: dict[str, LabelSpec] = {
             "Episode", "Immutable record of one ingested unit; everything derived points here",
             required=("t_recorded", "source_connector", "job_id"),
             indexed=("source_connector", "job_id", "checkpoint_status"),
+            # **Deliberately in no relationship, and this is the decision rather
+            # than an oversight.** Every other node reaches it through the
+            # `source_episode_id` property, which is one of three baseline
+            # requirements and is now indexed on every non-exempt label -- so
+            # "everything this ingestion produced" is a fast property lookup.
+            #
+            # An `Episode -[:PRODUCED]-> *` edge was the alternative: one edge
+            # per node, restating a fact the node already carries, and two
+            # representations of one thing that can disagree. That class of
+            # defect -- two vocabularies, two minting rules, two writers for one
+            # node -- is where nearly every real bug in this codebase has come
+            # from. D-1 asks for a named reader; the reader is the property, and
+            # it is named here.
         ),
         LabelSpec(
             "JiraItem", "Evidence anchor for one Jira issue; survives its Requirement being rejected",
             required=("jira_key", "issue_type"),
             indexed=("jira_key",),
+        ),
+        # ---- The other five intake anchors (§3.2 stage 2) ----
+        #
+        # An anchor answers "what artefact in the world is this about", which is
+        # a different question from the one `Episode` answers ("which run
+        # produced this, and can I re-run it"). Conflating them costs the thing
+        # `JiraItem`'s own purpose line names: an anchor SURVIVES its Requirement
+        # being rejected, where an Episode is minted afresh whenever content
+        # changes. Rejecting a claim must never destroy the evidence it came
+        # from.
+        #
+        # One label per source rather than one generic `SourceItem`: a query for
+        # "every Confluence page behind an approved requirement" is then a label
+        # match rather than a property filter, and each carries the identifier
+        # its own system actually uses.
+        #
+        # Deliberately NOT named `Confluence`/`Database`/`OpenApi` bare:
+        # `Database`, `Schema`, `Table`, `View` and `Column` already exist and
+        # mean the data-structure source (§5.2b) -- a real database being
+        # analysed. One label meaning two things is how a closed ontology stops
+        # being closed.
+        LabelSpec(
+            "ConfluenceItem", "Evidence anchor for one Confluence page",
+            required=("page_id",),
+            indexed=("page_id", "space"),
+        ),
+        LabelSpec(
+            "OpenApiItem", "Evidence anchor for one OpenAPI/Swagger document",
+            required=("document_id",),
+            indexed=("document_id", "api_version"),
+        ),
+        LabelSpec(
+            "ZephyrItem", "Evidence anchor for one Zephyr Scale item",
+            required=("zephyr_key",),
+            indexed=("zephyr_key", "item_type"),
+            # Zephyr Scale is one tool. The extractor is `scale_extractor.py`
+            # and the product is Zephyr Scale, so "Scale" and "Zephyr" are the
+            # same source and get one label, not two.
+        ),
+        LabelSpec(
+            "DatasourceItem", "Evidence anchor for one analysed database schema",
+            required=("datasource_id",),
+            indexed=("datasource_id",),
+            # Beside `Datasource` (the configured connection) and `Database`
+            # (the instance), not instead of either: this is the intake record
+            # of having read one, which outlives any particular reading.
+        ),
+        LabelSpec(
+            "CodeItem", "Evidence anchor for one analysed source tree at one revision",
+            required=("repo_id",),
+            indexed=("repo_id", "revision"),
+        ),
+        LabelSpec(
+            "RestServer", "A Component serving an API surface",
+            specialises="Component",
+            enums={"surface": ("api",)},
+            # Specialisations of `Component`, not new roots. A root would have to
+            # restate `version`, `commit_sha` and `journey` -- which P-16 depends
+            # on ("which version does this coverage figure refer to") -- and
+            # would not inherit `EXPOSES` or `HAS_PAGE`, both of which already
+            # exist on the parent. This way "every REST server" is a label match
+            # AND the version contract is one definition.
+            #
+            # Written INSTEAD of `:Component`, like every specialisation. Use
+            # `label_expression("Component")` to match any of them.
+        ),
+        LabelSpec(
+            "WebServer", "A Component serving a web surface",
+            specialises="Component",
+            enums={"surface": ("ui",)},
+        ),
+        # ---- Rendered documents (§18) ----
+        #
+        # The graph is the single point of truth and a document is a node in it,
+        # not a `.md` file beside it. Two copies of a specification is the exact
+        # thing a single point of truth exists to prevent, and a file cannot
+        # carry an edge to the behaviour it describes.
+        #
+        # `body_markdown` is text, not nodes, on `Transition.inputs`' reasoning:
+        # the reader renders the whole document and nothing queries a paragraph.
+        # `content_hash` is what makes re-rendering unchanged input a no-op
+        # (D-8), so a regeneration that changes nothing writes nothing.
+        LabelSpec(
+            "SpecDocument", "One rendered journey specification (§18)",
+            required=("body_markdown", "content_hash", "rendered_at"),
+            indexed=("content_hash", "lifecycle_state"),
+            enums={"lifecycle_state": LIFECYCLE_STATES},
+        ),
+        LabelSpec(
+            "EntityDocument", "One rendered business-entity specification",
+            required=("body_markdown", "content_hash", "rendered_at"),
+            indexed=("content_hash", "lifecycle_state"),
+            enums={"lifecycle_state": LIFECYCLE_STATES},
+        ),
+        # ------------------------------------------------------------------
+        # The intent spine (§4.1's comparison, made structural)
+        # ------------------------------------------------------------------
+        LabelSpec(
+            "Intent", "One stated need, before anybody has specified how it behaves",
+            required=("statement",),
+            indexed=("lifecycle_state",),
+            enums={"lifecycle_state": LIFECYCLE_STATES},
+        ),
+        LabelSpec(
+            "Specification", "One specified behaviour — where intent and code meet",
+            required=("statement", "provenance"),
+            indexed=("provenance", "lifecycle_state"),
+            # **One label, and the grade is what keeps the comparison alive.**
+            # Intent reaches this node one way and the code reaches it another,
+            # which is the point: §4.1 says a model extracted from code and used
+            # to test that code proves only that the code does what the code
+            # does. If both sides landed indistinguishable specifications, that
+            # argument would quietly stop being checkable.
+            #
+            # So the SAME grades `AcceptanceCriterion` already carries ride here,
+            # and they are indexed for the same reason: "which specifications in
+            # this scope are still code_derived" is the filter that separates a
+            # coverage claim from a correctness one. A code-derived spec and a
+            # human-authored one are one label and never one fact.
+            enums={"provenance": PROVENANCE_GRADES,
+                   "lifecycle_state": LIFECYCLE_STATES},
+        ),
+        LabelSpec(
+            "Feature", "One user-facing capability, grouping the scenarios that show it",
+            required=("name",),
+            indexed=("lifecycle_state",),
+            enums={"lifecycle_state": LIFECYCLE_STATES},
         ),
         LabelSpec(
             "Requirement", "One requirement statement",
@@ -101,7 +305,7 @@ LABELS: dict[str, LabelSpec] = {
             "State", "One observable situation on one surface (spec M-3)",
             required=("surface",),
             enums={"surface": ("ui", "api"), "lifecycle_state": LIFECYCLE_STATES},
-            indexed=("surface", "lifecycle_state", "functional_areas"),
+            indexed=("surface", "lifecycle_state", "functional_areas", "name_tier"),
         ),
         LabelSpec(
             "Transition", "One interaction: trigger, guard, source and target state",
@@ -110,27 +314,258 @@ LABELS: dict[str, LabelSpec] = {
             enums={
                 "surface": ("ui", "api"),
                 "implementation_status": ("implemented", "planned"),
-                "extraction_method": ("hand_authored", "static_analysis", "ac_mined"),
+                "extraction_method": ("hand_authored", "static_analysis",
+                                     "ac_mined", "declared_contract"),
                 "lifecycle_state": LIFECYCLE_STATES,
+                # Whether the outcome was seen being BUILT or only DECLARED on an
+                # annotation. Both are real user paths; only one of them was
+                # observed, and a reviewer approves them differently.
+                "outcome_source": ("constructed", "declared"),
             },
             indexed=("surface", "lifecycle_state", "implementation_status",
-                     "extraction_method", "functional_areas"),
+                     "extraction_method", "functional_areas",
+                     "source_state_unresolved", "outcome_status", "requires_body",
+                     # "show me every path whose precondition is still vague" has
+                     # to be one query, or the weaker rejections are invisible
+                     # rather than reviewable.
+                     "outcome_source", "guard_claim",
+                     # "which endpoints return this DTO" is one query, which is
+                     # what makes the expected response usable for generation
+                     # rather than just displayable.
+                     "response_body",
+                     # X-8, and the reason it is indexed: "show me everything
+                     # still in the implementation's words" has to be one query,
+                     # or the cascade has no worklist to drive it.
+                     "name_tier", "guard_tier"),
+            # Three additions, and one shape decision worth stating.
+            #
+            # `guard_anchor` (§8.5) is `file:line@commit` for the guard's own
+            # source — a guard nobody can trace to a line is a claim taken on
+            # trust. `source_state_unresolved` (§5.8) is how "no source state was
+            # recoverable" gets said at all, instead of being papered over with a
+            # guessed one. `outcome_status` holds the response, so it survives a
+            # target state being renamed for what it actually is.
+            #
+            # **`inputs` is stored as JSON text, not as structure.** Neo4j
+            # properties are primitives or arrays of primitives, so a list of
+            # parameter records cannot be a property at all. Promoting each
+            # parameter to its own node would be the alternative, and D-1 rules
+            # it out until something actually queries one. `requires_body` and
+            # `input_count` carry the parts worth filtering on, so the JSON is
+            # never parsed just to answer a question Cypher should answer.
         ),
         LabelSpec(
-            "ModelVersion", "One versioned snapshot of a <journey>-<surface> model",
-            required=("journey", "surface", "version"),
+            "ApiCall", "A Transition on the api surface: one call and its outcome",
+            specialises="Transition",
+            enums={"surface": ("api",)},
+            # Written **instead of** `:Transition`, not alongside it --
+            # `landing.plan_landing` calls `add_node(transition_label, ...)` with
+            # no `also`, so the node carries this label only. That leaves the
+            # generic `:Transition` meaning "unclassified", and therefore
+            # findable, which is the whole point of the split.
+            #
+            # This comment used to say the opposite, and so did the spec. It is
+            # the one semantic that fails silently: a query or a planned edge
+            # written against `:Transition` matches nothing and reports success.
+            # Use `label_expression("Transition")` to match any of them, and
+            # `landing.transition_label_for(surface)` to plan an edge into one.
+        ),
+        LabelSpec(
+            "UiAction", "A Transition on the ui surface: one interaction or observation",
+            specialises="Transition",
+            enums={"surface": ("ui",)},
+            # A `UiAction` either **starts** an API flow (`TRIGGERS`) or
+            # **observes** one of its outcomes (`INVOKES`). It never becomes the
+            # API transition: the Web flow continues on its own, and a failing
+            # call frequently produces no UI transition at all.
+        ),
+        LabelSpec(
+            "Component", "One deployable component at one commit (spec D-6)",
+            required=("journey", "surface", "version", "component"),
             enums={"surface": ("ui", "api")},
-            indexed=("journey", "surface", "version", "commit_sha"),
+            indexed=("component", "journey", "surface", "version", "commit_sha"),
+            # Was `ModelVersion`, which named Métis's bookkeeping rather than the
+            # thing in the world: `athena-metric-api v1` at a commit IS a
+            # deployable component, and everything downstream — which version a
+            # test ran against, what an incident touched — wants to say
+            # "component", not "model version".
+            #
+            # **Identity is (component, commit), and `component` carries the
+            # stable half.** A node per commit is what D-6 needs (elements are
+            # shared across versions where unchanged), but without the stable key
+            # you could not ask "every version of athena-metric-api" — the estate
+            # would read as 13 components today and 26 after the next commit.
         ),
         LabelSpec(
-            "TestPath", "One covering walk: setup plus a single validated transition",
+            "Page", "One screen of a web surface; its states are the conditions it shows",
+            required=("component",),
+            indexed=("component", "surface"),
+            enums={"surface": ("ui",)},
+            # D-1 demands a writer and a reader, and both are real.
+            #
+            # **Writer:** `code_analysis/react_ui_synthesis.py`, from the 9 real
+            # screens the react-ui pack recovers. **Reader:** the Web pattern
+            # query — "which pages does this component have, and what condition
+            # is each in" — which is the question the surface exists to answer
+            # and which nothing could ask while the screen name survived only as
+            # a substring inside a transition id.
+            #
+            # A Page is a *grouping* node, deliberately not a link in the
+            # `State -> Transition -> State` spine: a walk never passes through
+            # one, so path generation stays surface-agnostic.
+        ),
+        # ------------------------------------------------------------------
+        # The Web structure layer: what is ON a page (spec §5.2a).
+        # ------------------------------------------------------------------
+        #
+        # The Web counterpart of the API evidence layer. `Endpoint`/`Parameter`/
+        # `Field` are what an API call is made OF; these are what a UI
+        # interaction is made of, and a `UiAction` transition points at one with
+        # `DERIVED_FROM` exactly as an `ApiCall` points at its `Endpoint`.
+        #
+        # **Writer:** `model_sources.web_structure`, from a checked-in file --
+        # the same discipline as the glossary, and for the same reason. No pack
+        # identifies component TYPES: `react-ui` recovers screens, routes and
+        # status variables, `js-ui` recovers `addEventListener` bindings whose
+        # element selector its own comment calls "frequently NOT recoverable",
+        # and neither can tell a `<DataGrid>` from a hand-rolled
+        # `<div role="table">`. A person knows; the file is where they say so.
+        #
+        # **Reader:** the Gherkin renderer, which shows a Feature the controls
+        # its scenarios act on; the impact query; and -- the strongest one --
+        # test design. A paginated table needs boundary cases and a sortable
+        # column needs order cases, which is a question `mbt.techniques` can only
+        # ask if the structure is in the graph.
+        #
+        # **One family, ten specialisations, on the `Transition` precedent.** A
+        # specialisation is written INSTEAD of its parent, so `MATCH (t:Table)`
+        # is exact, `label_expression("UiElement")` is "every element", and a
+        # bare `:UiElement` keeps meaning something useful -- an element whose
+        # type nobody has established, which is a worklist rather than a synonym
+        # for all of them.
+        LabelSpec(
+            "UiElement", "One thing on a page whose type has not been established",
+            required=("element_type",),
+            indexed=("element_type", "page", "lifecycle_state"),
+            enums={"lifecycle_state": LIFECYCLE_STATES},
+        ),
+        LabelSpec("Menu", "A navigation or command grouping", specialises="UiElement"),
+        LabelSpec(
+            "UiTable", "A tabular listing of records on a page",
+            specialises="UiElement",
+            # `Table` unqualified is the DATABASE table, which is what it means
+            # in this repo's history and in most of engineering. The UI one is
+            # qualified because it is the newer claim on the word, and because
+            # `MATCH (t:Table)` returning page controls would be a trap.
+        ),
+        LabelSpec("Form", "A set of inputs submitted together", specialises="UiElement"),
+        LabelSpec("Dialog", "A modal surface raised over a page", specialises="UiElement"),
+        LabelSpec(
+            "Row", "One record's line in a table, and the controls it carries",
+            specialises="UiElement",
+            # Not a data row. A `Row` node per record would be data masquerading
+            # as structure; this is the row TEMPLATE -- what every row offers,
+            # which is what a test needs to know.
+        ),
+        LabelSpec(
+            "Pagination", "A table's paging control",
+            specialises="UiElement",
+            # Its own label because it is a test-design dimension, not decoration:
+            # a paginated listing has first/last/empty/overflow cases that an
+            # unpaginated one does not, and nothing could ask which tables
+            # paginate while this was a boolean inside a description.
+        ),
+        LabelSpec("Sort", "A table's ordering control", specialises="UiElement"),
+        LabelSpec(
+            "Action", "An affordance a person can invoke — the thing a click lands on",
+            specialises="UiElement",
+            # What a `UiAction` transition is DERIVED_FROM. The transition is the
+            # behaviour; this is the button.
+        ),
+        LabelSpec(
+            "Event", "The interaction that invokes an action (click, submit, change)",
+            specialises="UiElement",
+        ),
+        LabelSpec(
+            "Navigation", "A control that moves to another page",
+            specialises="UiElement",
+            # Distinct from `Route`, which is the frontend's URL definition. A
+            # `Route` says the path `/records/{id}` renders a page; a
+            # `Navigation` is the link on some other page that goes there.
+        ),
+
+        # ------------------------------------------------------------------
+        # The data layer: what a test has to set up, and what it disturbs.
+        # ------------------------------------------------------------------
+        #
+        # **Writer:** `model_sources.data_structure`, from a checked-in file --
+        # a catalogue read from a live database is the obvious future writer and
+        # is not this. **Reader:** the impact query ("which criteria touch this
+        # column"), and test design: a case whose Given is "a record exists in
+        # Archived state" needs to know where that state is stored, and nothing
+        # could answer it while the schema lived outside the graph.
+        #
+        # `DbObject` is the base and the same argument `UiElement` makes: the
+        # user's list ends in "and other database elements like function, view,
+        # ...", and an open-ended list is exactly what a specialisation hierarchy
+        # handles well -- an object whose kind nobody classified stays
+        # `:DbObject` and is a worklist, rather than forcing a new label per
+        # object type the moment one appears.
+        LabelSpec(
+            "Datasource", "A configured connection through which statements run",
+            required=("dialect",),
+            indexed=("dialect",),
+            # Separate from `Database` because they are not one thing: several
+            # datasources (read-write, read-replica, a test fixture) commonly
+            # address one database, and which one a test used is a real fact
+            # about that test.
+        ),
+        LabelSpec("Database", "One database instance", indexed=("name",)),
+        LabelSpec("Schema", "A named grouping of objects within a database",
+                  indexed=("name",)),
+        LabelSpec(
+            "DbObject", "A database object whose kind has not been established",
+            required=("object_type",),
+            indexed=("object_type", "name"),
+        ),
+        LabelSpec("Table", "A stored relation", specialises="DbObject"),
+        LabelSpec("View", "A derived relation", specialises="DbObject"),
+        LabelSpec("Function", "A callable routine", specialises="DbObject"),
+        LabelSpec(
+            "Column", "One column, with the constraints declared on it",
+            required=("data_type",),
+            indexed=("name", "data_type"),
+            # The same role `Field` plays for a payload: these are the variants a
+            # fixture must satisfy or violate (GD-3), on the storage side.
+        ),
+
+        LabelSpec(
+            "Scenario", "One covering walk: setup plus a single validated transition",
             required=("criterion", "generator_version"),
             indexed=("criterion",),
         ),
         LabelSpec(
             "TestCase", "One rendered, human-executable artefact",
-            required=("content_hash",),
+            required=("content_hash", "steps_json", "expected_result"),
             indexed=("content_hash", "published_id", "published_status", "level"),
+            # **The case carries what a person executes**, not just a name and an
+            # objective. It used to land `id`, `name`, `objective`,
+            # `content_hash` -- so the node was a `Scenario` with an objective,
+            # and the steps a tester needs existed only in the renderer's
+            # dataclass. F-12 makes the graph the interface consumers query:
+            # a case without its steps forces every reader to re-render it,
+            # which is the re-derivation F-12 exists to end.
+            #
+            # `steps_json` is text, on `Transition.inputs`' reasoning -- Neo4j
+            # properties are primitives, a list of step records cannot be one,
+            # and promoting each step to a node is ruled out by D-1 until
+            # something queries a single step. The two facts worth filtering on
+            # are lifted out as their own properties: `expected_result` (what
+            # the assertion claims) and `step_count`.
+            #
+            # `precondition_count` is separate from `step_count` because T-1a's
+            # rule is that exactly ONE step asserts. A reader checking that
+            # invariant should not have to parse JSON to do it.
             # `level` is where the case sits in the pyramid, not what it asserts.
             # Without it, generation cannot be additive: nothing distinguishes a
             # case Métis wrote from an integration test that already covers the
@@ -138,19 +573,142 @@ LABELS: dict[str, LabelSpec] = {
             enums={"level": ("unit", "integration", "api_functional",
                              "web_functional", "e2e", "performance")},
         ),
+        # ------------------------------------------------------------------
+        # The business layer: what the nouns in a criterion actually mean.
+        # ------------------------------------------------------------------
+        #
+        # D-1 needs a writer and a reader for each, and both are real.
+        #
+        # **Writer:** `model_sources.glossary`, from a checked-in glossary file —
+        # the same authoring discipline as the knowledge file, and reviewable
+        # before anything reaches a database.
+        #
+        # **Reader:** `specgen.gherkin`, which prints the entities a Feature
+        # touches beside its Scenarios, and the impact query — "which criteria
+        # touch this entity, and what else is in its area" — which nothing could
+        # ask while a business noun existed only as words inside AC prose.
+        #
+        # **Deliberately not `Class`/`Field`.** Those are the evidence layer:
+        # what the code declares. A `BusinessEntity` is what the business means,
+        # and the two disagree regularly — that disagreement is a finding, not a
+        # modelling error to smooth over by sharing one label.
+        LabelSpec(
+            "BusinessArea", "One business domain grouping entities and requirements",
+            indexed=("name",),
+            # No `owner` property. Who owns an area is org data that goes stale
+            # faster than anything else here, and nothing reads it.
+        ),
+        LabelSpec(
+            "BusinessEntity", "One business noun: what it is, and what acting on it changes",
+            required=("description",),
+            indexed=("name",),
+            # `properties_json` and `impact` are the "characteristics" half.
+            #
+            # **Properties are JSON text, not nodes**, on the same reasoning
+            # `Transition.inputs` records: a Neo4j property is a primitive or an
+            # array of them, so a list of records cannot be one, and D-1 rules
+            # out a node per property until something actually queries one. The
+            # reader here renders them all into a glossary block; it does not ask
+            # about one. If "which criteria touch Record.state" becomes a real
+            # question, promote it then — exactly as `Parameter` was promoted out
+            # of `inputs_json` when the EXERCISES edge gave it a reader.
+        ),
+
         LabelSpec(
             "Finding", "A divergence, gap, unverifiable guard, or drift item",
             required=("finding_type",),
             indexed=("finding_type", "severity", "resolution"),
         ),
+
+        # ------------------------------------------------------------------
+        # The evidence layer (spec §8.7's staged labels, D-11's trigger met).
+        # ------------------------------------------------------------------
+        #
+        # §8.7 lists `Repository`, `Class`, `Method`, `Endpoint` as returning
+        # "when impact analysis needs code structure in the graph, not just
+        # anchors", and D-11 calls that list "the staging plan, not a rejection".
+        #
+        # **X-2 still holds and decides the SHAPE of these.** The engine's graph
+        # is never merged; what lands is `code_analysis.contract`'s dataclasses,
+        # which are already normalised and engine-independent — that is the
+        # entire reason the contract module exists. No Joern node type, id or
+        # schema enters the graph, so an engine upgrade still touches only the
+        # pack.
+        #
+        # Why they are here at all: every one of these facts previously lived in
+        # a JSON file under /tmp, so a Transition could not say which endpoint
+        # it came from, and "which transitions send a field constrained
+        # @NotNull" was not a query. D-1's test is a named writer and a named
+        # reader; the writer is `raw_landing.py` and the reader is the
+        # control-flow layer's derivation edges.
         LabelSpec(
-            "Revision", "Property-level history for non-model entities",
-            indexed=("recorded_at",),
+            "Endpoint", "One HTTP entry point as recovered from code (Layer 2)",
+            required=("http_method", "path"),
+            indexed=("http_method", "path", "handler_type", "validated"),
+            # `path` may be `__unresolved__` — a route that exists and could not
+            # be read is a different fact from no route at all (T-9d), and
+            # collapsing them is what hid the dual-mount defect.
         ),
         LabelSpec(
-            "Run", "One pipeline execution: scope, criterion and versions (spec F-3)",
-            required=("criterion",),
-            indexed=("criterion", "started_at"),
+            "Parameter", "One input an endpoint reads: where it rides and what it must be",
+            required=("location",),
+            # Kept in step with `code_analysis.contract.PARAMETER_LOCATIONS`,
+            # which is the vocabulary the adapter maps into. `cookie` was added
+            # there and not here, so a document the adapter read cleanly was
+            # then refused by the ontology gate — two lists for one fact, and
+            # the failure lands at the boundary between them.
+            enums={"location": ("path", "query", "header", "body", "form", "cookie")},
+            indexed=("location", "required"),
+            # Promoted from `Transition.inputs_json` — a JSON *string*, because
+            # a list of records cannot be a Neo4j property. D-1 held this back
+            # "until something actually queries one"; the control-flow layer's
+            # EXERCISES edge is that reader.
+        ),
+        LabelSpec(
+            "Class", "One declared type: a controller, a service, or a payload schema",
+            indexed=("package",),
+            # **Deliberately doubles as the payload schema.** A DTO *is* a class;
+            # reaching `MetricDto` as a parameter's type and reaching it as
+            # `MetricController`'s neighbour must arrive at one node, or the
+            # graph says two different things about one type.
+        ),
+        LabelSpec(
+            "Field", "One field of a type, with the constraints declared on it",
+            indexed=("type_name",),
+            # The `constraints` array is GD-3's variants: what a fixture must
+            # violate to reach a validation rejection. Held here rather than on
+            # the Transition so the same constraint is one node however many
+            # transitions require it.
+        ),
+        LabelSpec(
+            "Method", "One method, from Layer 1's structural pass",
+            indexed=("type_name",),
+        ),
+        LabelSpec(
+            "DeclaredOutcome", "One observable result of an entry point, as recovered",
+            required=("signature",),
+            indexed=("status", "link", "discriminator"),
+            # The raw fact behind a Transition's outcome. `link` records how it
+            # was established — `declared` is an annotation and `name-match` is a
+            # disclosed heuristic, and a reviewer weighs them differently.
+        ),
+        LabelSpec(
+            "Check", "One condition evaluated on a path — a guard's own evidence",
+            required=("expression",),
+            indexed=("dimension_class", "order"),
+        ),
+        LabelSpec(
+            "ExceptionMapping", "An @ExceptionHandler's exception → status mapping",
+            required=("exception_type", "status"),
+            indexed=("exception_type", "status"),
+            # What makes "which exception becomes a 400" evidence rather than
+            # inference: athena maps four distinct exceptions onto 400 and only
+            # one of them is bean validation.
+        ),
+        LabelSpec(
+            "Route", "One frontend route: the path that renders a page",
+            required=("path",),
+            indexed=("path",),
         ),
     )
 }
@@ -169,27 +727,202 @@ class RelationshipSpec:
 
 ALLOWED_RELATIONSHIPS: tuple[RelationshipSpec, ...] = (
     RelationshipSpec("JiraItem", "REPRESENTS", "Requirement", "System-of-record source"),
+    # The other five anchors carry the same edge, for the same reason: it is what
+    # makes "which artefact is this requirement about" answerable, and what lets
+    # a rejected Requirement leave its evidence standing.
+    RelationshipSpec("ConfluenceItem", "REPRESENTS", "Requirement", "System-of-record source"),
+    RelationshipSpec("OpenApiItem", "REPRESENTS", "Requirement", "System-of-record source"),
+    RelationshipSpec("ZephyrItem", "REPRESENTS", "Requirement", "System-of-record source"),
+    RelationshipSpec("DatasourceItem", "REPRESENTS", "Requirement", "System-of-record source"),
+    RelationshipSpec("CodeItem", "REPRESENTS", "Requirement", "System-of-record source"),
+    # A document describes exactly one thing and cites the criteria it renders.
+    # `CITES` is what makes the round trip checkable: a rendered rule can be
+    # traced back to the criterion it came from without parsing the markdown.
+    RelationshipSpec("SpecDocument", "DESCRIBES", "Component",
+                     "The component version this specification renders"),
+    RelationshipSpec("EntityDocument", "DESCRIBES", "BusinessEntity",
+                     "The business noun this specification defines"),
+    RelationshipSpec("SpecDocument", "CITES", "AcceptanceCriterion",
+                     "A rule rendered in this document"),
+    RelationshipSpec("EntityDocument", "CITES", "AcceptanceCriterion",
+                     "A criterion that touches this entity"),
     RelationshipSpec("JiraItem", "LINKS_TO", "JiraItem",
                      "A real Jira issue link — provenance, not traceability"),
+    # ---- the intent spine ----
+    RelationshipSpec("Intent", "SPECIFIED_BY", "Specification",
+                     "A need, once somebody has said how it behaves"),
+    RelationshipSpec("Specification", "HAS_AC", "AcceptanceCriterion",
+                     "The atomic conditions this specified behaviour breaks into"),
+    RelationshipSpec("Specification", "SPECIFIES", "Requirement",
+                     "The requirement this behaviour belongs to — kept so §7.8's "
+                     "chain still reaches a Requirement (A-24)"),
+    RelationshipSpec("Specification", "REALISED_BY", "Feature",
+                     "The capability this behaviour is part of. `feature.derive` "
+                     "groups SPECIFICATIONS -- on the business noun they name, or "
+                     "the component that implements them -- so this is the edge "
+                     "the grouping actually establishes. Without it the derivation "
+                     "planned AcceptanceCriterion edges using specification ids, "
+                     "and every one matched nothing"),
+    RelationshipSpec("AcceptanceCriterion", "REALISED_BY", "Feature",
+                     "The capability this condition is part of"),
+    RelationshipSpec("Requirement", "REALISED_BY", "Feature",
+                     "The capability this requirement is part of"),
+    RelationshipSpec("Feature", "HAS_SCENARIO", "Scenario",
+                     "The walks that demonstrate this capability"),
+    # A specialisation inherits its parent's *properties* but not its catalogue
+    # entries, so each needs its own. Without these two lines both labels are
+    # orphans -- declared, writable, and reachable by no traversal, which is
+    # exactly what D-1's "named reader" half exists to prevent.
+    RelationshipSpec("RestServer", "EXPOSES", "Endpoint", "The entry points it serves"),
+    RelationshipSpec("RestServer", "CONTAINS", "Transition", "Its behaviour at one commit"),
+    RelationshipSpec("WebServer", "HAS_PAGE", "Page", "The screens it serves"),
+    RelationshipSpec("WebServer", "CONTAINS", "Transition", "Its behaviour at one commit"),
+    # ---- the code side reaching the SAME Specification, by its own edge ----
+    #
+    # A different verb from `Intent`'s on purpose. The node is shared so the two
+    # can be compared; the edge is what says which side arrived, and
+    # `Specification.provenance` says it again on the node itself. Collapsing
+    # both onto one verb would make "somebody asked for this" and "the code does
+    # this" the same statement, which is the one thing §4.1 forbids.
+    RelationshipSpec("Endpoint", "IMPLEMENTS", "Specification",
+                     "This entry point is one implementation of that behaviour"),
+    RelationshipSpec("Action", "IMPLEMENTS", "Specification",
+                     "This affordance is one implementation of that behaviour"),
     RelationshipSpec("Requirement", "HAS_AC", "AcceptanceCriterion", "Its atomic conditions"),
     RelationshipSpec("AcceptanceCriterion", "VALIDATES", "Transition",
                      "Confirmed match (spec X-18)"),
     RelationshipSpec("State", "WHEN", "Transition", "Source state — the implicit Given"),
     RelationshipSpec("Transition", "THEN", "State", "Resulting target state"),
-    RelationshipSpec("Transition", "INVOKES", "Transition",
-                     "A UI interaction drives this API behaviour (spec M-5a)"),
-    RelationshipSpec("ModelVersion", "CONTAINS", "State", "Membership of this version"),
-    RelationshipSpec("ModelVersion", "CONTAINS", "Transition", "Membership of this version"),
-    RelationshipSpec("TestPath", "GENERATED_FROM", "ModelVersion",
+    # **Two edges, because they are two different claims (M-5a).**
+    #
+    # `TRIGGERS` is one-to-many and says *this interaction starts that flow* —
+    # the Web flow then continues on its own, and nothing yet knows which outcome
+    # will occur. `INVOKES` is one-to-one and says *this UI outcome rendered that
+    # API outcome*.
+    #
+    # They were one edge, and conflating them made the graph read as though the
+    # two flows merged. It also broke a loader that stored them in a `{ui: api}`
+    # dict: a page opening three calls kept one and silently dropped two.
+    RelationshipSpec("UiAction", "TRIGGERS", "ApiCall",
+                     "This interaction starts that API flow; the UI continues (M-5a)"),
+    RelationshipSpec("UiAction", "INVOKES", "ApiCall",
+                     "This UI outcome rendered that API outcome (M-5a, M-5b)"),
+    RelationshipSpec("Component", "HAS_PAGE", "Page",
+                     "A screen this web component presents"),
+    RelationshipSpec("Page", "SHOWS", "State",
+                     "A condition this page can be observed in (M-2, M-3)"),
+
+    # ---- the Web structure tree ---------------------------------------------
+    #
+    # `HAS_ELEMENT` throughout, so "every control on this page, at any depth" is
+    # one variable-length query rather than a union over container types. The
+    # triples are explicit rather than `UiElement -> UiElement`: the containment
+    # rules are real (a Row belongs to a Table, not to a Menu), and cataloguing
+    # them is what makes a modelling error a refused write instead of a silent
+    # shape nobody notices.
+    *[RelationshipSpec(container, "HAS_ELEMENT", element,
+                       "A control this surface presents")
+      for container, elements in (
+          # `UiElement` is the generic, and it is here so an element whose type
+          # nothing established is discoverable. All ten of its specialisations
+          # carried this edge and the parent carried none -- so `Transition`
+          # stays reachable through `COVERS` while an unclassified UI element
+          # could not be found and resolved, which is the entire reason a
+          # generic label is kept.
+          ("Page", ("UiElement", "Menu", "UiTable", "Form", "Dialog", "Action",
+                    "Event", "Navigation")),
+          ("Menu", ("Action", "Event", "Navigation", "Dialog")),
+          ("UiTable", ("Action", "Event", "Navigation", "Dialog",
+                       "Row", "Pagination", "Sort")),
+          ("Form", ("Action", "Event", "Navigation", "Dialog")),
+          # A dialog with no controls cannot be dismissed, and a row with none is
+          # inert. Neither was in the original list; both are what makes the
+          # other rules usable, and they are named here rather than assumed.
+          ("Dialog", ("Action", "Event", "Navigation")),
+          ("Row", ("Action", "Event", "Navigation", "Dialog")),
+          ("Pagination", ("Action", "Event")),
+          ("Sort", ("Action", "Event")),
+      ) for element in elements],
+    # ---- the data tree ------------------------------------------------------
+    RelationshipSpec("Datasource", "CONNECTS_TO", "Database",
+                     "Which database this connection addresses"),
+    RelationshipSpec("Database", "HAS_SCHEMA", "Schema", "A grouping it contains"),
+    *[RelationshipSpec(container, "HAS_OBJECT", kind, "An object it contains")
+      for container in ("Schema", "Database")
+      for kind in ("Table", "View", "Function", "DbObject")],
+    *[RelationshipSpec(relation, "HAS_COLUMN", "Column", "A column it declares")
+      for relation in ("Table", "View")],
+    # What a criterion's data actually lives in. The same shape as
+    # `AcceptanceCriterion-[:REFERENCES]->BusinessEntity`, one layer down: an
+    # entity is what the business calls it, a table is where it is kept.
+    RelationshipSpec("BusinessEntity", "STORED_IN", "Table",
+                     "Where this business noun is persisted"),
+
+    RelationshipSpec("Action", "ON_EVENT", "Event",
+                     "The interaction that invokes this action"),
+    RelationshipSpec("Navigation", "NAVIGATES_TO", "Page",
+                     "Where this control goes"),
+    # The join to behaviour, mirroring `Transition-[:DERIVED_FROM]->Endpoint`.
+    RelationshipSpec("Transition", "DERIVED_FROM", "Action",
+                     "The control this interaction was recovered from"),
+    RelationshipSpec("Component", "CONTAINS", "State", "Membership of this component version"),
+    RelationshipSpec("Component", "CONTAINS", "Transition", "Membership of this component version"),
+    RelationshipSpec("Scenario", "GENERATED_FROM", "Component",
                      "The exact version this path covers"),
-    RelationshipSpec("TestPath", "COVERS", "Transition",
+    RelationshipSpec("Scenario", "COVERS", "Transition",
                      "Ordered traversal — makes coverage computable",
                      properties=("sequence", "is_validated")),
-    RelationshipSpec("TestPath", "PRODUCES", "TestCase", "The rendered artefact"),
-    RelationshipSpec("Run", "PRODUCED", "TestPath", "Which run generated this path"),
+    RelationshipSpec("Scenario", "PRODUCES", "TestCase", "The rendered artefact"),
+    RelationshipSpec("BusinessEntity", "BELONGS_TO", "BusinessArea",
+                     "Which domain this noun lives in"),
+    RelationshipSpec("Requirement", "BELONGS_TO", "BusinessArea",
+                     "Which domain this requirement governs"),
+    # The edge that makes "what is the impact" answerable. Without it a business
+    # noun is a word inside prose, and nothing can be asked about it.
+    RelationshipSpec("AcceptanceCriterion", "REFERENCES", "BusinessEntity",
+                     "A business noun this criterion acts on or constrains"),
     RelationshipSpec("Finding", "ABOUT", ANY_LABEL, "What the finding concerns"),
-    RelationshipSpec(ANY_LABEL, "HAS_REVISION", "Revision",
-                     "Written only by the revision recorder (spec ONT-010)"),
+
+    # ---- inside the evidence layer -----------------------------------------
+    RelationshipSpec("Component", "EXPOSES", "Endpoint",
+                     "The entry points this deployable presents"),
+    RelationshipSpec("Endpoint", "ACCEPTS", "Parameter", "What a caller must send"),
+    RelationshipSpec("Parameter", "OF_TYPE", "Class",
+                     "The payload schema — the same node as the declared type"),
+    RelationshipSpec("Endpoint", "RETURNS", "Class", "The declared response body type"),
+    RelationshipSpec("Class", "HAS_FIELD", "Field", "Its declared fields and constraints"),
+    RelationshipSpec("Class", "DECLARES_METHOD", "Method", "Its methods"),
+    RelationshipSpec("Endpoint", "HANDLED_BY", "Method", "The handler behind the route"),
+    RelationshipSpec("Method", "CALLS", "Method", "A resolved call edge (Layer 1)"),
+    RelationshipSpec("Endpoint", "DECLARES", "DeclaredOutcome",
+                     "A result this entry point can produce"),
+    RelationshipSpec("DeclaredOutcome", "GUARDED_BY", "Check",
+                     "The condition selecting this outcome"),
+    RelationshipSpec("ExceptionMapping", "HANDLED_BY", "Method",
+                     "The @ExceptionHandler that maps it"),
+    RelationshipSpec("Route", "RENDERS", "Page", "The page this frontend route shows"),
+    RelationshipSpec("Page", "CALLS", "Endpoint", "An API call this page makes"),
+
+    # ---- evidence -> control flow, the join between the two layers ---------
+    #
+    # **This is what the second layer is FOR.** Before these, a Transition's only
+    # provenance was a `source_episode_id` property pointing at an Episode that
+    # recorded "the code source ran" — which endpoint, which outcome and which
+    # field were answerable only by re-reading a file in /tmp.
+    RelationshipSpec("Transition", "DERIVED_FROM", "Endpoint",
+                     "The entry point this behaviour was recovered from"),
+    RelationshipSpec("Transition", "DERIVED_FROM", "DeclaredOutcome",
+                     "The recovered outcome this transition represents"),
+    RelationshipSpec("Transition", "DERIVED_FROM", "ExceptionMapping",
+                     "The exception→status mapping behind a derived rejection"),
+    RelationshipSpec("Transition", "EXERCISES", "Parameter",
+                     "An input this transition sends (replaces inputs_json)"),
+    RelationshipSpec("Transition", "REQUIRES", "Field",
+                     "A field constraint a case must satisfy or violate (GD-3)"),
+    RelationshipSpec("Transition", "EXPECTS", "Class",
+                     "The response body a case should assert"),
+    RelationshipSpec("Transition", "CONSTRAINED_BY", "Check",
+                     "The recovered condition behind this transition's guard"),
 )
 
 RELATIONSHIP_TYPES = tuple(dict.fromkeys(r.rel_type for r in ALLOWED_RELATIONSHIPS))
@@ -197,10 +930,23 @@ RELATIONSHIP_TYPES = tuple(dict.fromkeys(r.rel_type for r in ALLOWED_RELATIONSHI
 # Spec §8.7 — excluded, each with the trigger that would bring it back. Kept in
 # code so the staging plan is checkable, not just prose.
 STAGED_OUT: dict[str, str] = {
+    # Declared with neither a writer nor a reader -- `test_ontology` already
+    # named it "the standing example of what this test exists to prevent", and
+    # it stayed declared anyway. Property-level history needs a temporal design
+    # nothing here has; the integer `revision` property on Requirement and
+    # AcceptanceCriterion carries what the graph actually uses today.
+    "Revision": "property-level history is designed AND something writes it — "
+                "an integer `revision` property is what is used now",
+    # Written by `plan_persist` and `finding_writer`, matched by no query --
+    # D-1 asks for a named writer AND a named reader, and this had only the
+    # first. F-3's reproducibility half is already carried elsewhere:
+    # `Component` holds the version and commit, and `.metis/runs/*.json` holds
+    # the scope and criterion that `workflow status` actually reads.
+    "Run": "two generation runs need comparing IN THE GRAPH — F-3's "
+           "comparability half, which the run file cannot answer across scopes",
     "Goal": "a backlog hierarchy is actually queried",
     "Capability": "a backlog hierarchy is actually queried",
     "Epic": "a backlog hierarchy is actually queried",
-    "Feature": "a backlog hierarchy is actually queried",
     "Release": "execution results are ingested and release reporting is required",
     "TestCycle": "execution results are ingested",
     "TestExecution": "execution results are ingested (spec C-10's trigger)",
@@ -211,11 +957,17 @@ STAGED_OUT: dict[str, str] = {
     "Logs": "operational data enters scope",
     "Constitution": "formal governance is adopted",
     "Constraint": "formal governance is adopted",
+    # `Class`, `Method` and `Endpoint` were here, on the trigger "impact analysis
+    # needs code structure in the graph, not just anchors". **The trigger fired**
+    # — for a related reason rather than the one predicted: the control-flow
+    # layer needed to say what it was derived FROM, and every one of these facts
+    # was sitting in a JSON file under /tmp. D-11 calls this list a staging plan,
+    # and a staged label that has been admitted must leave it, or the ontology
+    # claims to exclude something it ships.
+    #
+    # `Repository` stays out. Nothing writes or reads it: one repository is the
+    # unit of extraction and it is already named on every anchor.
     "Repository": "impact analysis needs code structure in the graph, not just anchors",
-    "Class": "impact analysis needs code structure in the graph",
-    "Method": "impact analysis needs code structure in the graph",
-    "Endpoint": "impact analysis needs code structure in the graph",
-    "Intent": "a concrete need appears — none exists in §§2-7",
     "TestDesign": "a concrete need appears",
     "TestSuite": "a concrete need appears",
     "MicroRequirement": "a concrete need appears",
@@ -227,13 +979,31 @@ def relationships_from(label: str) -> tuple[RelationshipSpec, ...]:
                  if r.from_label == label or r.from_label == ANY_LABEL)
 
 
+def _with_parents(label: str) -> tuple[str, ...]:
+    """`ApiCall` -> `("ApiCall", "Transition")`. Walks the chain."""
+    out, current = [label], LABELS.get(label)
+    while current is not None and current.specialises:
+        out.append(current.specialises)
+        current = LABELS.get(current.specialises)
+    return tuple(out)
+
+
 def is_allowed(from_label: str, rel_type: str, to_label: str) -> bool:
+    """Whether the triple is catalogued, **following the specialisation chain**.
+
+    A specialisation is written instead of its parent, so an `ApiCall` is a
+    `Transition` that has been classified. Without the walk, every catalogued
+    `-> Transition` triple -- `WHEN`, `THEN`, `VALIDATES`, `COVERS`, `CONTAINS` --
+    would reject the very nodes the classification produces.
+    """
+    from_labels = _with_parents(from_label)
+    to_labels = _with_parents(to_label)
     for r in ALLOWED_RELATIONSHIPS:
         if r.rel_type != rel_type:
             continue
-        if r.from_label not in (from_label, ANY_LABEL):
+        if r.from_label != ANY_LABEL and r.from_label not in from_labels:
             continue
-        if r.to_label not in (to_label, ANY_LABEL):
+        if r.to_label != ANY_LABEL and r.to_label not in to_labels:
             continue
         return True
     return False

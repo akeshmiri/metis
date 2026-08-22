@@ -92,10 +92,72 @@ def test_a_draft_reads_as_given_when_then():
     assert "then the result is LoggedIn" in draft.text
 
 
-def test_the_guard_is_carried_verbatim():
+def test_the_guard_is_carried_verbatim_though_placed_by_role():
+    """Every word of the guard survives; none is paraphrased.
+
+    It is no longer one contiguous span, and that is the point: a criterion is
+    atomic (one condition, one action, one validation), so GD-2's prefix
+    dimensions render into the Given as context and only the deciding condition
+    is the criterion's condition. Nothing is dropped or reworded -- the parts are
+    placed by the role they actually play.
+    """
     model = login_model()
     draft = next(d for d in draft_from_model(model).drafts if d.transition_id == "t01")
-    assert "credentials_valid AND NOT account_locked" in draft.text
+    assert draft.preconditions == ("credentials_valid",)
+    assert draft.and_guard == "NOT account_locked"
+    assert "credentials_valid" in draft.text
+    assert "NOT account_locked" in draft.text
+    assert draft.is_atomic
+
+
+def test_a_compound_guard_yields_one_condition_not_a_bundle():
+    """The defect this replaces: a whole compound guard in one `and` clause.
+
+    `authenticated AND NOT authorized -> 403` drafted as a single criterion said
+    "when a request is made, and authenticated AND NOT authorized, then 403" --
+    several criteria wearing one id, which a reviewer can only approve or reject
+    as a bundle. Splitting it per conjunct would be worse: "when a request is
+    made, and authenticated, then 403" is simply false.
+    """
+    model = Model(
+        id="perm-api",
+        states={"Ready": State(id="Ready", name="Ready", surface="api", is_initial=True),
+                "Forbidden403": State(id="Forbidden403", name="Forbidden403", surface="api")},
+        transitions={"t": Transition(
+            id="t", source="Ready", trigger="POST /admin/action", target="Forbidden403",
+            guard="authenticated AND NOT authorized")},
+    )
+    draft = draft_from_model(model).drafts[0]
+    assert draft.and_guard == "NOT authorized", "one condition under test"
+    assert draft.preconditions == ("authenticated",), "the prefix is context"
+    assert draft.is_atomic
+    given, _, rest = draft.text.partition(", when ")
+    assert "authenticated" in given, "the prefix belongs to the Given, as context"
+    assert "NOT authorized" in rest and "authenticated" not in rest.replace(
+        "NOT authorized", ""), (
+        "only the deciding condition may follow the When"
+    )
+
+
+def test_a_disjunction_is_reported_not_split_on_a_guess():
+    """M-17 fail-closed: deciding which branch of an OR decides needs real
+    boolean reasoning, so the guard is kept whole and the draft is marked."""
+    model = Model(
+        id="unlock-api",
+        states={"Locked": State(id="Locked", name="Locked", surface="api", is_initial=True),
+                "Unlocked": State(id="Unlocked", name="Unlocked", surface="api")},
+        transitions={"t": Transition(
+            id="t", source="Locked", trigger="unlock", target="Unlocked",
+            guard="admin_unlocked OR lockout_elapsed")},
+    )
+    drafts = draft_from_model(model)
+    assert not drafts.drafts[0].is_atomic
+    assert drafts.drafts[0].and_guard == "admin_unlocked OR lockout_elapsed"
+    assert [tid for tid, _ in drafts.not_atomic] == ["t"]
+    assert drafts.skipped == [], (
+        "a non-atomic draft was still written; 'not drafted' and 'drafted and "
+        "compound' are different facts and must not share a list"
+    )
 
 
 def test_an_http_trigger_is_phrased_as_a_request():

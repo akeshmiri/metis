@@ -14,7 +14,7 @@ models:
   judge: "REPLACE: e.g. claude-sonnet-5"
 
 corpus:
-  glob: "REPLACE: e.g. corpus/*.md or /path/to/real/documents/*.md"
+  glob: "REPLACE: an absolute path to your own documents, e.g. /path/to/docs/*.md"
 
 repositories:
   - name: "REPLACE: repository or service name"

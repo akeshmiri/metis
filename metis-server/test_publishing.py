@@ -354,3 +354,31 @@ if __name__ == "__main__":
             print(f"ERROR {t.__name__}: {type(e).__name__}: {e}")
     print(f"\n{len(tests) - failures}/{len(tests)} passed")
     sys.exit(1 if failures else 0)
+
+
+def test_the_reprint_instruction_is_runnable_from_the_graph():
+    """The refusal prints the command to re-run. `args.model` is None when
+    publishing from the graph, so it printed `publish None --confirm publish` —
+    an instruction that fails if a reader copies it, which is the only reason
+    that line exists.
+
+    Asserted against the CLI source rather than by running it, because the
+    behaviour needs a graph and the defect is entirely in the string.
+    """
+    import pathlib
+    import re
+
+    from metis_mcp.mbt import cli
+
+    source = pathlib.Path(cli.__file__).read_text()
+    start = source.index("def cmd_publish(")
+    block = source[start:source.index("\ndef ", start + 1)]
+    assert "{args.model}" not in block, (
+        "the re-run instruction interpolates args.model, which is None when "
+        "publishing from the graph"
+    )
+    assert "--journey" in block, (
+        "the graph case must print the scope it was actually given"
+    )
+    # And the scope is chosen, not assumed.
+    assert re.search(r"if args\.model", block)

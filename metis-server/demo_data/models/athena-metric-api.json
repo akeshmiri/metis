@@ -14,14 +14,14 @@
       "is_initial": false
     },
     {
-      "id": "Created201",
-      "name": "Created201",
+      "id": "NoContent204",
+      "name": "NoContent204",
       "surface": "api",
       "is_initial": false
     },
     {
-      "id": "NoContent204",
-      "name": "NoContent204",
+      "id": "MetricPresent",
+      "name": "MetricPresent",
       "surface": "api",
       "is_initial": false
     }
@@ -30,50 +30,254 @@
     {
       "id": "org.catools.athena.metric.controller.MetricController.getSummary:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.Integer)::GET->Ok200",
       "source": "Ready",
-      "trigger": "GET /summary",
+      "trigger": "GET /metric/summary",
       "target": "Ok200",
       "guard": "",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "project",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "environment",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "actionName",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "actionType",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "actionTarget",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "windowDays",
+          "location": "query",
+          "type_name": "java.lang.Integer",
+          "required": false,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.metric.controller.MetricController.getTrend:org.springframework.http.ResponseEntity(java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.Integer)::GET->Ok200",
       "source": "Ready",
-      "trigger": "GET /trend",
+      "trigger": "GET /metric/trend",
       "target": "Ok200",
       "guard": "",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "project",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "environment",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "actionName",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "actionType",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "actionTarget",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "windowDays",
+          "location": "query",
+          "type_name": "java.lang.Integer",
+          "required": false,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.metric.controller.MetricController.getAll:org.springframework.http.ResponseEntity(int,int,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String)::GET->Ok200",
       "source": "Ready",
-      "trigger": "GET /all",
+      "trigger": "GET /metric/all",
       "target": "Ok200",
       "guard": "",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "page",
+          "location": "query",
+          "type_name": "int",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "size",
+          "location": "query",
+          "type_name": "int",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "sort",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "direction",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "project",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "environment",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "actionName",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "actionType",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        },
+        {
+          "name": "actionTarget",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.metric.controller.MetricController.save:org.springframework.http.ResponseEntity(org.catools.athena.model.metrics.MetricDto)::POST->Created201",
       "source": "Ready",
-      "trigger": "POST ",
-      "target": "Created201",
+      "trigger": "POST /metric",
+      "target": "MetricPresent",
       "guard": "",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 201,
+      "guard_anchor": "",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "metricDto",
+          "location": "body",
+          "type_name": "org.catools.athena.model.metrics.MetricDto",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.metric.controller.MetricController.getActionById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204",
       "source": "Ready",
-      "trigger": "GET /{id}",
+      "trigger": "GET /metric/{id}",
       "target": "NoContent204",
       "guard": "t.isEmpty()",
-      "implementation_status": "implemented"
+      "implementation_status": "implemented",
+      "outcome_status": 204,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "id",
+          "location": "path",
+          "type_name": "java.lang.Long",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     },
     {
       "id": "org.catools.athena.metric.controller.MetricController.getActionById:org.springframework.http.ResponseEntity(java.lang.Long)::GET->Ok200",
-      "source": "Ready",
-      "trigger": "GET /{id}",
+      "source": "MetricPresent",
+      "trigger": "GET /metric/{id}",
       "target": "Ok200",
-      "guard": "NOT (t.isEmpty())",
-      "implementation_status": "implemented"
+      "guard": "",
+      "implementation_status": "implemented",
+      "outcome_status": 200,
+      "guard_anchor": "athena-common/src/main/java/org/catools/athena/common/utils/ResponseEntityUtils.java:17@athena-head",
+      "source_state_unresolved": false,
+      "inputs": [
+        {
+          "name": "id",
+          "location": "path",
+          "type_name": "java.lang.Long",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": []
     }
   ]
 }
