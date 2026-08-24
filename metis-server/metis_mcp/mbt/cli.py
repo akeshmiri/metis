@@ -673,6 +673,165 @@ def cmd_ac_mine(args) -> int:
     return 0
 
 
+def cmd_doctor(args) -> int:
+    """Is this machine able to finish an extraction? (X-3)
+
+    Run before the slow path, not inside it: a CPG build is minutes long, and
+    every reason it fails here is a reason it would have failed there — with
+    the failure buried in engine output instead of stated up front.
+    """
+    from code_analysis.engine import preflight
+
+    result = preflight(check_engine_version=not getattr(args, "fast", False))
+    print(result.describe())
+    from code_analysis.project_profile import list_profiles, profiles_dir
+
+    known = list_profiles()
+    print(f"\n  profiles in {profiles_dir()}: {', '.join(known) or 'none'}")
+
+    if getattr(args, "repo", None):
+        from code_analysis.project_profile import (
+            ProfileInvalid, ProfileMissing, format_profile, load_for,
+        )
+        print()
+        try:
+            profile = load_for(args.repo, getattr(args, "project", "") or "")
+            print(format_profile(profile))
+            for note in profile.notes:
+                print(f"  note: {note}")
+        except (ProfileMissing, ProfileInvalid) as e:
+            print(f"  [FAIL] profile            {e}")
+            return 1
+    return 0 if result.ok else 1
+
+
+def cmd_init(args) -> int:
+    """Scaffold `.metis/project.json` inside the target repository.
+
+    What is mechanically knowable is filled in; every judgement is left marked
+    REPLACE, the way `.metis/config.yaml` already does. A plausible default for
+    a judgement is worse than a marker, because nobody revisits it.
+    """
+    import json
+
+    from code_analysis.project_profile import (
+        profile_path, profiles_dir, project_name_for, scaffold,
+    )
+
+    name = args.project or project_name_for(args.repo)
+    target = profile_path(name)
+    if target.exists() and not args.force:
+        print(f"{target} already exists. Pass --force to overwrite it — but read "
+              f"it first: it is the only place your layout is written down.")
+        return 1
+    document = scaffold(args.repo, project=name)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(document, indent=2) + "\n")
+    markers = sum(1 for line in json.dumps(document).split('"')
+                  if line.startswith("REPLACE: "))
+    print(f"wrote {target}")
+    print(f"  describes: {document['repo']}")
+    print(f"  detected: language={document['language']}, "
+          f"{len(document['journeys'][0]['modules'])} module(s)")
+    print(f"  {markers} judgement(s) marked REPLACE — fill them in before "
+          f"`metis analyse`")
+    return 0
+
+
+def cmd_analyse(args) -> int:
+    """Repository -> approval gate, in one command (§3.2).
+
+    A thin front end over `workflow run model-build`: it resolves the profile,
+    runs the engine (or reuses the cache) and hands the reports to the same
+    pipeline the CLI has always run. `workflow/stages.py` stays the single place
+    that knows the order — a second pipeline here would be a second order to
+    keep in step.
+    """
+    from code_analysis.engine import EngineUnavailable, extract
+    from code_analysis.project_profile import (
+        ProfileInvalid, ProfileMissing, load_for,
+    )
+
+    try:
+        profile = load_for(args.repo, args.project or "")
+        journey = profile.journey(args.journey or "", args.surface or "")
+    except (ProfileMissing, ProfileInvalid) as e:
+        print(f"REFUSED: {e}")
+        return 1
+    for note in profile.notes:
+        print(f"  note: {note}")
+
+    # **X-4, and it was not being checked here.** `analyse` took the profile's
+    # language to build a CPG and never asked whether the framework it declares
+    # is one extraction supports. Against an undeclared one the packs recover
+    # nothing and the run reports "no behaviour", which §5.8 says must never
+    # happen — the refusal belongs before the CPG, not after it.
+    from code_analysis.framework_config import FrameworkUnsupported
+    from code_analysis.framework_config import default as default_frameworks
+
+    try:
+        default_frameworks().get(profile.framework, journey.surface)
+    except FrameworkUnsupported as e:
+        print(f"REFUSED: {e}")
+        return 1
+
+    # The profile's module map replaces the derivation that used to be a regex
+    # over one company's directory names.
+    from metis_mcp.mbt.test_levels import set_service_resolver
+
+    set_service_resolver(profile.service_of)
+
+    try:
+        extraction = extract(args.repo, language=profile.language,
+                             project=profile.project,
+                             framework=profile.framework,
+                             project_annotations=profile.annotations,
+                             commit=args.commit or "",
+                             refresh=args.refresh)
+    except EngineUnavailable as e:
+        print(f"REFUSED: {e}")
+        return 1
+
+    for line in extraction.log:
+        print(f"  {line}")
+    print(f"  commit: {extraction.commit}")
+
+    args.workflow = "model-build"
+    args.scope = args.scope or profile.project
+
+    # **The source follows the surface.** `code` reads the two JVM pack reports;
+    # `web` reads a UI pack's. Hardcoding `code` meant a ui journey handed a
+    # react-ui report to a reader expecting jvm-behaviour, which fails on a
+    # missing key rather than saying the surfaces differ.
+    if journey.surface == "ui":
+        ui_report = next((r for name, r in extraction.reports.items()
+                          if name.endswith("-ui")), None)
+        if ui_report is None:
+            print(f"REFUSED: {profile.framework!r} declares no UI pack, so there "
+                  f"is nothing to extract for the {journey.surface!r} surface")
+            return 1
+        args.source = "web"
+        args.model = str(ui_report)
+        args.endpoints = None
+    else:
+        args.source = "code"
+        args.model = str(extraction.behaviour)
+        args.endpoints = str(extraction.structural)
+    # REQ-METIS-PG-01: what already passes, so generation is additive rather
+    # than proposing a case for behaviour a real test already covers.
+    args.inventory = str(extraction.inventory) if extraction.inventory else None
+    args.journey = journey.journey
+    args.surface = journey.surface
+    args.service = ""
+    for name, value in (("author", ""), ("job_id", "analyse"), ("state", None),
+                        ("overrides", None), ("glossary", None),
+                        ("knowledge", None), ("confirm", ""), ("as_user", ""),
+                        ("allow_unverifiable", False)):
+        if not hasattr(args, name):
+            setattr(args, name, value)
+    return _run_workflow(args, resume=False)
+
+
 def cmd_frameworks(args) -> int:
     """Spec RD-6/X-4: what extraction is declared to support."""
     from code_analysis.framework_config import default, format_config, load_file
@@ -931,12 +1090,28 @@ def _write_lifecycle_to_graph(args, model) -> None:
     no separate overlay file -- the two-file split (I-14) applies to the
     file-based path only.
     """
+    from metis_mcp.ontology.labels import NEEDS_REVIEW_STATES
+
+    def marker(lifecycle: str) -> str:
+        """`SET`/`REMOVE` for `:NeedReview`, from the state being written.
+
+        The marker is derived from `lifecycle_state`, never independent of it —
+        so a decision that settles a node has to clear it in the same statement
+        that records the decision. Leaving it behind would put an approved
+        element in the review queue forever, which is the failure mode a second
+        representation of one fact always has.
+        """
+        return ("SET n:NeedReview" if lifecycle in NEEDS_REVIEW_STATES
+                else "REMOVE n:NeedReview")
+
     with session(args.uri, args.user) as s:
         for sid, state in model.states.items():
-            s.run("MATCH (n:State {id:$i}) SET n.lifecycle_state=$l, n.name=$n",
+            s.run(f"MATCH (n:State {{id:$i}}) "
+                  f"SET n.lifecycle_state=$l, n.name=$n {marker(state.lifecycle_state)}",
                   i=sid, l=state.lifecycle_state, n=state.name)
         for tid, transition in model.transitions.items():
-            s.run("MATCH (n:Transition|ApiCall|UiAction {id:$i}) SET n.lifecycle_state=$l",
+            s.run(f"MATCH (n:Transition|ApiCall|UiAction {{id:$i}}) "
+                  f"SET n.lifecycle_state=$l {marker(transition.lifecycle_state)}",
                   i=tid, l=transition.lifecycle_state)
 
 
@@ -1054,6 +1229,54 @@ def _promote_tier_one(args, model) -> tuple[int, int, int]:
     return transitions, states, len(clashes)
 
 
+def cmd_review_queue(args) -> int:
+    """Everything awaiting a decision, across every label (D-1's reader for
+    `:NeedReview`).
+
+    This is the question that justified the marker. `lifecycle_state` is indexed
+    on 54 labels, so asking it of any ONE of them is cheap; asking it of all of
+    them means scanning every node in the graph. `MATCH (n:NeedReview)` is the
+    same question as one index lookup.
+
+    The marker is never consulted to DECIDE anything — `lifecycle_state` stays
+    authoritative and this command prints it beside every row, so a
+    disagreement would be visible here first.
+    """
+    from metis_mcp.mbt.graph_session import session
+
+    rows = []
+    with session(args.uri, args.user) as s:
+        for r in s.run(
+                "MATCH (n:NeedReview) "
+                "WITH n, [l IN labels(n) WHERE l <> 'NeedReview'][0] AS label "
+                + ("WHERE $journey IN coalesce(n.functional_areas, []) "
+                   if getattr(args, "journey", None) else "")
+                + "RETURN label, n.id AS id, n.name AS name, "
+                  "coalesce(n.lifecycle_state, '<none>') AS state "
+                  "ORDER BY label, n.id",
+                journey=getattr(args, "journey", None)):
+            rows.append(dict(r))
+
+    if not rows:
+        print("Nothing is awaiting a decision.")
+        return 0
+
+    by_label: dict[str, int] = {}
+    for row in rows:
+        by_label[row["label"]] = by_label.get(row["label"], 0) + 1
+    print(f"{len(rows)} element(s) awaiting a decision:\n")
+    for label, count in sorted(by_label.items()):
+        print(f"  {count:>4}  {label}")
+    print()
+    for row in rows[:args.limit]:
+        print(f"  {row['state']:<11} {row['label']:<14} {row['id'][:70]}")
+    if len(rows) > args.limit:
+        print(f"  … and {len(rows) - args.limit} more (--limit to see them)")
+    print("\n  lifecycle_state is authoritative; the marker is kept in step "
+          "with it.\n  Decide with: review export … then review apply … --resume")
+    return 0
+
+
 def cmd_review_export(args) -> int:
     if getattr(args, "journey", None):
         model = _load_from_graph(args)
@@ -1068,7 +1291,7 @@ def cmd_review_export(args) -> int:
             # `--surface` is not optional here even though it has a default:
             # the export is scoped to one surface, `apply` defaults to `api`,
             # and omitting it made the printed command refuse with "review file
-            # is for model 'athena-git-ui', not 'athena-git-api'". An
+            # is for model 'archive-ui', not 'archive-api'". An
             # instruction the tool tells you to run has to run.
             print(f"  python3 -m metis_mcp.mbt.cli review apply "
                   f"--journey {args.journey} --surface {args.surface} {args.out}")
@@ -1095,6 +1318,47 @@ def cmd_review_export(args) -> int:
         print(f"  python3 -m metis_mcp.mbt.cli review apply {args.out} --model {args.model}")
     else:
         print(text)
+    return 0
+
+
+def _resume_after_decision(args, model, outstanding) -> int:
+    """Continue the run this decision unblocked.
+
+    **Not an auto-promotion (F-8).** The promotion was the `apply` that just
+    ran — a human editing a file and recording a decision against a fingerprint.
+    Resuming only executes the stages that decision released, and any further
+    gate halts exactly as before. What it removes is a second command whose
+    entire content is "yes, continue the thing I just authorised".
+
+    Opt-in, because a resumed run writes: the operator says so with `--resume`,
+    and the halt message offers it rather than assuming it.
+    """
+    from metis_mcp.workflow import RunRecord, run_path
+
+    if outstanding:
+        print(f"\n  not resuming — {len(outstanding)} element(s) still "
+              f"outstanding. Decide those first.")
+        return 0
+
+    from code_analysis.project_profile import metis_home
+
+    candidates = [r for r in (RunRecord.load(p) for p in
+                              sorted((metis_home() / "runs").glob("*.json")))
+                  if r is not None and r.is_blocked]
+    for record in candidates:
+        # Same model, or nothing: resuming somebody else's halted run because it
+        # happened to be the only one would be worse than not resuming at all.
+        if record.scope and record.scope not in (model.id, getattr(args, "scope", "")):
+            journey = getattr(args, "journey", "")
+            if journey and journey not in record.run_id:
+                continue
+        print(f"\n  resuming {record.run_id} — the decision that blocked it is "
+              f"recorded")
+        args.workflow = record.workflow
+        args.scope = record.scope
+        return _run_workflow(args, resume=True)
+
+    print("\n  nothing to resume — no halted run is waiting on this model")
     return 0
 
 
@@ -1139,6 +1403,8 @@ def cmd_review_apply(args) -> int:
                   f"acceptance criteria's own words (X-7 tier 1)")
         if clashing:
             print(f"  {clashing} left at tier 2 pending a human decision")
+        if getattr(args, "resume", False):
+            return _resume_after_decision(args, model, outstanding)
         return 0 if result.applied or not result.refused else 1
 
     # Human facts go to the review-state file. The model source is never written
@@ -1731,6 +1997,280 @@ def cmd_entity_render(args) -> int:
     return 1 if errors else 0
 
 
+def _report_landing(outcome, what: str) -> int:
+    """One shape for every landing report, including the unmatched edges.
+
+    Unmatched is printed because `land` does not fail on it: a plan whose edge
+    endpoints were not both present writes nothing for that group and returns
+    success, which is how two stages both report "landed" over a broken chain.
+    """
+    if not outcome.ok:
+        print(f"\nREFUSED: {outcome.refused}")
+        return 1
+    print(f"\nLanded {outcome.nodes_written} nodes, {outcome.edges_written} "
+          f"edges ({what})")
+    print("  lifecycle: Quarantine — nothing here is agreement (S-4)")
+    for group, shortfall, why in outcome.unmatched:
+        print(f"  UNMATCHED {group}: {shortfall}\n      {why}")
+    return 0
+
+
+def cmd_guide(args) -> int:
+    """Generate `docs/guide/` from the engine.
+
+    `--check` regenerates into memory and diffs, which is what makes a stale
+    guide a failing build rather than a surprise found by a reader.
+    """
+    from metis_mcp import guide
+
+    pages = guide.generate()
+    target = FsPath(args.directory)
+
+    if args.check:
+        stale = []
+        for name, content in sorted(pages.items()):
+            path = target / name
+            if not path.exists():
+                stale.append(f"{name}: missing")
+            elif path.read_text() != content:
+                stale.append(f"{name}: differs from what the engine generates")
+        if stale:
+            print("STALE — run `metis guide` and commit the result:")
+            for line in stale:
+                print(f"    {line}")
+            return 1
+        print(f"{len(pages)} page(s) up to date.")
+        return 0
+
+    written = guide.write(target)
+    for path in written:
+        print(f"  wrote {path}")
+    print(f"\n{len(written)} page(s). Each states what it was generated from.")
+    return 0
+
+
+def cmd_data_catalogue(args) -> int:
+    """A database catalogue -> Datasource/Database/Schema/Table/View/Column.
+
+    **Structure only.** X-7a: Métis reads intake sources and never executes
+    against the System Under Test, and the distinction that does the work is
+    that a database read for its structure is an intake source while the same
+    database reached to check a test's outcome is the SUT. There is no mode here
+    that runs a query of the caller's choosing, and `assert_no_row_reads` holds
+    the reader to the catalogue views it declares.
+    """
+    from code_analysis import db_catalogue
+    from metis_mcp.model_sources.data_landing import plan_catalogue
+    from metis_mcp.model_sources.landing import land
+
+    try:
+        if args.fixture:
+            catalogue = db_catalogue.from_fixture(args.fixture)
+        else:
+            catalogue = db_catalogue.read(
+                dialect=args.dialect, dsn=args.dsn,
+                password_env=args.password_env, schemas=args.schema or None)
+    except db_catalogue.CatalogueRefused as e:
+        print(f"REFUSED: {e}")
+        return 1
+
+    tables = sorted(catalogue.table_names())
+    print(f"Catalogue — {catalogue.dialect} {catalogue.database!r}: "
+          f"{len(catalogue.schemas)} schema(s), "
+          f"{len([t for t in tables if '.' not in t])} object(s)")
+
+    plan = plan_catalogue(catalogue, journey=args.journey, repo=args.repo)
+    if not plan.is_legal:
+        print(f"REFUSED: {len(plan.errors)} validation error(s)")
+        for error in plan.errors[:8]:
+            print(f"    {error}")
+        return 1
+    print(f"  planned {len(plan.nodes)} nodes, {len(plan.edges)} edges")
+    if args.dry_run:
+        print("\nNothing was written (--dry-run).")
+        return 0
+
+    with session(args.uri, args.user) as s:
+        return _report_landing(land(s, plan), "catalogue")
+
+
+def cmd_data_queries(args) -> int:
+    """Repository queries -> Method -[:ISSUES]-> Query -[:QUERIES]-> Table.
+
+    A query whose table no catalogue confirms still lands — it is a real thing
+    the application does — and what is missing is the edge, reported as a
+    pending join rather than invented (X-19).
+    """
+    from code_analysis import db_catalogue
+    from metis_mcp.model_sources.data_landing import plan_queries
+    from metis_mcp.model_sources.landing import land
+    from metis_mcp.resolution import findings_for, resolve
+
+    # The STRUCTURAL pack's output, not a model file: `read_source` reads the
+    # latter and dies on `data["states"]`.
+    from metis_mcp.model_sources.sources import _report_from_dict
+
+    report = _report_from_dict(json.loads(FsPath(args.report).read_text()))
+    catalogue = (db_catalogue.from_fixture(args.catalogue)
+                 if args.catalogue else None)
+
+    plan, pending = plan_queries(
+        report, journey=args.journey, repo=args.repo, dialect=args.dialect,
+        catalogue=catalogue)
+    if not plan.is_legal:
+        print(f"REFUSED: {len(plan.errors)} validation error(s)")
+        for error in plan.errors[:8]:
+            print(f"    {error}")
+        return 1
+
+    by_label: dict[str, int] = {}
+    for node in plan.nodes:
+        by_label[node.label] = by_label.get(node.label, 0) + 1
+    print("Queries — " + ", ".join(f"{n} {label}"
+                                   for label, n in sorted(by_label.items())))
+    print("  JpaQuery means no SQL could be produced: raw, reasoned, and "
+          "waiting for a person (T-9d)")
+
+    available = ({"database": catalogue.table_names()} if catalogue else {})
+    resolution = resolve(pending, available)
+    print(f"  joins: {resolution.describe()}")
+    for _, _, detail in findings_for(resolution):
+        print(f"    {detail}")
+
+    if args.dry_run:
+        print("\nNothing was written (--dry-run).")
+        return 0
+    with session(args.uri, args.user) as s:
+        return _report_landing(land(s, plan), "queries")
+
+
+def cmd_page_object(args) -> int:
+    """A page's controls as a class, with the selectors the code names.
+
+    The join between the authored element and the extracted selector runs here
+    (X-19, `element_selector`), so what is printed is what the engine resolves —
+    it used to be done by a dict in a test, which meant the Page Object under
+    test was one Métis could not produce.
+    """
+    import json as _json
+
+    from metis_mcp.model_sources.structure import (
+        elements_for,
+        load as load_structure,
+        selector_resolution,
+    )
+    from metis_mcp.rendering.scaffold import page_object
+
+    structure = load_structure(args.structure)
+    extracted = (_json.loads(FsPath(args.selectors).read_text())
+                 if args.selectors else None)
+    resolution, selectors = selector_resolution(structure, extracted)
+
+    print(f"# selectors: {resolution.describe()}", file=sys.stderr)
+    if extracted is None:
+        print("# the web intake has not run — every method is a stub (X-19: "
+              "proposed, not refuted)", file=sys.stderr)
+
+    pages = [args.page] if args.page else sorted(structure.pages)
+    for page in pages:
+        if page not in structure.pages:
+            print(f"REFUSED: no page {page!r}. Known: "
+                  f"{', '.join(sorted(structure.pages))}")
+            return 1
+        print(page_object(page, elements_for(structure, page, selectors)))
+        print()
+    return 0
+
+
+def _tracker_get(token_env: str, system: str):
+    """A GET callable for the tracker reader, from the stdlib.
+
+    `urllib` rather than `requests` so no HTTP library becomes a dependency of
+    Métis — the reader takes any callable, and the suite exercises the fixture
+    path with none of this involved.
+
+    **The token is read from the NAMED variable and never from an argument**
+    (PLT-005): a secret on a command line is in the shell history, the process
+    list and every CI log that echoes its commands.
+    """
+    import json as _json
+    import os
+    import urllib.request
+
+    token = os.environ.get(token_env, "")
+    if not token:
+        raise SystemExit(
+            f"REFUSED: ${token_env} is not set. Name the variable holding the "
+            f"token with --token-env and export it; the value is never passed "
+            f"as an argument (PLT-005).")
+
+    # Jira Cloud and Zephyr Scale both accept a bearer token. Jira Cloud with an
+    # API token also accepts Basic; that is the caller's to arrange by exporting
+    # an already-encoded value, because guessing the scheme is how a 401 gets
+    # reported as "no such issue".
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+
+    def get(url: str):
+        request = urllib.request.Request(url, headers=headers, method="GET")
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return _json.loads(response.read().decode("utf-8"))
+
+    return get
+
+
+def cmd_intake_fetch(args) -> int:
+    """A tracker item -> a UIF document, ready to land.
+
+    The half that was missing: `ANCHORS` has mapped `jira -> JiraItem` and
+    `scale -> ZephyrItem` since the evidence layer landed, `metis intake land`
+    carries a UIF into the graph, and nothing produced the UIF.
+    """
+    from code_analysis import tracker
+
+    try:
+        if args.fixture:
+            result = tracker.from_fixture(args.fixture)
+        else:
+            if not args.key:
+                print("REFUSED: --key is required for a live read. This reads "
+                      "named items; it does not crawl a tracker.")
+                return 1
+            result = tracker.read(args.system, args.base_url, args.key,
+                                  _tracker_get(args.token_env, args.system))
+    except tracker.TrackerRefused as e:
+        print(f"REFUSED: {e}")
+        return 1
+
+    print(tracker.describe(result))
+
+    out_dir = FsPath(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written = []
+    for item in result.items:
+        document = tracker.to_uif(item)
+        path = out_dir / f"{item.key}.uif.json"
+        path.write_text(json.dumps(document, indent=2, ensure_ascii=False) + "\n")
+        written.append(path)
+
+    # Conformance at the door, before anyone runs a landing that will refuse.
+    from metis_mcp.model_sources.intake_landing import conformance
+
+    print()
+    for item, path in zip(result.items, written):
+        outcome = conformance(tracker.to_uif(item))
+        state = "conformant" if outcome.conformant else "WILL BE REFUSED"
+        print(f"  {path}  {state}")
+        for advisory in outcome.advisories:
+            print(f"      advisory: {advisory[:150]}")
+        for refusal in outcome.refusals:
+            print(f"      refused:  {refusal[:150]}")
+
+    print(f"\n{len(written)} UIF document(s). Land them with:")
+    for path in written:
+        print(f"  python3 -m metis_mcp.mbt.cli intake land {path}")
+    return 0
+
+
 def cmd_intake_land(args) -> int:
     """A UIF document -> Episode, anchor, and what can honestly be derived.
 
@@ -2193,6 +2733,61 @@ def main(argv: list[str] | None = None) -> int:
     add_graph_args(iland2)
     iland2.set_defaults(handler=cmd_intent_land)
 
+    # ---- the data layer (X-19a) -------------------------------------------
+    # Built, tested, and until now unreachable: `data_landing`, `db_catalogue`
+    # and `rendering/scaffold` had no CLI command and no workflow stage, so the
+    # capability existed and nobody could run it.
+    data = sub.add_parser("data", help="the database layer (catalogue, queries)")
+    data_sub = data.add_subparsers(dest="data_command", required=True)
+
+    dcat = data_sub.add_parser(
+        "catalogue", help="read a database catalogue and land its structure")
+    dcat.add_argument("--fixture", default="",
+                      help="a catalogue JSON file; omit to read a live database")
+    dcat.add_argument("--dialect", default="",
+                      help="postgresql | oracle | mysql")
+    dcat.add_argument("--dsn", default="", help="connection string, read-only")
+    dcat.add_argument("--password-env", dest="password_env", default="",
+                      help="NAME of the variable holding the password, never "
+                           "the password itself (PLT-005)")
+    dcat.add_argument("--schema", action="append", default=[],
+                      help="restrict to a schema; repeatable")
+    dcat.add_argument("--journey", default="")
+    dcat.add_argument("--repo", default="")
+    dcat.add_argument("--dry-run", action="store_true")
+    add_graph_args(dcat)
+    dcat.set_defaults(handler=cmd_data_catalogue)
+
+    dqry = data_sub.add_parser(
+        "queries", help="land repository queries, translated where possible")
+    dqry.add_argument("report", help="a structural extraction report (JSON)")
+    dqry.add_argument("--catalogue", default="",
+                      help="catalogue JSON; without it every table is a proposal")
+    dqry.add_argument("--dialect", default="")
+    dqry.add_argument("--journey", default="")
+    dqry.add_argument("--repo", default="")
+    dqry.add_argument("--dry-run", action="store_true")
+    add_graph_args(dqry)
+    dqry.set_defaults(handler=cmd_data_queries)
+
+    guide_p = sub.add_parser(
+        "guide", help="generate docs/guide/ from the engine")
+    guide_p.add_argument("--directory", default="../docs/guide",
+                         help="where to write (default ../docs/guide)")
+    guide_p.add_argument("--check", action="store_true",
+                         help="regenerate and diff instead of writing; "
+                              "non-zero if the guide has drifted")
+    guide_p.set_defaults(handler=cmd_guide)
+
+    pobj = sub.add_parser(
+        "page-object", help="render a Page Object for an authored page")
+    pobj.add_argument("structure", help="structure.json")
+    pobj.add_argument("--page", default="", help="one page; omit for all")
+    pobj.add_argument("--selectors", default="",
+                      help="the web intake's {normalised name: selector} JSON; "
+                           "omit and every method is a stub")
+    pobj.set_defaults(handler=cmd_page_object)
+
     spec_build = sub.add_parser(
         "spec-build",
         help="build Endpoint / Page / Action from a specification's contracts")
@@ -2215,6 +2810,25 @@ def main(argv: list[str] | None = None) -> int:
     intake_parser = sub.add_parser(
         "intake", help="land a UIF document (§3.2 stage 2)")
     intake_sub = intake_parser.add_subparsers(dest="intake_command", required=True)
+    ifetch = intake_sub.add_parser(
+        "fetch", help="Jira / Zephyr Scale item -> UIF document")
+    ifetch.add_argument("--system", default="jira",
+                        choices=["jira", "scale"],
+                        help="scale is Zephyr Scale — the value `ANCHORS` "
+                             "already keys ZephyrItem on")
+    ifetch.add_argument("--key", action="append", default=[],
+                        help="an item key; repeatable")
+    ifetch.add_argument("--base-url", dest="base_url", default="",
+                        help="the tracker's base URL")
+    ifetch.add_argument("--token-env", dest="token_env", default="METIS_TRACKER_TOKEN",
+                        help="NAME of the variable holding the token, never "
+                             "the token itself (PLT-005)")
+    ifetch.add_argument("--fixture", default="",
+                        help="a captured tracker response; what the suite uses")
+    ifetch.add_argument("--out", default=".",
+                        help="directory for the UIF documents")
+    ifetch.set_defaults(handler=cmd_intake_fetch)
+
     iland = intake_sub.add_parser("land", help="UIF -> Episode + anchor + findings")
     iland.add_argument("uif", help="UIF JSON file")
     iland.add_argument("--job-id", dest="job_id", default="manual")
@@ -2250,6 +2864,13 @@ def main(argv: list[str] | None = None) -> int:
     review_parser = sub.add_parser("review", help="review-as-code decisions")
     review_sub = review_parser.add_subparsers(dest="review_command", required=True)
 
+    queue_parser = review_sub.add_parser(
+        "queue", help="everything awaiting a decision, across every label")
+    queue_parser.add_argument("--journey", help="narrow to one journey")
+    queue_parser.add_argument("--limit", type=int, default=25)
+    add_graph_args(queue_parser)
+    queue_parser.set_defaults(handler=cmd_review_queue)
+
     export_parser = review_sub.add_parser("export", help="write a decision file")
     export_parser.add_argument("model", nargs="?")
     export_parser.add_argument("--journey")
@@ -2262,6 +2883,10 @@ def main(argv: list[str] | None = None) -> int:
     export_parser.set_defaults(handler=cmd_review_export)
 
     apply_parser = review_sub.add_parser("apply", help="apply a decision file")
+    apply_parser.add_argument(
+        "--resume", action="store_true",
+        help="continue the halted run this decision unblocks. Not an "
+             "auto-promotion: the promotion was this apply (F-8)")
     apply_parser.add_argument("decisions")
     apply_parser.add_argument("--model")
     apply_parser.add_argument("--journey")
@@ -2378,6 +3003,37 @@ def main(argv: list[str] | None = None) -> int:
     mine_parser.add_argument("--initial-state", default=None)
     mine_parser.add_argument("-o", "--out", help="write the mined model")
     mine_parser.set_defaults(handler=cmd_ac_mine)
+
+    doctor_parser = sub.add_parser(
+        "doctor", help="is this machine ready to extract? (run this first)")
+    doctor_parser.add_argument("repo", nargs="?", help="also validate this repo's profile")
+    doctor_parser.add_argument("--project", help="profile name (default: directory name)")
+    doctor_parser.add_argument("--fast", action="store_true",
+                               help="skip the engine version probe (it starts a JVM)")
+    doctor_parser.set_defaults(handler=cmd_doctor)
+
+    init_parser = sub.add_parser(
+        "init", help="scaffold .metis/project.json inside a repository")
+    init_parser.add_argument("repo")
+    init_parser.add_argument("--project", help="project name (default: directory name)")
+    init_parser.add_argument("--force", action="store_true")
+    init_parser.set_defaults(handler=cmd_init)
+
+    analyse_parser = sub.add_parser(
+        "analyse", help="repository -> approval gate, in one command")
+    analyse_parser.add_argument("repo")
+    analyse_parser.add_argument("--project", help="profile name (default: directory name)")
+    analyse_parser.add_argument("--journey", help="which declared journey")
+    analyse_parser.add_argument("--surface", default="", choices=("", "api", "ui"))
+    analyse_parser.add_argument("--scope", default="")
+    analyse_parser.add_argument("--commit", default="", help="default: git HEAD")
+    analyse_parser.add_argument("--refresh", action="store_true",
+                                help="rebuild the CPG even if it is cached")
+    analyse_parser.add_argument("--criterion", default=DEFAULT_CRITERION,
+                                choices=criterion_names())
+    analyse_parser.add_argument("--max-setup", type=int, default=DEFAULT_SETUP_CAP)
+    add_graph_args(analyse_parser)
+    analyse_parser.set_defaults(handler=cmd_analyse)
 
     frameworks_parser = sub.add_parser(
         "frameworks", help="what extraction is declared to support (X-4)")
@@ -2521,7 +3177,7 @@ def main(argv: list[str] | None = None) -> int:
         p = workflow_sub.add_parser(name, help=help_text)
         p.add_argument("workflow", help="workflow code (see `workflow list`)")
         p.add_argument("--scope", required=True,
-                       help="what this run is about, e.g. athena-metric-api")
+                       help="what this run is about, e.g. the service name")
         p.add_argument("model", nargs="?", help="model JSON, for file-based runs")
         p.add_argument("--journey")
         p.add_argument("--surface", default="api", choices=("api", "ui"))

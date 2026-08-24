@@ -44,6 +44,16 @@ def _snake(label: str) -> str:
 
 
 COMMUNITY = "community"
+
+# **Enterprise is no longer generated** (C1). Property-existence constraints are
+# an Enterprise-only feature, and shipping a second DDL that uses them meant two
+# schemas could disagree about what the database enforces — with the application
+# gate in `ontology/validation.py` silently redundant on one and load-bearing on
+# the other. Métis targets Community, so it generates the Community schema and
+# nothing else, and the gate is the enforcement everywhere rather than a fallback.
+#
+# The constant stays so a caller passing it gets a refusal that says why, instead
+# of an AttributeError.
 ENTERPRISE = "enterprise"
 
 _EDITION_NOTE = """
@@ -62,10 +72,17 @@ _EDITION_NOTE = """
 def constraints_cypher(edition: str = COMMUNITY) -> str:
     """Part 1: identity, required properties, and per-label indexes.
 
-    `edition` decides whether existence constraints are emitted. Community gets
-    them as comments naming the enforcing module, so the DDL states plainly
-    where the rule actually lives rather than implying the database holds it.
+    **Community only.** Existence constraints are emitted as comments naming the
+    module that actually enforces them, so the DDL states where the rule lives
+    rather than implying the database holds it.
     """
+    if edition != COMMUNITY:
+        raise ValueError(
+            f"Métis generates the {COMMUNITY} schema only (C1). "
+            f"{edition!r} was dropped: property-existence constraints are an "
+            f"Enterprise feature, and two schemas that disagree about what the "
+            f"database enforces make `ontology/validation.py` load-bearing on "
+            f"one and redundant on the other. It is the enforcement everywhere.")
     lines = [HEADER, _EDITION_NOTE.format(edition=edition),
              "// ---- Part 1: node constraints and indexes ----\n"]
 
@@ -85,8 +102,11 @@ def constraints_cypher(edition: str = COMMUNITY) -> str:
                 f"CREATE CONSTRAINT {n}_{prop}_required IF NOT EXISTS "
                 f"FOR (n:{label}) REQUIRE n.{prop} IS NOT NULL;"
             )
-            lines.append(statement if edition == ENTERPRISE
-                         else f"// [enterprise-only] {statement}")
+            # Always a comment now: the guard above admits nothing else, and a
+            # live branch on a value that cannot occur reads as though the other
+            # path is reachable.
+            lines.append(f"// [enterprise-only, enforced by "
+                         f"ontology/validation.py] {statement}")
         # Every reviewable label gets a lifecycle index; labels that name it
         # explicitly must not get it twice.
         # `source_episode_id` is indexed on every non-exempt label for the same
@@ -158,7 +178,6 @@ def relationships_cypher() -> str:
 
 FILES = {
     "metis2-01-constraints.cypher": lambda: constraints_cypher(COMMUNITY),
-    "metis2-01-constraints-enterprise.cypher": lambda: constraints_cypher(ENTERPRISE),
     "metis2-02-relationships.cypher": relationships_cypher,
 }
 
@@ -175,15 +194,24 @@ def write(target_dir: str | Path = "schema") -> list[Path]:
 
 
 def statements(text: str) -> list[str]:
-    """Split generated Cypher into executable statements, dropping comments."""
-    out = []
-    for raw in text.split(";"):
-        stripped = "\n".join(
-            line for line in raw.splitlines() if line.strip() and not line.strip().startswith("//")
-        ).strip()
-        if stripped:
-            out.append(stripped + ";")
-    return out
+    """Split generated Cypher into executable statements, dropping comments.
+
+    **Comments come out before the split, and the order is the whole point.**
+    This used to split on `;` first and strip `//` lines from each piece, which
+    works right up until a comment contains a semicolon -- and one does:
+    `Episode`'s purpose line reads "Immutable record of one ingested unit;
+    everything derived points here". The split then cut inside the comment, the
+    tail lost its `//` prefix, and that orphaned prose was glued onto the front
+    of the NEXT statement, which the server refused as a syntax error.
+
+    Three uniqueness constraints (`Episode.id`, `JiraItem.id`, `Page.id`) and the
+    `COVERS.sequence` index were silently absent from a database this function
+    had just been used to build. Missing uniqueness is the worst shape for this
+    failure: nothing errors, and duplicate ids land.
+    """
+    body = "\n".join(line for line in text.splitlines()
+                     if line.strip() and not line.strip().startswith("//"))
+    return [piece.strip() + ";" for piece in body.split(";") if piece.strip()]
 
 
 if __name__ == "__main__":

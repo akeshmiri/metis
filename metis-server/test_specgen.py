@@ -166,7 +166,7 @@ def test_a60_nothing_is_added_for_readability():
 
     The heading is the BEHAVIOUR ("submit valid credentials → LoggedIn"), not the
     element id — a stakeholder document that used
-    `org.catools...MetricController.getActionById:...::GET->NoContent204` as a
+    `org.example...RecordController.one:...::GET->NoContent204` as a
     section heading is not serving stakeholders (SP-1). The id stays in the body,
     so traceability is unchanged (SP-2).
     """

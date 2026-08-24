@@ -48,7 +48,7 @@ def test_the_resource_is_the_path_up_to_the_first_parameter():
 def test_state_names_come_from_the_resource_not_the_variable():
     """`t.isEmpty()` appears at 42 endpoints meaning 42 different things.
 
-    It is one shared helper in `athena-common`, so keying on the variable name
+    It is one shared helper in `records-common`, so keying on the variable name
     would fuse every resource in the estate into a single state.
     """
     assert state_name_for("/metric") == "MetricPresent"
@@ -57,7 +57,7 @@ def test_state_names_come_from_the_resource_not_the_variable():
 
 def test_the_name_uses_every_segment_because_last_segments_collide():
     """`/project/all`, `/user/all`, `/version/all` and `/environment/all` all
-    live in athena's core service. Keyed on the last segment all four become
+    live in the pilot estate's core service. Keyed on the last segment all four become
     `All`, and fusing four distinct resources into one node claims a call to
     `/user/all` starts from the same situation as a call to `/project/all`.
 

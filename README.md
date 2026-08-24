@@ -40,8 +40,13 @@ An acceptance criterion is **atomic**: one condition, one action, one validation
 ## The tree
 
 ```
-docs/                            two things only: the spec, and history
+docs/                            the spec, the guide, the academy, and history
 ├── metis-application-spec.md    THE specification — read this first
+├── guide/                       GENERATED from labels.py, intakes.json,
+│                                stages.py and the CLI parser. `metis guide
+│                                --check` fails on a diff, so it cannot drift
+├── academy/                     AUTHORED reasoning — labelled as such because
+│                                it is not checkable the way the guide is
 └── historical/                  superseded, kept for its reasoning.
     │                            every directory has a README saying what is stale
     ├── design-notes-v1/         the 15 v1 design notes (Amendments 1–5 and friends)
@@ -56,7 +61,7 @@ docs/                            two things only: the spec, and history
 
 metis-server/                    the engine. Python, no framework.
 ├── metis_mcp/
-│   ├── ontology/                THE ontology: 55 labels + the relationship
+│   ├── ontology/                THE ontology: 61 labels + the relationship
 │   │                            catalogue. The Cypher schema is GENERATED from
 │   │                            labels.py, so the two cannot drift.
 │   ├── mbt/                     model-based testing: criteria, path generation,
@@ -77,14 +82,17 @@ metis-server/                    the engine. Python, no framework.
 │   ├── publishing/              three-way drift detection, then G2
 │   ├── specgen/                 the stakeholder specification (§18)
 │   ├── overrides/               human edits as layered facts, never mutations
-│   └── server.py                the MCP surface: seven tools, read-only
+│   └── server.py                the MCP surface: nineteen read-only tools,
+│                                plus a gated write half (METIS_MCP_WRITE)
 ├── code_analysis/               Joern query packs → normalised contract →
 │                                synthesis. No engine type reaches the graph.
-├── schema/                      GENERATED Cypher (Community + Enterprise)
-└── test_*.py                    48 files, ~970 tests, no Neo4j required
+├── schema/                      GENERATED Cypher (Community only — C1)
+└── test_*.py                    69 files, 1,503 tests, no Neo4j required
 
+.mcp.json                        registers the MCP server for this repo — stdio,
+                                 nineteen read-only tools, no absolute paths
 plugins/metis/                   the five skills, and the generated agent files
-plugins/metis-mcp/               MCP server registration
+plugins/metis-mcp/               MCP server registration, for a marketplace install
 metis-chart/                     Helm chart (one component: the MCP server)
 connectors/                      connector manifests + their schema.
                                  Designed; nothing reads them yet (see its README)
@@ -94,14 +102,23 @@ connectors/                      connector manifests + their schema.
 
 ```bash
 cd metis-server
-uv venv && uv pip install -e .
+uv venv && uv pip install -e ".[test]"   # the extra is what brings pytest
 uv run python -m pytest -q            # the whole suite; no database needed
 uv run python -m metis_mcp.mbt.cli workflow list
 ```
 
-The engine is deliberately database-free: models, criteria, path generation and
-coverage are all pure, so the suite runs anywhere in seconds. Only landing,
-loading and reporting against a live graph need Neo4j — set
+**Joern and a JDK are test prerequisites**, and neither is pip-installable so the
+`[test]` extra cannot bring them. `test_extraction.py` builds real CPGs from
+`demo_project/` and runs the shipped query packs over them — before it existed the
+packs had no behavioural test at all, and their correctness claims were prose in a
+manifest. A missing Joern **fails** rather than skipping, because a skip would
+quietly restore that. Run `uv run python -m metis_mcp.mbt.cli doctor` to check.
+The CPGs are cached by a hash of the corpus, so this costs ~25s once and ~7s
+afterwards.
+
+The engine is otherwise deliberately database-free: models, criteria, path
+generation and coverage are all pure, so the suite needs no external service.
+Only landing, loading and reporting against a live graph need Neo4j — set
 `METIS_NEO4J_URI`/`METIS_NEO4J_USER` and provide `METIS_NEO4J_PASSWORD` in the
 environment (never as an argument).
 

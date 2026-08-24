@@ -146,7 +146,7 @@ def _run_stage(stage: Stage, context: Context) -> StageOutcome:
     return result
 
 
-def run(workflow: Workflow, context: Context, root: str = ".",
+def run(workflow: Workflow, context: Context, root: str | None = None,
         resume: bool = False) -> RunOutcome:
     """Execute a workflow, or continue one that halted."""
     run_id = run_id_for(workflow.code, context.scope)

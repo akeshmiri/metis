@@ -142,7 +142,7 @@ def test_the_router_names_no_workflow_that_does_not_exist():
 
 
 def test_routing_is_deterministic_and_refuses_to_guess():
-    assert route("build a model for athena-metric")[0] == "model-build"
+    assert route("build a model for records")[0] == "model-build"
     assert route("generate test cases for x")[0] == "test-generate"
     # The important half: no match is an answer, not a fallback.
     assert route("make me a sandwich")[0] is None

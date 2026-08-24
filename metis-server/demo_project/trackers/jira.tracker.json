@@ -1,0 +1,36 @@
+{
+  "tracker_version": "metis.tracker-item/1",
+  "system": "jira",
+  "base_url": "https://tracker.example.com",
+  "items": [
+    {
+      "key": "DEMO-1",
+      "fields": {
+        "summary": "When a record has been archived, the system shall reject an update with 409.",
+        "description": {
+          "type": "doc",
+          "version": 1,
+          "content": [
+            {"type": "paragraph", "content": [
+              {"type": "text", "text": "Archiving is terminal. "},
+              {"type": "text", "text": "A later PUT must not revive the record."}
+            ]}
+          ]
+        },
+        "issuetype": {"name": "Story"},
+        "status": {"name": "In Progress"},
+        "labels": ["records", "archive"]
+      }
+    },
+    {
+      "key": "DEMO-2",
+      "fields": {
+        "summary": "Archive is broken again",
+        "description": "Saw this on the demo stack, someone should look.",
+        "issuetype": {"name": "Bug"},
+        "status": {"name": "Open"},
+        "labels": []
+      }
+    }
+  ]
+}

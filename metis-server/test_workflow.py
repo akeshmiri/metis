@@ -544,3 +544,72 @@ def test_a_clean_file_mines_a_quarantine_model():
                for t in context.model.transitions.values()), (
         "S-4: a source produces candidates, never approved facts"
     )
+
+
+def test_derivation_edges_join_the_model_to_its_evidence():
+    """`Transition -[:DERIVED_FROM]-> Endpoint`, planned from the handler join.
+
+    Landing both layers and linking neither produced 808 evidence nodes and 9
+    model nodes with nothing between them: "which endpoint is this transition
+    from" and "which endpoints have no behaviour" were both unanswerable, and
+    the second is the question that makes "12 endpoints, 3 transitions" legible
+    rather than alarming.
+
+    The label matters as much as the id. A classified transition carries
+    `:ApiCall` INSTEAD of `:Transition`, so an edge planned against the parent
+    matches no node and is reported as unmatched rather than failing.
+    """
+    from types import SimpleNamespace
+
+    from metis_mcp.mbt.model import Model, State, Transition
+    from metis_mcp.model_sources.landing import LandingPlan
+    from metis_mcp.workflow.handlers import _plan_derivation_edges
+
+    handler = "com.example.Ctrl.get:org.springframework.http.ResponseEntity()"
+    model = Model(
+        id="records-api",
+        states={"Ready": State(id="Ready", name="Ready", surface="api",
+                               is_initial=True),
+                "Ok200": State(id="Ok200", name="Ok200", surface="api")},
+        transitions={f"{handler}::GET->Ok200": Transition(
+            id=f"{handler}::GET->Ok200", source="Ready", trigger="GET /x",
+            target="Ok200")})
+    model.reindex()
+
+    endpoint = SimpleNamespace(handler_method_id=handler, http_method="GET",
+                               path="/x", anchor={"file": "svc/A.java"})
+    report = SimpleNamespace(endpoints=[endpoint])
+    plan = LandingPlan(episode_id="ep-1")
+
+    planned = _plan_derivation_edges(
+        plan, SimpleNamespace(model=model, args=SimpleNamespace(surface="api")),
+        report, "demo")
+    assert planned == 1
+    edge = plan.edges[-1]
+    assert edge.rel_type == "DERIVED_FROM"
+    assert edge.from_label == "ApiCall", "the specialisation, not the parent"
+    assert edge.to_label == "Endpoint"
+    assert edge.from_id.startswith("records-api::"), "landing namespaces every id"
+
+
+def test_a_transition_with_no_matching_endpoint_plans_no_edge():
+    """An authored model has no code facts behind it. Planning an edge to an
+    endpoint that does not exist would merge nothing and report success."""
+    from types import SimpleNamespace
+
+    from metis_mcp.mbt.model import Model, State, Transition
+    from metis_mcp.model_sources.landing import LandingPlan
+    from metis_mcp.workflow.handlers import _plan_derivation_edges
+
+    model = Model(
+        id="login-api",
+        states={"A": State(id="A", name="A", surface="api", is_initial=True),
+                "B": State(id="B", name="B", surface="api")},
+        transitions={"t1": Transition(id="t1", source="A", trigger="click",
+                                      target="B")})
+    model.reindex()
+    plan = LandingPlan(episode_id="ep-1")
+    planned = _plan_derivation_edges(
+        plan, SimpleNamespace(model=model, args=SimpleNamespace(surface="api")),
+        SimpleNamespace(endpoints=[]), "demo")
+    assert planned == 0 and not plan.edges

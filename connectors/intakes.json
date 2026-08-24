@@ -1,0 +1,506 @@
+{
+  "intake_version": "metis.intakes/1",
+  "intakes": [
+    {
+      "id": "ac-mined",
+      "reads": "Acceptance criteria already in the graph, turned into a model to compare against the code-derived one",
+      "access": "authored_file",
+      "executes_against_sut": false,
+      "produces": [
+        "metis.model/1"
+      ],
+      "lands": [
+        "State",
+        "Transition",
+        "ApiCall",
+        "UiAction"
+      ],
+      "status": "working",
+      "reader": "metis_mcp.model_sources.ac_mining",
+      "command": [
+        "ac-mine"
+      ]
+    },
+    {
+      "id": "authored",
+      "reads": "A hand-written model file — behaviour somebody states directly, with no code behind it",
+      "access": "authored_file",
+      "executes_against_sut": false,
+      "produces": [
+        "metis.model/1"
+      ],
+      "lands": [
+        "State",
+        "Transition",
+        "ApiCall",
+        "UiAction"
+      ],
+      "status": "working",
+      "reader": "metis_mcp.model_sources.sources",
+      "command": [
+        "land"
+      ]
+    },
+    {
+      "id": "code",
+      "reads": "A source repository on disk, parsed to a CPG and queried by the shipped packs",
+      "access": "local_files",
+      "executes_against_sut": false,
+      "produces": [
+        "metis.cpg-extract/1"
+      ],
+      "lands": [
+        "ApiCall",
+        "Check",
+        "Class",
+        "DeclaredOutcome",
+        "Endpoint",
+        "Enum",
+        "ExceptionMapping",
+        "JpaQuery",
+        "Method",
+        "MySql",
+        "Oracle",
+        "Parameter",
+        "Postgres",
+        "Query",
+        "State",
+        "Transition"
+      ],
+      "status": "working",
+      "reader": "metis_mcp.model_sources.sources, code_analysis.packs.jvm-structural, code_analysis.packs.jvm-behaviour",
+      "limits": [
+        "javasrc2cpg ignores test directories by name, so test sources need a CPG rooted inside the test tree (engine.test_roots)",
+        "an inert accessor and generated boilerplate are dropped before anything downstream reads them (X-5a)",
+        "a type no payload chain reaches is not landed (X-6d)",
+        "a repository's entity->table mapping is often NOT in the source — measured on a real service, @Entity/@Table/@Column were in zero files. The code proposes a table from Spring's naming strategy and the database intake confirms or refutes it (X-19)"
+      ],
+      "command": [
+        "land"
+      ],
+      "lands_from": [
+        {
+          "source_shape": "Spring @RestController / @RequestMapping method",
+          "label": "Endpoint"
+        },
+        {
+          "source_shape": "a return or throw that constructs a response",
+          "label": "DeclaredOutcome"
+        },
+        {
+          "source_shape": "a branch that selects one outcome over its sibling",
+          "label": "Check"
+        },
+        {
+          "source_shape": "a @ControllerAdvice @ExceptionHandler method",
+          "label": "ExceptionMapping"
+        },
+        {
+          "source_shape": "a handler parameter",
+          "label": "Parameter"
+        },
+        {
+          "source_shape": "a DTO or record reachable from a payload",
+          "label": "Class"
+        }
+      ],
+      "temporal": {
+        "t_recorded_source": "the commit the CPG was built from — `anchor_commit` on every recovered node",
+        "known_pitfalls": "rebased or squashed history loses individual commit dates, so a fact's age is the age of the squash and not of the change. v1 preferred PR merge time for this reason; nothing here reads PR metadata"
+      }
+    },
+    {
+      "id": "database",
+      "reads": "A database catalogue — schemas, tables, views, columns, types, nullability, keys — read from the information schema of an intake source",
+      "access": "read_only_connection",
+      "executes_against_sut": false,
+      "produces": [
+        "metis.db-catalogue/1"
+      ],
+      "lands": [
+        "Datasource",
+        "Database",
+        "Schema",
+        "DbObject",
+        "Table",
+        "View",
+        "Function",
+        "Column"
+      ],
+      "status": "partial",
+      "anchor": "DatasourceItem",
+      "limits": [
+        "the FIXTURE path is what the test suite exercises; the live connection is opt-in because a driver is an optional extra and the suite must keep running with none installed",
+        "catalogue only — schemas, tables, views, columns, types, nullability, keys. It reads NO row data, and `assert_no_row_reads` checks that on every statement rather than trusting it (X-7a)",
+        "the connection is the caller's: a credential is named by the profile as an environment variable and never reaches an argument (PLT-005)"
+      ],
+      "reader": "code_analysis.db_catalogue",
+      "command": [
+        "data",
+        "catalogue"
+      ],
+      "lands_from": [
+        {
+          "source_shape": "a row of information_schema.tables",
+          "label": "Table"
+        },
+        {
+          "source_shape": "a row of information_schema.views",
+          "label": "View"
+        },
+        {
+          "source_shape": "a row of information_schema.columns",
+          "label": "Column"
+        },
+        {
+          "source_shape": "a schema in the catalogue",
+          "label": "Schema"
+        },
+        {
+          "source_shape": "the connection's database",
+          "label": "Database"
+        }
+      ],
+      "temporal": {
+        "t_recorded_source": "extraction time — `datetime.now()`, because a catalogue carries no timestamp of its own",
+        "known_pitfalls": "a catalogue read is undated by nature: the answer describes the database as it was at read time and cannot say when it last changed"
+      }
+    },
+    {
+      "id": "jira",
+      "reads": "A named Jira issue — summary, description, type, status and labels — over the REST API, read-only",
+      "access": "read_only_connection",
+      "executes_against_sut": false,
+      "produces": [
+        "metis.tracker-item/1"
+      ],
+      "lands": [
+        "Episode",
+        "JiraItem",
+        "Requirement",
+        "Finding"
+      ],
+      "lands_from": [
+        {
+          "source_shape": "a Jira issue's summary or description, where EARS-conformant",
+          "label": "Requirement"
+        },
+        {
+          "source_shape": "a Jira issue whose text is free prose",
+          "label": "Finding"
+        },
+        {
+          "source_shape": "the issue itself",
+          "label": "JiraItem"
+        },
+        {
+          "source_shape": "one fetch",
+          "label": "Episode"
+        }
+      ],
+      "status": "partial",
+      "anchor": "JiraItem",
+      "reader": "code_analysis.tracker",
+      "command": [
+        "intake",
+        "fetch"
+      ],
+      "temporal": {
+        "t_recorded_source": "the time the UIF was generated — `scope.uif_generated_at`, stamped at fetch",
+        "known_pitfalls": "that is when METIS read the tracker, not when the item last changed. The tracker's own updated-at is not read, so a stale ticket and a fresh one are indistinguishable here"
+      },
+      "limits": [
+        "the FIXTURE path is what the test suite exercises; the live read is opt-in and goes through a transport the caller opens, so no HTTP library is a dependency and the suite runs with none installed",
+        "named items only — it reads the keys it is given and does NOT crawl a project, run JQL, or follow links. A crawl is a different capability and would need arguing for",
+        "GET only, against a closed allowlist in `tracker.ENDPOINTS`, checked by `assert_read_only` before any request is issued (X-7a)",
+        "a Requirement is created only from EARS-conformant text. Whichever of summary/description conforms is used; free prose lands as a Finding pointing at knowledge-capture instead (S-13)",
+        "a ticket's CLAIMED acceptance criteria are not emitted and would not be trusted if they were — mining them is `ac_mining`'s job, with its own provenance",
+        "Atlassian Document Format descriptions are flattened to their text nodes. No bullet, heading or table structure is reconstructed, because a rendering that resembled the ticket without being it is worse than plain text"
+      ]
+    },
+    {
+      "id": "knowledge",
+      "reads": "A checked-in glossary and knowledge file: what the business nouns mean",
+      "access": "authored_file",
+      "executes_against_sut": false,
+      "produces": [
+        "metis.glossary/1"
+      ],
+      "lands": [
+        "BusinessArea",
+        "BusinessEntity",
+        "Intent"
+      ],
+      "status": "working",
+      "reader": "metis_mcp.model_sources.knowledge, metis_mcp.model_sources.glossary",
+      "command": [
+        "knowledge",
+        "check"
+      ]
+    },
+    {
+      "id": "openapi",
+      "reads": "An OpenAPI or Swagger document",
+      "access": "local_files",
+      "executes_against_sut": false,
+      "produces": [
+        "metis.cpg-extract/1"
+      ],
+      "lands": [
+        "Endpoint",
+        "DeclaredOutcome",
+        "Parameter",
+        "Class",
+        "State",
+        "ApiCall"
+      ],
+      "status": "working",
+      "reader": "code_analysis.openapi",
+      "anchor": "OpenApiItem",
+      "limits": [
+        "operations are keyed on operationId, which is a different id space from the code intake's handler signature — the two do not merge into one node today"
+      ],
+      "command": [
+        "land"
+      ],
+      "lands_from": [
+        {
+          "source_shape": "an operation object",
+          "label": "Endpoint"
+        },
+        {
+          "source_shape": "a response object",
+          "label": "DeclaredOutcome"
+        },
+        {
+          "source_shape": "a parameter object",
+          "label": "Parameter"
+        },
+        {
+          "source_shape": "a component schema",
+          "label": "Class"
+        }
+      ],
+      "temporal": {
+        "t_recorded_source": "the document's own version field where it has one; otherwise the file's mtime",
+        "known_pitfalls": "a contract regenerated by a build has today's mtime and last year's content"
+      }
+    },
+    {
+      "id": "spec-kit",
+      "reads": "A product's own `.specify/specs/<feature>/spec.md` acceptance criteria",
+      "access": "local_files",
+      "executes_against_sut": false,
+      "produces": [
+        "metis.spec-criteria/1"
+      ],
+      "lands": [
+        "AcceptanceCriterion",
+        "Feature"
+      ],
+      "status": "working",
+      "reader": "metis_mcp.model_sources.spec_kit",
+      "limits": [
+        "a criterion written from the code it checks lands as `code_derived`, the weakest provenance — it can report coverage and never correctness (§4.1)",
+        "a block with no Given/When/Then is returned marked as not-a-transition rather than forced into a shape it does not have"
+      ],
+      "command": [
+        "spec"
+      ]
+    },
+    {
+      "id": "structure",
+      "reads": "A checked-in description of what is on a page and where the data lives",
+      "access": "authored_file",
+      "executes_against_sut": false,
+      "produces": [
+        "metis.structure/1"
+      ],
+      "lands": [
+        "Page",
+        "UiElement",
+        "Menu",
+        "UiTable",
+        "Form",
+        "Dialog",
+        "Row",
+        "Pagination",
+        "Sort",
+        "Action",
+        "Event",
+        "Navigation",
+        "Datasource",
+        "Database",
+        "Schema",
+        "DbObject",
+        "Table",
+        "Column"
+      ],
+      "status": "working",
+      "reader": "metis_mcp.model_sources.structure",
+      "limits": [
+        "authored because no pack identifies a component TYPE — none can tell a library <DataGrid> from a hand-rolled <div role=\"table\">, and all three are a table to a person writing a test",
+        "it does NOT carry selectors. How to find an element comes from the code that looks it up; this file says what is on the page"
+      ],
+      "command": [
+        "structure",
+        "check"
+      ],
+      "lands_from": [
+        {
+          "source_shape": "a page entry in structure.json",
+          "label": "Page"
+        },
+        {
+          "source_shape": "an element entry, at any depth",
+          "label": "UiElement"
+        }
+      ]
+    },
+    {
+      "id": "test-inventory",
+      "reads": "The tests a project already has — each test method, the routes it reaches, and the statuses it asserts — from a CPG rooted at the test sources",
+      "access": "local_files",
+      "executes_against_sut": false,
+      "produces": [
+        "metis.cpg-extract/1"
+      ],
+      "lands": [],
+      "status": "partial",
+      "reader": "code_analysis.packs.jvm-test-inventory",
+      "command": [
+        "paths"
+      ],
+      "limits": [
+        "it lands NOTHING. The inventory feeds generation rather than the graph: `test_levels.from_pack` grades each transition by what an existing test already covers, so generation is additive (REQ-METIS-PG-01). An empty `lands` is the honest entry, not an omission",
+        "JVM only — `javasrc2cpg` and JUnit's `@Test`. The v1 connector this replaces covered JUnit/TestNG/pytest/Playwright; nothing here reads the other three",
+        "javasrc2cpg ignores test directories by name, so the CPG must be rooted INSIDE the test sources — a repo-rooted extraction recovers no tests and reports none, which reads identically to a project with no tests",
+        "covering an endpoint is not covering a transition: a test that calls `GET /{id}` and asserts 200 is evidence for the 200 transition and says nothing about the 204 one. Grades are per transition for that reason"
+      ]
+    },
+    {
+      "id": "uif",
+      "reads": "A Unified Intake Format document produced by an external extractor — a Jira issue, a Confluence page, a Zephyr test",
+      "access": "uif_document",
+      "executes_against_sut": false,
+      "produces": [
+        "metis.uif/1"
+      ],
+      "lands": [
+        "Episode",
+        "JiraItem",
+        "ConfluenceItem",
+        "ZephyrItem",
+        "CodeItem",
+        "OpenApiItem",
+        "DatasourceItem",
+        "Requirement",
+        "Finding"
+      ],
+      "status": "partial",
+      "reader": "metis_mcp.model_sources.intake_landing",
+      "limits": [
+        "a Requirement is created only from EARS-conformant text. Free prose — most Jira titles — lands as a Finding pointing at knowledge-capture, because `ears_pattern` has no empty form and guessing one is what ac_mining refuses to do (S-13)",
+        "a UIF's CLAIMED acceptance criteria are never trusted into AcceptanceCriterion nodes",
+        "the extractors that PRODUCE a UIF are not part of Métis. Métis reads the document; something else fetched it"
+      ],
+      "command": [
+        "intake",
+        "land"
+      ],
+      "lands_from": [
+        {
+          "source_shape": "metadata.title or metadata.description, if EARS-conformant",
+          "label": "Requirement"
+        },
+        {
+          "source_shape": "the document itself",
+          "label": "Episode"
+        },
+        {
+          "source_shape": "free prose that is not EARS-conformant",
+          "label": "Finding"
+        }
+      ],
+      "temporal": {
+        "t_recorded_source": "scope.uif_generated_at, set by the extractor that produced the document",
+        "known_pitfalls": "deliberately EXCLUDED from `episode_id_for`, because it changes on every extraction run and would mint a new Episode for an unchanged artefact"
+      }
+    },
+    {
+      "id": "web",
+      "reads": "Frontend source — a React app's router and status setters, or a plain-DOM page's event registrations and the selectors its own code looks up",
+      "access": "local_files",
+      "executes_against_sut": false,
+      "produces": [
+        "metis.cpg-extract/1"
+      ],
+      "lands": [
+        "Route",
+        "Page",
+        "UiElement",
+        "State",
+        "UiAction"
+      ],
+      "status": "partial",
+      "reader": "code_analysis.packs.react-ui, code_analysis.packs.js-ui",
+      "limits": [
+        "a JSX handler binding is not structurally recoverable — jssrc2cpg keeps JSX as raw text — so react-ui recovers routes, API call sites and status setters, and no selectors",
+        "a selector is recovered only where the code names it with a literal lookup. An element reached by walking the DOM is reported unresolved, never matched on its text",
+        "an interpolated path is reported rather than resolved to its first fragment"
+      ]
+    },
+    {
+      "id": "zephyr",
+      "reads": "A named Zephyr Scale test case — name, objective, status and labels — over the REST API, read-only",
+      "access": "read_only_connection",
+      "executes_against_sut": false,
+      "produces": [
+        "metis.tracker-item/1"
+      ],
+      "lands": [
+        "Episode",
+        "ZephyrItem",
+        "Requirement",
+        "Finding"
+      ],
+      "lands_from": [
+        {
+          "source_shape": "a Zephyr Scale case's objective or name, where EARS-conformant",
+          "label": "Requirement"
+        },
+        {
+          "source_shape": "a case whose text is free prose",
+          "label": "Finding"
+        },
+        {
+          "source_shape": "the test case itself",
+          "label": "ZephyrItem"
+        },
+        {
+          "source_shape": "one fetch",
+          "label": "Episode"
+        }
+      ],
+      "status": "partial",
+      "anchor": "ZephyrItem",
+      "reader": "code_analysis.tracker",
+      "command": [
+        "intake",
+        "fetch"
+      ],
+      "temporal": {
+        "t_recorded_source": "the time the UIF was generated — `scope.uif_generated_at`, stamped at fetch",
+        "known_pitfalls": "that is when METIS read the tracker, not when the item last changed. The tracker's own updated-at is not read, so a stale ticket and a fresh one are indistinguishable here"
+      },
+      "limits": [
+        "the FIXTURE path is what the test suite exercises; the live read is opt-in",
+        "named test cases only — no folder walk, no cycle enumeration",
+        "GET only, against a closed allowlist in `tracker.ENDPOINTS` (X-7a)",
+        "`source_system` is `scale`, not `zephyr` — that is the value `intake_landing.ANCHORS` keys `ZephyrItem` on, and renaming it would detach every item from its anchor",
+        "test STEPS are not read. Only the case's name and objective are, so what lands is what the case CLAIMS to verify and never a script — Métis generates human-executable cases and does not ingest them",
+        "no execution result is read. A case's last run status is outcome data and Métis reports coverage, never correctness (C-11)"
+      ]
+    }
+  ]
+}

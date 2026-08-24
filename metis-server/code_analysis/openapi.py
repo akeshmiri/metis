@@ -2,7 +2,7 @@
 OpenAPI → the extraction contract (application spec §5.2, §4.6a; X-2, X-5, X-6).
 
 **The one adapter the API side was missing.** `raw_landing` already writes
-`Endpoint`, `Parameter`, `Field`, `DeclaredOutcome` and `Class` — which is
+`Endpoint`, `Parameter`, `DeclaredOutcome` and `Class` — which is
 precisely what an OpenAPI document contains — but it consumes
 `contract.ExtractionReport`, and nothing mapped a specification into one. The
 swagger extractor that exists lives in a skill and emits UIF, whose landing path
@@ -150,7 +150,7 @@ def _schema_of(node: dict, spec: dict) -> dict:
 
 
 def _ref_name(node: dict) -> str:
-    """`#/components/schemas/MetricDto` -> `MetricDto`. Empty when inline."""
+    """`#/components/schemas/RecordDto` -> `RecordDto`. Empty when inline."""
     ref = (node or {}).get("$ref", "")
     return ref.rsplit("/", 1)[-1] if ref.startswith("#/") else ""
 

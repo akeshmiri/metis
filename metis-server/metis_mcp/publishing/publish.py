@@ -163,6 +163,43 @@ def _payload(case: TestCase) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# The gate in front of the gate.
+# ---------------------------------------------------------------------------
+#
+# **G2's literal is something an autopilot can type.** `--confirm publish` is a
+# string, and an agent driving the CLI or an MCP tool can supply it as easily as
+# a person can. T-18 was written against a human forgetting to confirm; it was
+# not written against a caller that confirms on the human's behalf.
+#
+# So a real external write needs TWO things that come from different places: the
+# literal, in the run, from whoever is driving — and this, from the environment
+# the deployment was configured with. An agent can produce the first. It cannot
+# produce the second without someone having decided, out of band, that this
+# installation may write to a system outside Métis.
+#
+# Default off, and off means DRY RUN rather than an error: the safe failure is
+# "nothing was sent", never "something was sent because nobody said not to".
+EXTERNAL_WRITES_ENV = "METIS_ALLOW_EXTERNAL_WRITES"
+
+
+def external_writes_allowed() -> bool:
+    """Whether this installation may send anything outside Métis at all.
+
+    Only the exact word `yes` enables it. `true`, `1` and `on` are refused on
+    purpose: those are what a script sets by accident or a config template
+    carries by default, and the whole value of this switch is that it cannot be
+    arrived at without meaning it.
+    """
+    import os
+
+    return os.environ.get(EXTERNAL_WRITES_ENV, "").strip().lower() == "yes"
+
+
+class ExternalWritesDisabled(Exception):
+    """Raised when a live transport is used on an installation that forbids it."""
+
+
 class Transport:
     """The only interface through which anything leaves Métis (spec T-20)."""
 
@@ -171,6 +208,22 @@ class Transport:
 
     def send(self, operation: Operation) -> str:
         raise NotImplementedError
+
+    def check_permitted(self) -> None:
+        """Refuse a live send unless the installation allows external writes.
+
+        Called by `publish` before anything is sent. A dry-run transport is
+        always permitted — it is the thing that happens when nothing is.
+        """
+        if self.is_dry_run or external_writes_allowed():
+            return
+        raise ExternalWritesDisabled(
+            f"{self.name!r} would write outside Métis, and "
+            f"{EXTERNAL_WRITES_ENV} is not 'yes' on this installation. "
+            f"A G2 confirmation is not enough on its own: the literal can be "
+            f"supplied by whatever is driving the run, including an agent, so a "
+            f"real write also needs a deployment that was configured to permit "
+            f"one. Nothing was sent.")
 
 
 class DryRunTransport(Transport):
@@ -241,6 +294,16 @@ def publish(batch: Batch, transport: Transport,
             refused=(f"confirmation was given for {confirmation.batch_size} "
                      f"operation(s), but this batch has {batch.size}. Re-confirm "
                      f"against what is actually being sent (T-19)"))
+
+    # Checked after the confirmation and BEFORE the first send, so an
+    # installation that forbids external writes produces zero attempts rather
+    # than one that is later regretted.
+    try:
+        transport.check_permitted()
+    except ExternalWritesDisabled as e:
+        return PublishResult(
+            ok=False, transport=transport.name, dry_run=transport.is_dry_run,
+            withheld=list(batch.withheld), refused=str(e))
 
     sent = []
     for operation in batch.operations:

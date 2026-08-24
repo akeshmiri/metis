@@ -346,8 +346,8 @@ def test_printed_next_step_commands_carry_the_scope_they_need():
 
     `review export --journey X --surface ui` printed
     `review apply --journey X <file>` — no `--surface`. `apply` defaults to
-    `api` and refused with "review file is for model 'athena-git-ui', not
-    'athena-git-api'". The refusal was honest; the instruction that produced it
+    `api` and refused with "review file is for model 'archive-ui', not
+    'archive-api'". The refusal was honest; the instruction that produced it
     was not runnable.
 
     The sibling defect: `publish` printed `publish None --confirm publish`,

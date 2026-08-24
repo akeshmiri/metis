@@ -25,7 +25,7 @@ def _anchor(line=10):
 def _behaviour(outcomes, checks=None) -> ExtractionReport:
     return ExtractionReport(
         pack="jvm-behaviour", pack_version="0.1.0", engine="joern",
-        engine_version="4.0.604", repo="athena-git", commit=COMMIT,
+        engine_version="4.0.604", repo="archive-service", commit=COMMIT,
         frontend="javasrc2cpg", layers=(4,),
         checks=checks or [], outcomes=outcomes,
     )
@@ -85,7 +85,7 @@ def test_each_endpoints_outcome_is_its_own_state():
     The old reasoning was that a response is indistinguishable to a caller
     whichever endpoint produced it. It is not: `GET /commit/{id}` returns a
     `CommitDto` and `GET /commit` a `PageDto<CommitDto>` — 48 distinct body
-    types across athena's 91 endpoints — so merging them erased a difference the
+    types across the pilot estate's 91 endpoints — so merging them erased a difference the
     surface really does expose, and a generated case could assert the status and
     never the payload.
 
@@ -101,32 +101,50 @@ def test_each_endpoints_outcome_is_its_own_state():
         outcomes.append(_outcome(f"{handler}::GET", 204, "noContent", ("c1",)))
         outcomes.append(_outcome(f"{handler}::GET", 200, "ok", ("c1",), sense="!"))
 
-    result = synthesise(_behaviour(outcomes, [check]), ENDPOINTS, journey="athena-git")
+    result = synthesise(_behaviour(outcomes, [check]), ENDPOINTS, journey="archive-service")
     assert result.ok, result.errors
 
     model = result.model
     outcome_states = {sid for sid, st in model.states.items() if not st.is_initial}
+    # Named from the route since I-2 — see `test_the_route_is_what_keeps_two_
+    # endpoints_apart`. The property under test is unchanged: one outcome state
+    # per endpoint, and three endpoints keep three distinct 204s.
     assert outcome_states == {
-        "CommitGetAllOk200", "CommitGetAllNoContent204",
-        "CommitGetByIdOk200", "CommitGetByIdNoContent204",
-        "RepoSearchOk200", "RepoSearchNoContent204",
+        "GetCommit200", "GetCommit204",
+        "GetCommitId200", "GetCommitId204",
+        "GetRepo200", "GetRepo204",
     }, f"one outcome per endpoint, got {sorted(outcome_states)}"
 
     to_204 = [t for t in model.transitions.values() if t.outcome_status == 204]
     assert len({t.target for t in to_204}) == 3, "three endpoints, three 204 states"
 
 
-def test_the_controller_prefix_is_what_keeps_two_endpoints_apart():
+def test_the_route_is_what_keeps_two_endpoints_apart():
     """`save`, `getById` and `getAll` recur in every controller in a service, so
-    the method name alone would fuse `RepoController.search`'s outcome with
-    `CommitController.search`'s — the same last-segment collision that
-    `resource_label` exists to avoid."""
+    the method name alone would fuse two outcomes — and the ROUTE separates them
+    at least as well, while being the thing two intakes agree on (I-2).
+
+    Named from the handler, the same endpoint reached the graph twice: the code
+    intake produced `RecordPageOk200` and the OpenAPI intake
+    `DefaultPageRecordsAPageOfRecords200`, so one behaviour became two nodes.
+    """
     assert outcome_state_for(
-        {"handler_type": "RepoController", "handler_name": "search"}, 200, "ok"
-    ) == "RepoSearchOk200"
+        {"handler_type": "RepoController", "handler_name": "search",
+         "http_method": "GET", "path": "/repo/search"}, 200, "ok"
+    ) == "GetRepoSearch200"
     assert outcome_state_for(
-        {"handler_type": "CommitController", "handler_name": "search"}, 200, "ok"
-    ) == "CommitSearchOk200"
+        {"handler_type": "CommitController", "handler_name": "search",
+         "http_method": "GET", "path": "/commit/search"}, 200, "ok"
+    ) == "GetCommitSearch200"
+
+
+def test_the_verb_is_part_of_the_outcome_state():
+    """A state is the situation the system is left in, not the bytes on the wire:
+    after `PUT /record/{id}` the record is changed and after `GET /record/{id}`
+    it is not, and both answer 200."""
+    put = outcome_state_for({"http_method": "PUT", "path": "/record/{id}"}, 200, "ok")
+    get = outcome_state_for({"http_method": "GET", "path": "/record/{id}"}, 200, "ok")
+    assert put != get
 
 
 def test_an_unrecovered_handler_falls_back_to_the_status_alone():
@@ -312,3 +330,36 @@ if __name__ == "__main__":
             print(f"ERROR {t.__name__}: {type(e).__name__}: {e}")
     print(f"\n{len(tests) - failures}/{len(tests)} passed")
     sys.exit(1 if failures else 0)
+
+
+def test_a_rejection_carries_the_exception_handlers_body_not_an_empty_one():
+    """An empty `response_body` is a CLAIM, not a gap.
+
+    `landing` documents it as meaning NO body — a 204, or `ResponseEntity<Void>`
+    — which "is a fact a test can assert". So a 400 left empty told twelve
+    generated cases to assert an empty payload against a populated
+    `ErrorDto`. The handler's own return type is the error shape,
+    and it is now used.
+    """
+    from code_analysis.synthesis import Rejection
+
+    rejection = Rejection(
+        endpoint_id="Ctrl.get::GET", trigger="GET /x", status=400,
+        expression="request_accepted", claim="advice-scope",
+        response_body="ErrorDto")
+    assert rejection.response_body == "ErrorDto"
+
+    # And "" still means "no handler stated it" rather than "no body".
+    assert Rejection(endpoint_id="a", trigger="t", status=400,
+                     expression="e", claim="c").response_body == ""
+
+
+def test_the_body_is_dropped_when_handlers_disagree():
+    """Two handlers on one controller returning different error shapes cannot
+    both be the answer, and picking one would be a guess (GD-9)."""
+    import code_analysis.synthesis as syn
+    import inspect
+
+    source = inspect.getsource(syn._plan_rejections)
+    assert "len(scoped_bodies) == 1" in source, (
+        "the single-answer guard is what keeps this from picking one of two")

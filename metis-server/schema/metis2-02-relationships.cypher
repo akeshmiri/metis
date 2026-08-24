@@ -44,10 +44,12 @@ CREATE INDEX rel_a_b_o_u_t_t_valid IF NOT EXISTS FOR ()-[x:ABOUT]-() ON (x.t_val
 CREATE INDEX rel_a_c_c_e_p_t_s_t_valid IF NOT EXISTS FOR ()-[x:ACCEPTS]-() ON (x.t_valid);
 CREATE INDEX rel_o_f__t_y_p_e_t_valid IF NOT EXISTS FOR ()-[x:OF_TYPE]-() ON (x.t_valid);
 CREATE INDEX rel_r_e_t_u_r_n_s_t_valid IF NOT EXISTS FOR ()-[x:RETURNS]-() ON (x.t_valid);
-CREATE INDEX rel_h_a_s__f_i_e_l_d_t_valid IF NOT EXISTS FOR ()-[x:HAS_FIELD]-() ON (x.t_valid);
 CREATE INDEX rel_d_e_c_l_a_r_e_s__m_e_t_h_o_d_t_valid IF NOT EXISTS FOR ()-[x:DECLARES_METHOD]-() ON (x.t_valid);
 CREATE INDEX rel_h_a_n_d_l_e_d__b_y_t_valid IF NOT EXISTS FOR ()-[x:HANDLED_BY]-() ON (x.t_valid);
 CREATE INDEX rel_c_a_l_l_s_t_valid IF NOT EXISTS FOR ()-[x:CALLS]-() ON (x.t_valid);
+CREATE INDEX rel_i_s_s_u_e_s_t_valid IF NOT EXISTS FOR ()-[x:ISSUES]-() ON (x.t_valid);
+CREATE INDEX rel_q_u_e_r_i_e_s_t_valid IF NOT EXISTS FOR ()-[x:QUERIES]-() ON (x.t_valid);
+CREATE INDEX rel_u_s_e_s_t_valid IF NOT EXISTS FOR ()-[x:USES]-() ON (x.t_valid);
 CREATE INDEX rel_d_e_c_l_a_r_e_s_t_valid IF NOT EXISTS FOR ()-[x:DECLARES]-() ON (x.t_valid);
 CREATE INDEX rel_g_u_a_r_d_e_d__b_y_t_valid IF NOT EXISTS FOR ()-[x:GUARDED_BY]-() ON (x.t_valid);
 CREATE INDEX rel_r_e_n_d_e_r_s_t_valid IF NOT EXISTS FOR ()-[x:RENDERS]-() ON (x.t_valid);
@@ -152,10 +154,14 @@ CREATE INDEX rel_c_o_n_s_t_r_a_i_n_e_d__b_y_t_valid IF NOT EXISTS FOR ()-[x:CONS
 //   (Endpoint)-[:ACCEPTS]->(Parameter)  — What a caller must send
 //   (Parameter)-[:OF_TYPE]->(Class)  — The payload schema — the same node as the declared type
 //   (Endpoint)-[:RETURNS]->(Class)  — The declared response body type
-//   (Class)-[:HAS_FIELD]->(Field)  — Its declared fields and constraints
+//   (Class)-[:OF_TYPE]->(Class)  — A field of this type is itself a declared type — the nested payload. Which field is on `f_<name>_type`
 //   (Class)-[:DECLARES_METHOD]->(Method)  — Its methods
 //   (Endpoint)-[:HANDLED_BY]->(Method)  — The handler behind the route
 //   (Method)-[:CALLS]->(Method)  — A resolved call edge (Layer 1)
+//   (Method)-[:ISSUES]->(Query)  — A query this method sends to a database
+//   (Query)-[:QUERIES]->(Table)  — A table this query reads or writes
+//   (Query)-[:QUERIES]->(View)  — A view this query reads
+//   (Query)-[:USES]->(Column)  — A column this query names — a test-design input, because it is what a fixture has to populate
 //   (Endpoint)-[:DECLARES]->(DeclaredOutcome)  — A result this entry point can produce
 //   (DeclaredOutcome)-[:GUARDED_BY]->(Check)  — The condition selecting this outcome
 //   (ExceptionMapping)-[:HANDLED_BY]->(Method)  — The @ExceptionHandler that maps it
@@ -165,8 +171,9 @@ CREATE INDEX rel_c_o_n_s_t_r_a_i_n_e_d__b_y_t_valid IF NOT EXISTS FOR ()-[x:CONS
 //   (Transition)-[:DERIVED_FROM]->(DeclaredOutcome)  — The recovered outcome this transition represents
 //   (Transition)-[:DERIVED_FROM]->(ExceptionMapping)  — The exception→status mapping behind a derived rejection
 //   (Transition)-[:EXERCISES]->(Parameter)  — An input this transition sends (replaces inputs_json)
-//   (Transition)-[:REQUIRES]->(Field)  — A field constraint a case must satisfy or violate (GD-3)
+//   (Transition)-[:REQUIRES]->(Class)  — A payload type whose field constraints a case must satisfy or violate (GD-3)
 //   (Transition)-[:EXPECTS]->(Class)  — The response body a case should assert
+//   (Endpoint)-[:CONSTRAINED_BY]->(Check)  — A condition recovered in this endpoint's handler that no outcome references
 //   (Transition)-[:CONSTRAINED_BY]->(Check)  — The recovered condition behind this transition's guard
 CREATE INDEX rel_c_o_v_e_r_s_sequence IF NOT EXISTS FOR ()-[x:COVERS]-() ON (x.sequence);
 CREATE INDEX rel_c_o_v_e_r_s_is_validated IF NOT EXISTS FOR ()-[x:COVERS]-() ON (x.is_validated);

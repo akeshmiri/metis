@@ -21,7 +21,7 @@ regenerated. The tier IS the machine/human split, the same one
 from. Without the heading a generated spec parsed back to *zero* criteria, so the
 loop -- code to model to spec to edited spec to model -- was open at its first
 joint. The id is derived from the transition's natural key, never an ordinal:
-athena's 16 positional `AC-4.1` sub-ids are the standing example of what an
+The pilot estate's 16 positional `AC-4.1` sub-ids are the standing example of what an
 ordinal costs, because inserting one rule shifts every id after it.
 
 **SP-3 -- the model is already Given/When/Then.** `State -[:WHEN]-> Transition
@@ -225,7 +225,7 @@ def criterion_id_for(model: Model, transition) -> str:
     """`AC-<stable short id>` from the transition's natural key.
 
     Never an ordinal. `spec_kit` mints `AC-4.1`, `AC-4.2` positionally for
-    multi-rule blocks, and 16 of athena's 66 criteria sit on that: insert a rule
+    multi-rule blocks, and 16 of the pilot estate's 66 criteria sit on that: insert a rule
     and every id after it shifts, changing the node id and orphaning its
     approval. The natural key moves only when the behaviour itself does, which
     is exactly when a criterion *should* be treated as new.
@@ -440,7 +440,7 @@ def render_markdown(spec: Specification, coverage_summary: str = "") -> str:
     out += ["## Behaviour rules", ""]
     for rule in spec.rules:
         # The heading is the BEHAVIOUR, not the element id. Using the id printed
-        # `org.catools.athena.metric.controller.MetricController.getActionById:
+        # `com.example.records.RecordController.one:
         # org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204`
         # as a section heading in a document meant for stakeholders (SP-1).
         # The id is kept, in small type, so every statement still traces to its

@@ -174,7 +174,7 @@ def test_unverifiable_and_blocking_are_never_collapsed():
 
 def test_x_and_not_x_are_provably_exclusive_without_interpretation():
     """`t.isEmpty()` vs `NOT (t.isEmpty())` is propositional structure. The
-    checker never has to know what `isEmpty` means. 135 findings on the athena
+    checker never has to know what `isEmpty` means. 135 findings on the the pilot estate
     estate were filed unverifiable for want of this."""
     model = _model(
         [("A", True), ("B", False), ("C", False)],

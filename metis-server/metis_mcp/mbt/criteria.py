@@ -152,6 +152,42 @@ def atomic_conditions(guard: str) -> list[str]:
     return [c.strip() for c in _CONJUNCT_RE.split(guard.strip()) if c.strip()]
 
 
+def guard_conditions(t) -> list[tuple[str, str]]:
+    """The conditions a transition's guard makes, and what else each requires.
+
+    `(condition, note_suffix)` pairs, preferring the `Check` nodes reached by
+    `DERIVED_FROM -> DeclaredOutcome -> GUARDED_BY` over splitting the guard
+    string.
+
+    **Why the checks win.** Both describe the same branch, but only one of them
+    can be ordered. Checks evaluate in sequence and short-circuit, so a fixture
+    aimed at the third condition never reaches it unless the first two already
+    hold — that is a data requirement, and splitting `a AND b AND c` on `AND`
+    cannot recover it. The checks also carry `file:line@commit`, so a target
+    says which line it came from instead of asking a reviewer to go and find it.
+
+    Falls back to `atomic_conditions` where no check was landed, which is most
+    of the estate today: `GUARDED_BY` is written only where dimension recovery
+    resolved the guarding checks, and a service whose outcomes carry none still
+    gets exactly the coverage it got before.
+    """
+    if not t.checks:
+        return [(c, "") for c in atomic_conditions(t.guard)]
+
+    out: list[tuple[str, str]] = []
+    for i, check in enumerate(t.checks):
+        earlier = [c.expression for c in t.checks[:i]]
+        suffix = ""
+        if earlier:
+            # M-9: a condition on the data, never a value for it.
+            suffix = (f" — reachable only once {' and '.join(earlier)} "
+                      f"already hold, which is the order they are evaluated in")
+        if check.anchor:
+            suffix += f" [{check.anchor}]"
+        out.append((check.expression, suffix))
+    return out
+
+
 def _guard_coverage(model: Model) -> CriterionResult:
     """One target per (transition, atomic condition, polarity).
 
@@ -163,7 +199,7 @@ def _guard_coverage(model: Model) -> CriterionResult:
     """
     result = CriterionResult(name=GUARD_COVERAGE)
     for t in model.generatable_transitions():
-        conditions = atomic_conditions(t.guard)
+        conditions = guard_conditions(t)
         if not conditions:
             # An unguarded transition has nothing to vary; it is covered by
             # all-transitions and contributes no guard target. Not a gap.
@@ -174,10 +210,11 @@ def _guard_coverage(model: Model) -> CriterionResult:
             continue
         siblings = [s for s in model.outgoing(t.source)
                     if s.trigger == t.trigger and s.id != t.id]
-        for cond in conditions:
+        for cond, note in conditions:
             result.targets.append(CoverageTarget(
                 kind="guard", key=f"{t.id}::{cond}::true",
-                validated_transition_id=t.id, data_note=f"{cond} must hold",
+                validated_transition_id=t.id,
+                data_note=f"{cond} must hold{note}",
             ))
             if siblings:
                 # Some sibling on the same (state, trigger) represents the
@@ -185,7 +222,7 @@ def _guard_coverage(model: Model) -> CriterionResult:
                 result.targets.append(CoverageTarget(
                     kind="guard", key=f"{t.id}::{cond}::false",
                     validated_transition_id=siblings[0].id,
-                    data_note=f"{cond} must not hold",
+                    data_note=f"{cond} must not hold{note}",
                 ))
             else:
                 result.unsatisfiable.append((

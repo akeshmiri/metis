@@ -12,6 +12,7 @@ prevent, and it looks like helpfulness while doing it.
 """
 import ast
 import json
+import os
 import pathlib
 
 import pytest
@@ -150,7 +151,7 @@ def test_the_summary_does_not_carry_the_transition_ids():
 
 
 def test_pruning_a_real_model_payload_is_a_large_saving():
-    model = read_source("demo_data/models/athena-tms-api.json")
+    model = read_source("demo_data/models/records-api.json")
     payload = {
         "ok": True, "model_id": model.id,
         "transitions": [
@@ -254,3 +255,212 @@ def test_an_empty_search_is_refused_rather_than_matching_everything():
     payload = json.loads(server.search_knowledge("   "))
     assert payload["ok"] is False
     assert "term" in payload["reason"]
+
+
+# ---------------------------------------------------------------------------
+# Transport selection.
+#
+# `main()` was `mcp.run()` and nothing more, while `Dockerfile.mcp-server` set
+# `METIS_HTTP_PORT=8090` and `EXPOSE`d it. A detached container therefore
+# published a port nothing listened on and waited on an stdin nobody was
+# attached to. These tests exist so the Dockerfile's promise stays implemented.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _clear_transport_env(monkeypatch):
+    for var in (server.TRANSPORT_ENV, server.HOST_ENV, server.PORT_ENV):
+        monkeypatch.delenv(var, raising=False)
+
+
+def _capture_run(monkeypatch):
+    calls = []
+    monkeypatch.setattr(server.mcp, "run", lambda **kw: calls.append(kw))
+    return calls
+
+
+def test_stdio_is_the_default(monkeypatch):
+    calls = _capture_run(monkeypatch)
+    server.main()
+    assert calls == [{}]          # mcp.run() with no transport argument
+
+
+def test_an_http_transport_binds_the_configured_host_and_port(monkeypatch):
+    calls = _capture_run(monkeypatch)
+    monkeypatch.setenv(server.TRANSPORT_ENV, "streamable-http")
+    monkeypatch.setenv(server.PORT_ENV, "8430")
+    server.main()
+    assert calls == [{"transport": "streamable-http"}]
+    assert (server.mcp.settings.host, server.mcp.settings.port) == ("127.0.0.1", 8430)
+
+
+def test_a_wider_bind_is_warned_about_on_stderr(monkeypatch, capsys):
+    """Read-only is not the same as safe to expose."""
+    _capture_run(monkeypatch)
+    monkeypatch.setenv(server.TRANSPORT_ENV, "streamable-http")
+    monkeypatch.setenv(server.HOST_ENV, "0.0.0.0")
+    server.main()
+    err = capsys.readouterr().err
+    assert "does not authenticate" in err
+    # stdout is the JSON-RPC channel for the stdio transport; nothing may go there
+    assert capsys.readouterr().out == ""
+
+
+def test_an_unknown_transport_halts_rather_than_falling_back(monkeypatch):
+    """Falling back to stdio is how a container 'starts fine' and is unreachable."""
+    _capture_run(monkeypatch)
+    monkeypatch.setenv(server.TRANSPORT_ENV, "websocket")
+    with pytest.raises(SystemExit) as e:
+        server.main()
+    assert "websocket" in str(e.value)
+
+
+def test_the_dockerfile_port_is_the_default_http_port():
+    """The image sets one; this must be the same number, or the EXPOSE is a lie."""
+    dockerfile = pathlib.Path("Dockerfile.mcp-server").read_text()
+    assert "ENV METIS_HTTP_PORT=8090" in dockerfile
+    assert "EXPOSE 8090" in dockerfile
+    assert server.PORT_ENV == "METIS_HTTP_PORT"
+
+
+def test_the_read_only_default_is_still_structural():
+    """N-8 is now conditional on configuration — and `off` must still be a proof.
+
+    The write half is registered by `_register_write_tools`, which imports
+    `metis_mcp.write` **inside** the branch. If that import ever moves to the
+    top of the module, an unconfigured server would reach a write path while
+    remaining unable to use it: the prohibition would survive as a policy check
+    and die as a construction, and nothing else would notice.
+    """
+    import subprocess
+    import sys
+
+    program = """
+import importlib, os, sys
+assert os.environ.get("METIS_MCP_WRITE", "off") == "off"
+importlib.import_module("metis_mcp.server")
+print(",".join(sorted(m for m in sys.modules if m.startswith("metis_mcp.write"))))
+"""
+    env = {k: v for k, v in os.environ.items() if k != "METIS_MCP_WRITE"}
+    result = subprocess.run([sys.executable, "-c", program], capture_output=True,
+                            text=True, cwd=str(SERVER.parents[2]), env=env)
+    assert result.returncode == 0, result.stderr
+    assert not result.stdout.strip(), (
+        f"the write module is imported with writes off: {result.stdout!r}")
+
+
+def test_enabling_writes_registers_the_author_group_and_nothing_more():
+    """`author` may land; it may not decide. The gate group is a separate mode."""
+    import subprocess
+    import sys
+
+    program = """
+import importlib
+server = importlib.import_module("metis_mcp.server")
+print(",".join(sorted(server._WRITE_TOOLS)))
+"""
+    result = subprocess.run([sys.executable, "-c", program], capture_output=True,
+                            text=True, cwd=str(SERVER.parents[2]),
+                            env={**os.environ, "METIS_MCP_WRITE": "author"})
+    assert result.returncode == 0, result.stderr
+    registered = sorted(x for x in result.stdout.strip().split(",") if x)
+    # The rule, not a frozen list: authoring may grow (it did — get_transition
+    # and the workflow tools joined it), and a test pinned to today's names
+    # would have to be edited every time, which is how it stops being read.
+    assert {"land_model", "land_knowledge", "land_findings"} <= set(registered)
+    gates = [t for t in registered
+             if any(word in t for word in ("approve", "reject", "defer",
+                                           "publish", "review_queue"))]
+    assert not gates, f"a gate tool registered in author mode: {gates}"
+
+
+def test_full_mode_adds_the_gate_group_and_the_queue_that_feeds_it():
+    """`review_queue` belongs with the gates, not the read tools.
+
+    Its whole output is the evidence for a decision, including the fingerprint
+    `approve_elements` demands back. A surface that could hand out that
+    fingerprint but not spend it would be inviting a call it cannot serve.
+    """
+    import subprocess
+    import sys
+
+    program = ("import importlib;"
+               "print(','.join(sorted(importlib.import_module"
+               "('metis_mcp.server')._WRITE_TOOLS)))")
+    result = subprocess.run([sys.executable, "-c", program], capture_output=True,
+                            text=True, cwd=str(SERVER.parents[2]),
+                            env={**os.environ, "METIS_MCP_WRITE": "full"})
+    assert result.returncode == 0, result.stderr
+    registered = set(result.stdout.strip().split(","))
+    assert {"review_queue", "approve_elements", "reject_elements",
+            "defer_elements"} <= registered
+
+
+# ---------------------------------------------------------------------------
+# A model that does not exist is refused, not reported on
+# ---------------------------------------------------------------------------
+
+class _FakeSession:
+    """A graph holding exactly one model, `mfa-api`."""
+
+    def __init__(self, rows_for):
+        self._rows_for = rows_for
+
+    def run(self, cypher, **params):
+        return self._rows_for(cypher, params)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+@pytest.fixture
+def one_model(monkeypatch):
+    def rows_for(cypher, params):
+        if "UNWIND s.functional_areas" in cypher:
+            return [{"journey": "mfa", "surface": "api"}]
+        if params.get("journey") != "mfa" or params.get("surface", "api") != "api":
+            return []
+        if "MATCH (s:State)" in cypher:
+            return [{"id": "s1", "name": "Ready", "surface": "api",
+                     "is_initial": True}]
+        return []
+    monkeypatch.setattr(server, "session", lambda: _FakeSession(rows_for))
+
+
+@pytest.mark.parametrize("tool", ["get_model", "validate_model", "coverage"])
+def test_a_model_the_graph_does_not_hold_is_refused(one_model, tool):
+    """**The third instance of this bug class, and the one that reads worst.**
+
+    An empty `Model` is what a typo produces, and every tool downstream reported
+    on it cheerfully: `get_model` returned `ok: true` with zero states, and
+    `coverage` returned a structurally complete ledger with `uncovered: 0` —
+    which a reader, or an agent, takes for "nothing is uncovered". `ok: true` on
+    a question about a thing that does not exist is the failure mode this
+    codebase hunts, not a tolerable edge case.
+    """
+    out = json.loads(getattr(server, tool)("does-not-exist"))
+    assert out["ok"] is False, f"{tool} reported success for a missing model"
+    assert "does-not-exist" in out["reason"]
+
+
+def test_the_refusal_names_the_models_that_do_exist(one_model):
+    """A wrong journey is nearly always a near-miss, so a dead end is a waste."""
+    out = json.loads(server.get_model("does-not-exist"))
+    assert out["available"] == [{"journey": "mfa", "surface": "api"}]
+
+
+def test_passing_the_model_id_instead_of_the_journey_is_named_as_such(one_model):
+    """The mistake that found this: `get_model("mfa-api")` builds `mfa-api-api`.
+    It is common enough — the model id is what every other tool prints — that
+    guessing at it is worth doing explicitly."""
+    out = json.loads(server.get_model("mfa-api"))
+    assert out["ok"] is False
+    assert "pass 'mfa', not 'mfa-api'" in out["note"]
+
+
+def test_a_model_that_does_exist_is_still_answered(one_model):
+    """The guard must not become a refusal machine."""
+    out = json.loads(server.get_model("mfa"))
+    assert out["ok"] is True and len(out["states"]) == 1

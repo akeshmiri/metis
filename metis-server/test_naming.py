@@ -41,7 +41,7 @@ DOMAIN_CRITERION = ("When the caller requests a metric that does not exist, "
 
 def _model() -> Model:
     m = Model(
-        id="athena-metric-api",
+        id="records-api",
         states={
             "Metric": State(id="Metric", name="Metric", surface="api",
                             is_initial=True, lifecycle_state=APPROVED),

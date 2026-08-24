@@ -145,7 +145,12 @@ def test_external_dependencies_are_declared_not_discovered():
         text = path.read_text(errors="ignore")
         for name in ("joern", "cypher-shell", "docker", "podman", "kubectl", "npm",
                      "mvn", "gradle", "psql", "claude"):
-            if re.search(rf"\b{re.escape(name)}\b", text):
+            # **Not preceded by a dot, word char or hyphen**, so a FILENAME is
+            # not read as an invocation. `project_profile` looks for a file
+            # called `build.gradle` to detect a JVM project; it never runs
+            # gradle, and declaring it as a dependency to quieten this test
+            # would make DECLARED_EXTERNALS state something untrue.
+            if re.search(rf"(?<![.\w-]){re.escape(name)}\b", text):
                 invoked.add(name)
     # `podman` is named in documentation as the preferred local runtime; it is a
     # substitute for docker rather than an addition.

@@ -173,7 +173,7 @@ class EndpointFact:
     #
     # Neither is available from the CPG's type information: javasrc2cpg erases
     # the generic, so `methodReturn.typeFullName` is a bare `ResponseEntity` on
-    # every one of athena's 91 handlers. The pack reads the declaration text.
+    # every one of the pilot estate's 91 handlers. The pack reads the declaration text.
     response_type: str = ""
     response_body: str = ""
     # `@Valid`/`@Validated` on a bound parameter, or `@Validated` on the class.
@@ -193,7 +193,7 @@ class MemberFact:
     type_full_name: str
     anchor: Anchor
     # The declaring type's FULLY-QUALIFIED name. `type_name` is the simple one,
-    # and simple names collide: athena declares `PageResponse` in seven files,
+    # and simple names collide: the pilot estate declares `PageResponse` in seven files,
     # one per feign module. Keying a graph node on the simple name fuses all
     # seven into one node that claims to be every one of them — the same defect
     # as `/project/all` and `/user/all` collapsing onto `All`.
@@ -202,11 +202,98 @@ class MemberFact:
     # already fully qualified, so without this the two sides cannot be joined
     # without guessing.
     owner_full_name: str = ""
+    # The `schema` role's facts (springdoc `@Schema`, or whatever a project
+    # declares in its place). Documentation a person wrote, and two things that
+    # are not documentation at all:
+    #
+    #   `required`     "true"/"false"/"" — and "" is a THIRD answer. "not
+    #                  stated" and "stated optional" are different facts about a
+    #                  payload, and collapsing them would invent a claim.
+    #   `allowed_values`  an enum's values ARE its equivalence partitions, which
+    #                  is a test-design input rather than a comment.
+    description: str = ""
+    required: str = ""
+    allowed_values: tuple[str, ...] = ()
+    owner_description: str = ""
     # Declared constraints on the field, verbatim (`@NotNull`, `@Size(max=64)`).
     # These are GD-3's variants: the data requirements a fixture must violate to
     # reach a validation rejection, and the reason 164 constrained fields stay
     # test data rather than becoming 164 transitions.
+    #
+    # **Kept alongside the typed properties below, not replaced by them** (X-6b).
+    # The vocabulary Métis honours is closed, so an annotation outside it becomes
+    # no property — and it has to remain visible here or it would simply vanish,
+    # which is the silent-reduction failure X-5a exists to prevent.
     constraints: tuple[str, ...] = ()
+
+    # The same constraints as **data** (X-6b). `@Size(max = 40)` is a string that
+    # every consumer must re-parse, and two consumers parsing it differently is a
+    # defect nobody can see; `expected_max_length = 40` is a bound a boundary
+    # criterion reads directly. Absent means "not constrained that way", which is
+    # why these are None rather than 0.
+    #
+    # `@Size` is length on a String and cardinality on a collection, and the two
+    # are different things for a fixture to build, so they get different names.
+    expected_min_length: int | None = None
+    expected_max_length: int | None = None
+    expected_min_size: int | None = None
+    expected_max_size: int | None = None
+    expected_min: str = ""
+    expected_max: str = ""
+    expected_exclusive_min: str = ""
+    expected_exclusive_max: str = ""
+    expected_pattern: str = ""
+    expected_format: str = ""
+    expected_integer_digits: int | None = None
+    expected_fraction_digits: int | None = None
+    expected_temporal: str = ""
+
+    # Whether this field's type, or its owner, is an enum — so landing can write
+    # `:Enum` instead of `:Class` (a specialisation replaces its parent) and a
+    # field of that type can carry the constants as its partitions.
+    type_is_enum: bool = False
+    owner_is_enum: bool = False
+
+    # A collection's element type, as a simple name. `type_full_name` erases the
+    # generic — a `List<RecordDto>` field reports `java.util.List` — so without
+    # this the nested payload edge stops at the collection and the element type,
+    # which is what a fixture actually builds, is unreachable.
+    element_type: str = ""
+
+
+@dataclass(frozen=True)
+class EntityFact:
+    """A persisted type and the table it states it lives in (X-19a).
+
+    `table` is empty where the source does not say — measured on a real service,
+    `@Entity`/`@Table`/`@Column` were in **zero** files because the entities were
+    in a dependency jar. Empty is the fact; a naming-strategy guess written here
+    would be a plausible wrong table in the graph, and the catalogue is what
+    settles it instead.
+    """
+
+    entity: str
+    full_name: str
+    anchor: Anchor
+    table: str = ""
+    columns: tuple[dict, ...] = ()
+
+
+@dataclass(frozen=True)
+class RepositoryQueryFact:
+    """One thing a repository asks, before any table is known (X-19a).
+
+    `statement` is a `@Query`'s text, native or JPQL; empty means a derived
+    method, whose predicates come out of the name.
+    """
+
+    repository: str
+    method: str
+    entity: str
+    method_id: str
+    anchor: Anchor
+    statement: str = ""
+    native: bool = False
 
 
 @dataclass(frozen=True)
@@ -223,6 +310,12 @@ class CheckFact:
     order: int
     anchor: Anchor
     dimension_class: str | None = None
+    # The endpoint whose handler this condition was found in. A check whose
+    # branches resolve to a status is referenced by an outcome; one whose branches
+    # do not is referenced by nothing, and lands connected to nothing at all
+    # without this. Both recovered checks on a real service were of that second
+    # kind.
+    endpoint_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -230,7 +323,7 @@ class ExceptionMappingFact:
     """`@ExceptionHandler(X.class)` + `@ResponseStatus(S)`, Layer 2.
 
     **This is what makes "which exception becomes a 400" evidence rather than
-    inference.** athena's `GlobalExceptionHandler` maps four distinct exceptions
+    inference.** The pilot estate's `GlobalExceptionHandler` maps four distinct exceptions
     onto 400, and only one of them (`MethodArgumentNotValidException`) is bean
     validation. Without this fact a declared 400 could only be labelled by
     guessing, and the guess would be wrong for the other three -- a test written
@@ -245,6 +338,13 @@ class ExceptionMappingFact:
     status: int
     advice_type: str
     anchor: Anchor
+    # The handler's declared response type. "" means the handler
+    # genuinely returns no body, which is a different claim from not knowing.
+    response_body: str = ""
+    # The `@ExceptionHandler` itself. `advice_type` is the declaring class's
+    # SIMPLE name and joins to nothing, so `HANDLED_BY` -- catalogued, and named
+    # in EVIDENCE_LAYER as this label's reader -- could not be written.
+    handler_method_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -299,9 +399,17 @@ class ExtractionReport:
     checks: list[CheckFact] = field(default_factory=list)
     outcomes: list[OutcomeFact] = field(default_factory=list)
     exception_mappings: list[ExceptionMappingFact] = field(default_factory=list)
+    entities: list[EntityFact] = field(default_factory=list)
+    repository_queries: list[RepositoryQueryFact] = field(default_factory=list)
 
     parse_errors: list[str] = field(default_factory=list)
     partial: bool = False
+
+    # What extraction deliberately left out, and why (X-5a). A reduction nobody can see
+    # is indistinguishable from a codebase that never had those elements -- the
+    # same failure `partial` exists to prevent, one level down. Empty when a pack
+    # filters nothing.
+    filtered: dict = field(default_factory=dict)
 
 
 REQUIRED_PROVENANCE = (
@@ -389,7 +497,7 @@ def exception_status_map(report: ExtractionReport) -> tuple[dict[str, int], list
     exception is excluded from the map and reported. A guess here would put a
     precondition on a transition that the runtime may never satisfy.
 
-    Agreement across advices is not a conflict: athena's two beans both map
+    Agreement across advices is not a conflict: the pilot estate's two beans both map
     `MethodArgumentNotValidException` to 400, so the status is certain even though
     the response body is not.
     """

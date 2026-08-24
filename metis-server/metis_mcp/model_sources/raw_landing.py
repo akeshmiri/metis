@@ -35,10 +35,11 @@ import hashlib
 from datetime import datetime, timezone
 
 from metis_mcp.model_sources.landing import LandingPlan, PlannedEdge, PlannedNode
+from metis_mcp.model_sources.structure import normalised_page_name
 from metis_mcp.ontology import validate, validate_relationship
 
 # Everything in this layer is evidence about one repository, so ids are namespaced
-# by it: two services may both declare `MetricDto`, and fusing them would say one
+# by it: two services may both declare `RecordDto`, and fusing them would say one
 # type is two things at once.
 _ID_LEN = 16
 
@@ -52,7 +53,7 @@ def _ident(*parts: str) -> str:
 def endpoint_id(repo: str, http_method: str, path: str, service: str = "") -> str:
     """**Scoped to the service, because a path is not unique across a monorepo.**
 
-    athena declares `GET /summary` in two deployables and `GET /trend` in two
+    the pilot estate declares `GET /summary` in two deployables and `GET /trend` in two
     more. Keyed on `(method, path)` alone all of them fuse, and one service's
     transitions then point at another's endpoint — the same cross-service
     contamination the INVOKES matcher had to be fixed for.
@@ -63,7 +64,7 @@ def endpoint_id(repo: str, http_method: str, path: str, service: str = "") -> st
 def class_id(repo: str, name: str) -> str:
     """Keyed on the FULLY-QUALIFIED name where one is known.
 
-    Simple names collide: athena declares `PageResponse` in seven files, one per
+    Simple names collide: the pilot estate declares `PageResponse` in seven files, one per
     feign module, and 21 simple names are declared in more than one place.
     Fusing them produces one node claiming to be all seven at once — the same
     defect as `/project/all` and `/user/all` collapsing onto `All`.
@@ -121,6 +122,16 @@ def mapping_id(repo: str, exception_type: str, advice: str) -> str:
 
 def route_id(repo: str, path: str) -> str:
     return f"rte:{_ident(repo, path)}"
+
+
+def _present(**values) -> dict:
+    """Only the keys that actually have a value.
+
+    An empty description written as `""` is a property the graph has to store
+    and every reader has to test for. Absent says the same thing and says it
+    once.
+    """
+    return {k: v for k, v in values.items() if v}
 
 
 def _anchor_props(anchor) -> dict:
@@ -198,7 +209,8 @@ def type_names_in(expression: str, qualified: bool = False) -> list[str]:
 def plan_raw_landing(report, journey: str, repo: str = "",
                      behaviour=None, ui_facts: dict | None = None,
                      job_id: str = "manual", t_recorded: str | None = None,
-                     include_call_graph: bool = True) -> LandingPlan:
+                     include_call_graph: bool = False,
+                     compact: bool = True) -> LandingPlan:
     """Build a fully-validated evidence plan. No session, no writes.
 
     `report` is the structural pack's `ExtractionReport`; `behaviour` the
@@ -248,7 +260,7 @@ def plan_raw_landing(report, journey: str, repo: str = "",
     })
 
     declared, by_simple = _plan_types(plan, add_node, add_edge, base, report, repo,
-                                      include_call_graph)
+                                      include_call_graph, compact)
     _plan_endpoints(plan, add_node, add_edge, base, report, repo,
                     include_call_graph, declared, by_simple)
     _plan_behaviour(plan, add_node, add_edge, base, behaviour, repo,
@@ -278,41 +290,275 @@ def endpoints_by_handler(report, repo: str) -> dict[str, str]:
     return out
 
 
+# X-6b: the closed set of typed constraint properties, and what each holds. An
+# int property absent means "not constrained that way" -- writing 0 instead would
+# be a bound the code never stated, and a boundary criterion would honour it.
+_INT_CONSTRAINTS = ("expected_min_length", "expected_max_length",
+                    "expected_min_size", "expected_max_size",
+                    "expected_integer_digits", "expected_fraction_digits")
+_STR_CONSTRAINTS = ("expected_min", "expected_max", "expected_exclusive_min",
+                    "expected_exclusive_max", "expected_pattern",
+                    "expected_format", "expected_temporal")
+
+
+def class_label_for(is_enum: bool) -> str:
+    """`Enum` or `Class`, and a specialisation is written INSTEAD of its parent.
+
+    So every query over types must use `label_expression("Class")`; a hardcoded
+    `:Class` silently skips every enum, which is the same defect a hardcoded
+    `:Transition` produces against `:ApiCall`.
+    """
+    return "Enum" if is_enum else "Class"
+
+
+def _typed_constraints(member, prefix: str = "") -> dict:
+    """The validation bounds as data, dropping anything not stated."""
+    out: dict = {}
+    for key in _INT_CONSTRAINTS:
+        value = getattr(member, key, None)
+        if value is not None:
+            out[prefix + key] = int(value)
+    for key in _STR_CONSTRAINTS:
+        value = getattr(member, key, "")
+        if value:
+            out[prefix + key] = value
+    return out
+
+
+def _security_props(facts) -> dict:
+    """Declared security, flattened onto the Endpoint.
+
+    Parallel arrays rather than prefixed keys, because unlike a field these have
+    no natural name to key on — a scheme and its roles are positional. Absent
+    when nothing was declared, which is a different claim from "open".
+    """
+    schemes = [getattr(f, "scheme", "") for f in facts]
+    if not any(schemes):
+        return {}
+    roles: list[str] = []
+    for f in facts:
+        roles.extend(getattr(f, "roles", ()) or ())
+    out = {"security_schemes": schemes,
+           "security_expressions": [getattr(f, "expression", "") for f in facts]}
+    if roles:
+        out["security_roles"] = sorted(set(roles))
+    return out
+
+
+def _field_properties(members) -> dict:
+    """A type's fields, flattened onto the type (X-6d).
+
+    The prefix and the reason for it live in `ontology.facts`, beside the decoder
+    that reads these back — one module, so the two cannot drift.
+
+    `required` stays a STRING and "" is a third answer: "not stated" and "stated
+    optional" are different facts about a payload, and a boolean collapses them.
+    """
+    from metis_mcp.ontology.facts import FIELD_PREFIX
+
+    out: dict = {}
+    for member in members:
+        name = getattr(member, "name", "")
+        if not name:
+            continue
+        p = f"{FIELD_PREFIX}{name}_"
+        out[p + "type"] = getattr(member, "type_full_name", "")
+        for key, value in (
+            ("required", getattr(member, "required", "")),
+            ("description", getattr(member, "description", "")),
+            ("element_type", getattr(member, "element_type", "")),
+        ):
+            if value:
+                out[p + key] = value
+        # GD-3's variants: what a fixture must violate to reach a validation
+        # rejection, kept verbatim beside the typed form (X-6b).
+        constraints = list(getattr(member, "constraints", ()) or ())
+        if constraints:
+            out[p + "constraints"] = constraints
+        allowed = list(getattr(member, "allowed_values", ()) or ())
+        if allowed:
+            out[p + "allowed_values"] = allowed
+        out.update(_typed_constraints(member, prefix=p))
+    return out
+
+
 def _plan_types(plan, add_node, add_edge, base, report, repo,
-                include_call_graph) -> tuple[set[str], dict[str, str]]:
+                include_call_graph, compact: bool = True) -> tuple[set[str], dict[str, str]]:
     """`Class` and its `Field`s — and `Class` is deliberately also the schema.
 
-    A DTO *is* a class. Reaching `MetricDto` as a parameter's type and reaching
+    A DTO *is* a class. Reaching `RecordDto` as a parameter's type and reaching
     it as a declared type must arrive at ONE node, or the graph says two
     different things about one type.
     """
     seen: set[str] = set()
     fq_names: set[str] = set()
-    for member in getattr(report, "members", ()) or ():
-        type_name = getattr(member, "type_name", "")
-        owner = getattr(member, "owner_full_name", "") or type_name
-        if not type_name:
+    # Which types this repository declares, so a nested field edge stops at the
+    # JDK boundary rather than inventing a node for `java.lang.String`
+    # (REQ-CGA-010), and which of them are enums.
+    members = list(getattr(report, "members", ()) or ())
+    declared_types = {getattr(m, "owner_full_name", "") or getattr(m, "type_name", "")
+                      for m in members}
+    declared_types.discard("")
+
+    # **A type nothing references is not part of this service's surface.**
+    # `TwilioProperties` and a service implementation's fields are real code and
+    # tell the model nothing: on a real service 29 classes and 126 fields were
+    # unreachable from the model through any meaningful edge, which is a third of
+    # what remained after the call graph went.
+    #
+    # Referenced means: a parameter carries it, an endpoint returns it, another
+    # kept type nests it, or it is an enum whose constants are somebody's
+    # partitions. Computed transitively, because a payload two levels deep is
+    # still a payload — and REQ-CGA-010 already stops the walk at the JDK.
+    wanted: set[str] = set()
+    by_owner: dict[str, list] = {}
+    for m in members:
+        by_owner.setdefault(
+            getattr(m, "owner_full_name", "") or getattr(m, "type_name", ""), []).append(m)
+
+    # A type is named as a fully-qualified name in one place and a simple one in
+    # another — a parameter carries the FQN, a member's owner may be either — so
+    # resolution is on the last dot-segment, which is the only form both sides
+    # always share. Ambiguous segments resolve to nothing rather than to
+    # whichever came first: `_index_by_simple` omits them for the same reason.
+    by_segment: dict[str, set[str]] = {}
+    for owner in by_owner:
+        by_segment.setdefault(owner.rsplit(".", 1)[-1], set()).add(owner)
+
+    def resolve(name: str) -> str:
+        name = unwrap_generic(name)
+        if not name:
+            return ""
+        if name in by_owner:
+            return name
+        candidates = by_segment.get(name.rsplit(".", 1)[-1], set())
+        return next(iter(candidates)) if len(candidates) == 1 else ""
+
+    frontier: list[str] = []
+    for endpoint in getattr(report, "endpoints", ()) or ():
+        for parameter in getattr(endpoint, "parameters", ()) or ():
+            frontier.append(getattr(parameter, "type_name", ""))
+        frontier.append(getattr(endpoint, "response_body", ""))
+
+    while frontier:
+        owner = resolve(frontier.pop())
+        if not owner or owner in wanted:
             continue
+        wanted.add(owner)
+        for m in by_owner.get(owner, ()):
+            # The field's own type, and a collection's element type: a payload
+            # two levels deep is still a payload.
+            frontier.append(getattr(m, "type_full_name", ""))
+            frontier.append(getattr(m, "element_type", ""))
+    enum_types = {getattr(m, "owner_full_name", "") or getattr(m, "type_name", "")
+                  for m in members if getattr(m, "owner_is_enum", False)}
+    enum_types.discard("")
+    by_simple = _index_by_simple(declared_types)
+    skipped_types: set[str] = set()
+    skipped_fields = 0
+
+    # **A scalar field is a property of its type; a complex one is an edge
+    # between types** (X-6d). A field was its own node, which put 68 nodes into
+    # the graph to say what four properties say, and none of them was ever
+    # queried on its own: what a test-designer asks is "what values does this
+    # type accept", and that is one question about one node.
+    #
+    # Grouped first, because a type's properties are written once with the node
+    # rather than accreted by 68 separate visits.
+    grouped: dict[str, list] = {}
+    for member in members:
+        owner_fq = getattr(member, "owner_full_name", "") or getattr(member, "type_name", "")
+        if compact and owner_fq not in wanted:
+            skipped_types.add(owner_fq)
+            skipped_fields += 1
+            continue
+        if getattr(member, "type_name", ""):
+            grouped.setdefault(owner_fq, []).append(member)
+
+    for owner, owned in grouped.items():
+        first = owned[0]
+        type_name = getattr(first, "type_name", "")
         cid = class_id(repo, owner)
         fq_names.add(owner)
-        if cid not in seen:
-            seen.add(cid)
-            add_node("Class", {**base(cid, type_name), "package": owner})
-        fid = field_id(repo, owner, getattr(member, "name", ""))
-        add_node("Field", {
-            **base(fid, getattr(member, "name", "")),
-            "type_name": getattr(member, "type_full_name", ""),
-            # GD-3's variants: what a fixture must violate to reach a validation
-            # rejection. One node per field, however many transitions need it.
-            "constraints": list(getattr(member, "constraints", ()) or ()),
-            **_anchor_props(getattr(member, "anchor", None)),
+        owner_is_enum = bool(getattr(first, "owner_is_enum", False))
+        if cid in seen:
+            continue
+        seen.add(cid)
+        add_node(class_label_for(owner_is_enum), {
+            **base(cid, type_name), "package": owner,
+            # What a person wrote about this type in `@Schema`. Zero Class nodes
+            # carried one before the `schema` role existed, while 71 such
+            # annotations sat in the source.
+            **_present(description=getattr(first, "owner_description", "")),
+            "fields": sorted(getattr(m, "name", "") for m in owned),
+            **_field_properties(owned),
         })
-        add_edge("Class", cid, "HAS_FIELD", "Field", fid)
 
+        for member in owned:
+            # X-6d: the nested payload, now an edge between the two TYPES. A
+            # field whose type is another declared type continues the graph; a
+            # field typed by the JDK stops here, because REQ-CGA-010 forbids
+            # stubbing a type this repository does not declare. Which field
+            # carries it is on `f_<name>_type`, so the edge needs no property —
+            # `landing.PlannedEdge` has none, unlike `graph_writer`'s.
+            #
+            # A collection resolves through its ELEMENT type. `List<RecordDto>`
+            # has `type_full_name = java.util.List`, which is true and useless:
+            # the type a fixture builds is `RecordDto`.
+            nested = getattr(member, "type_full_name", "")
+            if nested not in declared_types:
+                element = getattr(member, "element_type", "")
+                # Resolved as a response body is, and omitted when the simple
+                # name is ambiguous — attaching a payload to whichever type came
+                # first is worse than leaving it unattached.
+                nested = by_simple.get(element, "") if element else ""
+            if nested and nested in declared_types and nested != owner:
+                add_edge(class_label_for(owner_is_enum), cid, "OF_TYPE",
+                         class_label_for(nested in enum_types),
+                         class_id(repo, nested))
+
+    # **"Off" means bounded, not absent.** Returning here landed no `Method` at
+    # all while `Endpoint -[:HANDLED_BY]-> Method` and
+    # `ExceptionMapping -[:HANDLED_BY]-> Method` were still planned, so both would
+    # have merged nothing — the flag was written before either edge existed.
+    #
+    # What stays is what something points at: the twelve handlers and the five
+    # exception handlers. What goes is the call graph, which on a real service was
+    # 199 methods and 180 CALLS edges landed for a reader — `behavior_model.
+    # corroborate` — that **nothing calls**, and which needs 17 of them when it
+    # finally does. D-13 chose to land it ahead of that reader; the reader has not
+    # arrived, and 182 unreferenced nodes is what the choice costs per service.
+    if skipped_types:
+        # X-5a: never silent. A jump in this count means a payload chain broke,
+        # not that the service got smaller.
+        plan.skipped.append((
+            f"{len(skipped_types)} type(s) and {skipped_fields} field(s)",
+            "no parameter, response body or nested payload field references "
+            "them, so the model can lead you to none of it — landed only with "
+            "compact=False"))
+
+    referenced = {getattr(e, "handler_method_id", "")
+                  for e in getattr(report, "endpoints", ()) or ()}
+    referenced |= {getattr(m, "handler_method_id", "")
+                   for m in getattr(report, "exception_mappings", ()) or ()}
+    referenced.discard("")
+
+    methods = list(getattr(report, "methods", ()) or ())
     if not include_call_graph:
-        return seen, _index_by_simple(fq_names)
+        kept = [m for m in methods if m.id in referenced]
+        dropped = len(methods) - len(kept)
+        if dropped:
+            # Never silent (X-5a): a graph that quietly lost its call graph looks
+            # exactly like a codebase whose methods call nothing.
+            plan.skipped.append((
+                f"{dropped} method(s) and their CALLS edges",
+                "the call graph is not landed by default — its only reader, "
+                "`behavior_model.corroborate`, is called by nothing, and the "
+                "handlers something does point at are kept. Pass "
+                "include_call_graph=True to land it"))
+        methods = kept
 
-    for method in getattr(report, "methods", ()) or ():
+    for method in methods:
         mid = method_id(repo, method.id)
         add_node("Method", {
             **base(mid, getattr(method, "name", "")),
@@ -326,20 +572,48 @@ def _plan_types(plan, add_node, add_edge, base, report, repo,
         fq = (method.id.rsplit(":", 1)[0].rsplit(".", 1)[0]
               if ":" in method.id else simple)
         if simple:
-            cid = class_id(repo, fq or simple)
-            fq_names.add(fq or simple)
+            owner_fq = fq or simple
+            cid = class_id(repo, owner_fq)
+            fq_names.add(owner_fq)
+            # **`:Enum` or `:Class`, and getting it wrong here merges nothing.**
+            # An enum with a method (`fromValue`, `getLabel`) already has its node
+            # from the members pass carrying `:Enum`, because a specialisation
+            # replaces its parent. Planning this edge against `:Class`
+            # regardless passed the ontology check — `is_allowed` walks the
+            # specialisation chain — and then matched no node: three
+            # DECLARES_METHOD edges reported as unmatched, which is the same
+            # defect a hardcoded `:Transition` produces against `:ApiCall`.
+            enum_owner = owner_fq in enum_types
             if cid not in seen:
                 seen.add(cid)
-                add_node("Class", {**base(cid, simple), "package": fq})
-            add_edge("Class", cid, "DECLARES_METHOD", "Method", mid)
+                add_node(class_label_for(enum_owner),
+                         {**base(cid, simple), "package": fq})
+            add_edge(class_label_for(enum_owner), cid,
+                     "DECLARES_METHOD", "Method", mid)
 
-    known = {method_id(repo, m.id) for m in getattr(report, "methods", ()) or ()}
+    known = {method_id(repo, m.id) for m in methods}
     for call in getattr(report, "calls", ()) or ():
         caller, callee = method_id(repo, call.caller_id), method_id(repo, call.callee_id)
         if caller in known and callee in known:
             add_edge("Method", caller, "CALLS", "Method", callee)
 
     return seen, _index_by_simple(fq_names)
+
+
+def unwrap_generic(name: str) -> str:
+    """`List<RecordDto>` -> `RecordDto`; anything else unchanged.
+
+    A collection OF the body is not the body, and the body is what a case asserts
+    against and what a fixture builds. Shared with `workflow.handlers` so the two
+    cannot disagree about what a response type is — they did, and the disagreement
+    cost one `EXPECTS` edge that pointed at a class compaction had dropped.
+    """
+    name = (name or "").strip()
+    if "<" in name and name.endswith(">"):
+        name = name[name.index("<") + 1:-1].strip()
+        if "," in name:                     # Map<String, Dto> -- the value type
+            name = name.rsplit(",", 1)[-1].strip()
+    return name
 
 
 def _index_by_simple(fq_names: set[str]) -> dict[str, str]:
@@ -393,6 +667,16 @@ def _plan_endpoints(plan, add_node, add_edge, base, report, repo,
             "response_body": getattr(endpoint, "response_body", ""),
             "consumes": list(getattr(endpoint, "consumes", ()) or ()),
             "produces": list(getattr(endpoint, "produces", ()) or ()),
+            # **The pack recovers this and landing dropped it.** Zero endpoints
+            # declare security on the pilot service, which is itself the answer
+            # to "how do I authenticate" there — its auth travels as header
+            # parameters — but a service using `@PreAuthorize` lost the fact
+            # silently, and a recipe cannot state what never arrived.
+            #
+            # Absent means **nothing was declared**, never "it is open": security
+            # enforced in a filter chain or at a gateway is invisible to
+            # extraction, and the two claims are not the same.
+            **_security_props(getattr(endpoint, "security", ()) or ()),
             **_anchor_props(getattr(endpoint, "anchor", None)),
         })
 
@@ -414,7 +698,11 @@ def _plan_endpoints(plan, add_node, add_edge, base, report, repo,
         external += link_types("Endpoint", eid, "RETURNS",
                                getattr(endpoint, "response_body", ""))
 
-        if include_call_graph and getattr(endpoint, "handler_method_id", ""):
+        # No longer conditional on the call graph: a referenced method is landed
+        # whether or not the call graph is. The condition was correct when "off"
+        # meant no `Method` node existed at all, and became a reason the handler
+        # was unreachable the moment "off" started meaning "bounded".
+        if getattr(endpoint, "handler_method_id", ""):
             add_edge("Endpoint", eid, "HANDLED_BY", "Method",
                      method_id(repo, endpoint.handler_method_id))
 
@@ -434,6 +722,14 @@ def _plan_endpoints(plan, add_node, add_edge, base, report, repo,
             "advice_type": mapping.advice_type,
             **_anchor_props(getattr(mapping, "anchor", None)),
         })
+        # The catalogued reader for this label, and it was never written:
+        # `advice_type` is a simple class name that joins to nothing, so five
+        # mappings landed connected to nothing while EVIDENCE_LAYER named this
+        # edge as the reason the label exists.
+        handler = getattr(mapping, "handler_method_id", "")
+        if handler:
+            add_edge("ExceptionMapping", mid, "HANDLED_BY", "Method",
+                     method_id(repo, handler))
 
 
 def _plan_behaviour(plan, add_node, add_edge, base, behaviour, repo,
@@ -443,6 +739,8 @@ def _plan_behaviour(plan, add_node, add_edge, base, behaviour, repo,
         return
     by_handler = by_handler or {}
     unjoined = 0
+    stranded = 0
+    referenced: set[str] = set()
 
     checks: dict[str, str] = {}
     for check in getattr(behaviour, "checks", ()) or ():
@@ -479,6 +777,31 @@ def _plan_behaviour(plan, add_node, add_edge, base, behaviour, repo,
         for raw_check in getattr(outcome, "guarding_check_ids", ()) or ():
             if raw_check in checks:
                 add_edge("DeclaredOutcome", oid, "GUARDED_BY", "Check", checks[raw_check])
+                referenced.add(raw_check)
+
+    # **A guard whose outcome could not be recovered is still a real condition in
+    # real code.** The pack emits the check whether or not either branch resolves
+    # to a status, so a ternary branching to two helpers that name no status
+    # leaves the check referenced by nothing. Both checks recovered from a real
+    # service were of exactly that shape, and both landed connected to nothing.
+    #
+    # Attached to the endpoint whose handler it was found in, which is a weaker
+    # claim than `GUARDED_BY` and is labelled as one: this says "a condition was
+    # recovered here", not "this condition selects that outcome".
+    for check in getattr(behaviour, "checks", ()) or ():
+        if check.id in referenced:
+            continue
+        eid = by_handler.get(getattr(check, "endpoint_id", ""))
+        if eid:
+            add_edge("Endpoint", eid, "CONSTRAINED_BY", "Check", checks[check.id])
+        else:
+            stranded += 1
+
+    if stranded:
+        plan.skipped.append((
+            f"{stranded} recovered check(s)",
+            "no outcome references them and their endpoint was not recovered "
+            "either, so they would land connected to nothing — reported instead"))
 
     if unjoined:
         # Reported, not dropped. An outcome whose endpoint the structural pack
@@ -509,4 +832,7 @@ def _plan_ui(plan, add_node, add_edge, base, ui_facts, repo, journey):
             **base(rid, path),
             "path": path,
             "screen": screen,
+            # The basis `route_page` joins on (X-19). Held as a property so the
+            # proposal can be re-run against a structure that lands later.
+            "join_name": normalised_page_name(screen),
         })

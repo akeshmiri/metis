@@ -18,18 +18,35 @@ layers: [1, 2, 3]          # structural, endpoints, type registry
 
 status: working
 verified_against:
-  repo: athena-boot-git
-  java_files: 25
-  result: "149 methods, 161 calls, 6 endpoints, 60 members, 0 unparsed"
-  endpoints_cross_checked: "6 — matches the independent grep recorded in spec §15.1"
-  routes: ["/commit", "/commit/{id}", "/repo", "/repo/{id}"]
-
+  repo: demo_project/records-service
+  java_files: 16
+  result: "7 endpoints, 5 exception mappings, 0 unparsed. 38 methods declared,
+    9 dropped as noise (6 inert accessors, 3 boilerplate), 29 kept."
+  # Both directions. The @FeignClient interface declares two more mappings and
+  # they must NOT be counted: they are calls this service makes of another one,
+  # and modelling them as endpoints generates cases nobody can run.
+  endpoints_cross_checked: "7 — asserted in test_extraction.py against the
+    checked-in corpus, so this is re-runnable rather than recorded"
+  routes: ["/record", "/record/{id}", "/record/{id}/archive", "/summary/{id}"]
+  negative: "ArchiveClient's /store and /store/{id} are absent from endpoints"
 known_limits:
+  # Measured on a real 12-endpoint service: 389 methods declared, 166 inert
+  # accessors and 23 boilerplate dropped, 200 kept — 49% of the method nodes were
+  # noise. Not by visibility: `private` was 59 of 389 there and two of those were
+  # reachable from a handler, one of them guarding an endpoint and raising the
+  # exception its @ExceptionHandler maps.
+  - "X-5a: inert accessors and generated boilerplate are dropped from `methods` before
+     anything downstream reads them, and the counts are reported in `filtered`.
+     An accessor qualifies only if a matching field exists, the body is short, and
+     it contains no control structure and no call but operators — so a getter that
+     branches is kept. Fields are NOT filtered: @Schema and the validation
+     constraints live on the field, and `mapper` builds its type registry from
+     them. `--param dropNoise=no` keeps everything"
   - "path constants resolve from string-literal assignments only; anything else
      is emitted as __unresolved__ and never guessed (spec T-9d)"
   - "exception_mappings sees @ExceptionHandler + @ResponseStatus only. A handler
      that OVERRIDES a Spring base-class method instead of annotating one is
-     invisible: athena's ControllerErrorHandler extends
+     invisible: a real service's ControllerErrorHandler extended
      ResponseEntityExceptionHandler and overrides handleMethodArgumentNotValid,
      returning 400 with a different body. It agrees on the status with the
      annotated GlobalExceptionHandler, so nothing is misreported here — but the

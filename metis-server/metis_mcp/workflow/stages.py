@@ -2,7 +2,7 @@
 The stage registry and the workflow definitions (application spec §3.2, §3.4).
 
 **This is the single place that knows the order.** Before it, the ordering lived
-in `reingest_athena.sh`, in two throwaway scripts under `/tmp`, in four
+in `reingest_the pilot estate.sh`, in two throwaway scripts under `/tmp`, in four
 `print("next: ...")` hints inside the CLI, and in the operator's memory. §3.2 has
 described seven ordered stages and two gates since the specification was
 approved; nothing executed them.

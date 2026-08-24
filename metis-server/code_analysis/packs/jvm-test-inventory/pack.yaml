@@ -1,0 +1,43 @@
+# Query pack: existing-test inventory (application spec REQ-METIS-PG-01).
+#
+# Answers "what do the tests that already exist cover", so generation is
+# additive rather than proposing a case for behaviour a real test proves.
+name: jvm-test-inventory
+version: 0.1.0
+contract: metis.cpg-extract/1
+
+engine:
+  name: joern
+  version: "4.0.604"
+  frontends: [javasrc2cpg]
+
+layers: [3]
+
+status: working
+verified_against:
+  repo: demo_project/records-service
+  result: "3 tests recovered with their routes and asserted statuses, 1 reported
+    unresolved. Recovered from a CPG rooted at src/test/java — see known_limits
+    for why the repository root cannot work."
+  asserted_by: test_extraction.py
+known_limits:
+  # This said the cause was unresolved dependencies and pointed at
+  # --fetch-dependencies. **Both were wrong.** Measured: a src/test/java tree
+  # containing a file with NO imports at all is still dropped, and rooting the
+  # parse at src does not help because the match is on any path segment. The
+  # cause is the frontend's hardcoded ignore list, and the fix needs no network.
+  - "REQUIRES a CPG rooted INSIDE the test tree. javasrc2cpg ignores test
+     directories by name and x2cpg offers no include-override, so a repository
+     root can never contain a test. `engine.test_roots` finds the roots and
+     `extract` parses the first as its own input"
+  - "one input root per parse is all joern-parse takes, so a project with two
+     test trees gets the first and a NOTE naming the rest. That coverage is
+     UNKNOWN, not zero"
+  - "an empty inventory must NOT be read as 'nothing is covered' -- that makes
+     every transition look uncovered and generates a case for each.
+     `engine._inventory_note` distinguishes 'no test sources' from 'test sources
+     that were never parsed'"
+  - "routes are resolved through declared clients (Feign @RequestLine). A test
+     writing its path as a bare literal has nothing to resolve against and is
+     reported unresolved rather than credited -- a wrong guess there excuses a
+     genuinely untested endpoint"

@@ -32,7 +32,7 @@ state to sit beside it would add a node that means the same thing.
 
 1. **The resource is keyed on the path, never the guard's variable name.** The
    guard is `t.isEmpty()` at 42 different endpoints, because it comes from one
-   shared helper in `athena-common`. Keying on `t` would fuse every resource in
+   shared helper in `records-common`. Keying on `t` would fuse every resource in
    the estate into one.
 2. **M-7: the unfolded condition is removed from the residual guard**, and every
    other condition is preserved verbatim.
@@ -112,7 +112,7 @@ def residual_guard(guard: str, remove: str) -> str:
 def resource_label(resource: str) -> str:
     """`/metric` -> `Metric`; `/tms/execution` -> `TmsExecution`.
 
-    **Every segment, not just the last.** athena has `/project/all`,
+    **Every segment, not just the last.** The pilot estate has `/project/all`,
     `/user/all`, `/version/all` and `/environment/all` in one service: keyed on
     the last segment all four become `All`, and fusing four distinct resources
     into one node asserts that a call to `/user/all` starts from the same

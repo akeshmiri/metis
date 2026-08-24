@@ -52,3 +52,9 @@ metis-server/.metis/runs/
 # machine that cases were published which never left it, and three-way drift
 # would then read a real manual edit as unchanged.
 *.published.json
+
+# Joern's scratch workspace. It writes one into the working directory whenever a
+# script runs, holding a copy of the CPG — binary, large, and reproducible from
+# the source it was built from. `code_analysis.engine` keeps the artefacts it
+# actually reuses under the target repo's .metis/cache/ instead.
+workspace/

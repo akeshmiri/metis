@@ -44,6 +44,47 @@ import java.io.PrintWriter
   def unquote(s: String): String = s.trim.stripPrefix("\"").stripSuffix("\"")
     .stripPrefix("'").stripSuffix("'")
 
+  // ---- 0. Selectors, resolved from the code that looks the element up ----
+  //
+  // **A selector is extracted, never authored and never guessed.** It was going
+  // to be a field somebody filled in by hand, which is the wrong source: a
+  // plain-DOM page names its elements in code —
+  // `const archiveButton = document.getElementById("archive")` — and that
+  // literal is structurally recoverable in a way a JSX prop is not.
+  //
+  // So the binding is followed: the receiver of `addEventListener` is a
+  // variable, and the assignment that defined it carries the selector.
+  //
+  // An element reached by walking the DOM
+  // (`rows.querySelector("tr").children[2].firstElementChild`) has **no**
+  // literal naming it, and the walk's own `"tr"` is emphatically not its
+  // selector. Those resolve to nothing and are reported, because a wrong
+  // selector in a generated Page Object fails at run time against the wrong
+  // element, which is worse than a stub that refuses to run.
+  val lookups = Set("getElementById", "querySelector", "querySelectorAll",
+                    "getElementsByClassName", "getElementsByName", "closest")
+
+  def selectorForm(call: io.shiftleft.codepropertygraph.generated.nodes.Call,
+                   raw: String): String =
+    if (call.name == "getElementById") "#" + raw
+    else if (call.name == "getElementsByClassName") "." + raw
+    else if (call.name == "getElementsByName") s"[name='$raw']"
+    else raw
+
+  // `variable -> selector`, and only where the assignment is a DIRECT lookup.
+  // A chained expression is excluded by requiring the lookup to be the whole
+  // right-hand side rather than a step inside it.
+  val selectorOf: Map[String, String] = cpg.assignment.l.flatMap { a =>
+    val target = a.target.code.trim
+    val source = a.source
+    val direct = source.start.isCall.l.filter(c => lookups.contains(c.name))
+      .filter(c => c.code.trim == source.code.trim)
+    direct.headOption.flatMap { c =>
+      c.argument.isLiteral.code.headOption.map(unquote).map(selectorForm(c, _))
+        .filter(_.nonEmpty).map(target -> _)
+    }
+  }.toMap
+
   // ---- 1. Triggers: addEventListener(<event>, <handler>) ----
   val registrations = cpg.call.nameExact("addEventListener").l
 
@@ -84,8 +125,17 @@ import java.io.PrintWriter
       else if (byName.nonEmpty) (byName, "named-handler")
       else (List.empty, "unresolved")
 
+    // The selector this receiver was bound to, or nothing. `selector_link`
+    // records which: a Page Object built on a guess fails against the wrong
+    // element, so "unresolved" has to be distinguishable from "not looked for".
+    val selector = selectorOf.getOrElse(receiver, "")
     triggerBuf += s"""{"id":"${esc(id)}","event":"${esc(event)}","link":"${esc(link)}",""" +
-      s""""element":"${esc(receiver)}","enclosing":"${esc(reg.method.name)}",""" +
+      s""""element":"${esc(receiver)}","selector":"${esc(selector)}",""" +
+      s""""selector_link":"${esc(
+        if (selector.nonEmpty) "dom-lookup"
+        else "unresolved: no literal lookup binds this element — it is reached " +
+             "by walking the DOM, so nothing in the code names it")}",""" +
+      s""""enclosing":"${esc(reg.method.name)}",""" +
       s""""anchor":${anchor(file, line)}}"""
 
     // ---- 2. Outcomes reachable from this handler ----

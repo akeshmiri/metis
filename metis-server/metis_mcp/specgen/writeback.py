@@ -3,7 +3,7 @@ Writing a generated specification back to the product repository (spec §18.4,
 T-15..T-21, SP-8).
 
 A specification that only lives in Métis is a specification the team does not
-read. The athena estate already practises spec-driven development with GitHub
+read. The the pilot estate estate already practises spec-driven development with GitHub
 Spec Kit, so the generated document belongs beside the ones people already open:
 `<repo>/.specify/specs/<feature>/spec.md`.
 
@@ -177,6 +177,29 @@ def apply(plan: WritePlan, confirmation=None) -> dict:
                             f"file(s), but this plan writes {plan.size}. Re-confirm "
                             f"against what is actually being written (T-19)"),
                 "withheld": list(plan.withheld)}
+
+    # **This writes into somebody else's repository**, which makes it an
+    # external write in exactly the sense publication is — the destination is
+    # not Métis. It carries the same confirmation type on purpose (T-20), so it
+    # gets the same second gate: a literal can be supplied by whatever is
+    # driving the run, including an agent, and only a deployment decision made
+    # out of band says this installation may touch a product tree at all.
+    #
+    # Checked after the confirmation and before the first file, so a forbidden
+    # installation writes nothing rather than part of a plan.
+    from metis_mcp.publishing.publish import (
+        EXTERNAL_WRITES_ENV, ExternalWritesDisabled, external_writes_allowed,
+    )
+
+    if not external_writes_allowed():
+        return {
+            "ok": False, "written": [],
+            "refused": (f"writing into a product repository is an external write, "
+                        f"and {EXTERNAL_WRITES_ENV} is not 'yes' on this "
+                        f"installation. The confirmation was given and is not "
+                        f"enough on its own. Nothing was written."),
+            "withheld": list(plan.withheld),
+        }
 
     written = []
     for target in plan.writable:

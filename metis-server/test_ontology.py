@@ -9,6 +9,7 @@ covers the two that are prose.
 Free to run: no Neo4j needed. Applying the DDL against a live instance is
 verified separately by test_ontology_live.py.
 """
+import ast
 import re
 import sys
 from pathlib import Path
@@ -25,7 +26,7 @@ from metis_mcp.ontology import (
     validate_update,
     wildcard_relationships,
 )
-from metis_mcp.ontology.labels import PROVENANCE_GRADES
+from metis_mcp.ontology.labels import PROVENANCE_GRADES, specialisations_of
 from metis_mcp.ontology.schema import (
     FILES,
     constraints_cypher,
@@ -53,10 +54,18 @@ def test_the_label_set_is_closed_and_each_label_is_argued():
     can say what it was derived from. §8.7 staged four of them for exactly this
     and D-11 calls that list a staging plan.
 
-    **Read this before adding the fifty-sixth.** D-1 opens by saying the previous
+    The fifty-sixth is `NeedReview`, and it is a different kind of label: a
+    marker carried alongside a node's real one rather than a thing in the world.
+    It earns its place on the single question `lifecycle_state` cannot answer —
+    "everything awaiting a decision, across every label" — and it is kept in
+    step with that property by `test_the_marker_cannot_disagree_with_lifecycle`
+    below, because a second representation of one fact is only safe while
+    something proves they agree.
+
+    **Read this before adding the fifty-seventh.** D-1 opens by saying the previous
     ontology carried ~45 labels where this application needed twelve, and that
     keeping the rest "would advertise capability that does not exist — the precise
-    failure this specification corrects". The count is 45 again.
+    failure this specification corrects". The count is past that again.
 
     That is not automatically the same mistake. Every label added since carries a
     named writer and a named reader, which the original thirty-three did not, and
@@ -66,10 +75,50 @@ def test_the_label_set_is_closed_and_each_label_is_argued():
     test enforces: name the writer, name the reader, and if either is "a file
     somebody will write one day", stage it in §8.7 instead.
     """
-    assert len(KNOWN_LABELS) == 55, (
-        f"the ontology is fifty-five labels (spec D-1); found {len(KNOWN_LABELS)}: "
+    assert len(KNOWN_LABELS) == 61, (
+        f"the ontology is sixty-one labels (spec D-1); found {len(KNOWN_LABELS)}: "
         f"{sorted(KNOWN_LABELS)}. Adding one requires naming its writer and its "
         f"reader, not just its purpose."
+    )
+
+
+# The tens-and-units words the module docstring could plausibly use for a count.
+# Written out rather than computed: three lines of table beat a spelling engine
+# nobody else needs.
+_TENS = {2: "twenty", 3: "thirty", 4: "forty", 5: "fifty", 6: "sixty"}
+_UNITS = {0: "", 1: "-one", 2: "-two", 3: "-three", 4: "-four", 5: "-five",
+          6: "-six", 7: "-seven", 8: "-eight", 9: "-nine"}
+_COUNT_WORD = re.compile(
+    r"\b(?:twenty|thirty|forty|fifty|sixty)(?:-(?:one|two|three|four|five|six|"
+    r"seven|eight|nine))?\b", re.IGNORECASE)
+
+
+def _spelled(n: int) -> str:
+    return _TENS[n // 10] + _UNITS[n % 10]
+
+
+def test_the_module_docstring_states_the_real_count():
+    """`labels.py`'s own docstring says it is checked here. It was not.
+
+    The docstring claimed fifty-two while the module carried fifty-five, and the
+    test above did not catch it because it pins the *number*, not the prose that
+    describes it. A docstring asserting it is verified, which nothing verifies, is
+    the silent success this repo hunts for: the reader trusts it precisely because
+    of the claim.
+
+    Every tens-word in the docstring must therefore be the real count. If a future
+    edit legitimately mentions a different one -- "the v1 ontology carried
+    forty-five" -- that sentence needs rewording or this test needs a narrower
+    scope, and either is a decision worth making deliberately.
+    """
+    from metis_mcp.ontology import labels
+
+    expected = _spelled(len(KNOWN_LABELS))
+    found = {m.group(0).lower() for m in _COUNT_WORD.finditer(labels.__doc__ or "")}
+    assert found == {expected}, (
+        f"the module docstring names {sorted(found) or 'no count'} where the "
+        f"ontology has {len(KNOWN_LABELS)} labels ({expected}). The docstring "
+        f"says it is checked against the module by this test -- keep that true."
     )
 
 
@@ -80,7 +129,21 @@ EVIDENCE_LAYER = {
     "Endpoint": ("raw_landing", "Transition-[:DERIVED_FROM]->"),
     "Parameter": ("raw_landing", "Transition-[:EXERCISES]->"),
     "Class": ("raw_landing", "Parameter-[:OF_TYPE]-> and Transition-[:EXPECTS]->"),
-    "Field": ("raw_landing", "Transition-[:REQUIRES]->"),
+    # A specialisation of Class, so it is reached by the same edges — which is
+    # exactly why every one of them must be matched with
+    # `label_expression("Class")`. Its reader is also `Field-[:OF_TYPE]->`, the
+    # nested-payload edge: a field of an enum type is how a test case learns its
+    # value space is closed and enumerable rather than needing a boundary
+    # analysis.
+    "Enum": ("raw_landing", "Field-[:OF_TYPE]-> and Parameter-[:OF_TYPE]->"),
+    # X-19a. Written as its dialect (`Postgres`/`Oracle`/`MySql`/`JpaQuery`), so
+    # every one of these is reached through `label_expression("Query")`. The
+    # reader is what makes a table reachable from a transition at all.
+    "Query": ("code_analysis.jpa via raw_landing",
+              "Method-[:ISSUES]-> and Query-[:QUERIES]->Table"),
+    # `Field` was here until X-6d. A field is a property of its type now, and
+    # `Transition-[:REQUIRES]->Class` names the type whose constraints a case
+    # must satisfy — see STAGED_OUT for what would bring the label back.
     "Method": ("raw_landing", "Endpoint-[:HANDLED_BY]->"),
     "DeclaredOutcome": ("raw_landing", "Transition-[:DERIVED_FROM]->"),
     "Check": ("raw_landing", "Transition-[:CONSTRAINED_BY]->"),
@@ -113,8 +176,15 @@ def test_every_evidence_label_participates_in_the_catalogue():
     would mean inventing an edge to satisfy a test. What must never happen is a
     label that appears in no relationship at all.
     """
-    used = {r.to_label for r in ALLOWED_RELATIONSHIPS}
-    used |= {r.from_label for r in ALLOWED_RELATIONSHIPS}
+    # **Specialisations participate through their parent's edges**, because that
+    # is what `is_allowed` does: it walks the specialisation chain. Reading the
+    # catalogue literally said `Enum` appears in no relationship at all, while
+    # `is_allowed("Field", "OF_TYPE", "Enum")` was True — the test and the
+    # function would have disagreed about the same ontology.
+    used = set()
+    for r in ALLOWED_RELATIONSHIPS:
+        used |= set(specialisations_of(r.to_label))
+        used |= set(specialisations_of(r.from_label))
     for label in EVIDENCE_LAYER:
         assert label in KNOWN_LABELS, f"{label} is claimed but not declared"
         assert label in used, (
@@ -125,9 +195,14 @@ def test_every_evidence_label_participates_in_the_catalogue():
 # What the control flow must be able to reach. `Route` and the call graph are
 # reached from their own layer (Route -> Page, Endpoint -> Method), not from a
 # transition, so they are deliberately absent.
+#
+# `Field` was here until X-6d. A field is a property of its type now, so the
+# thing a transition must reach is the TYPE — `Transition-[:REQUIRES]->Class` —
+# and the field detail travels on it. Dropping the entry without repointing
+# REQUIRES would have removed the requirement rather than restated it.
 REACHED_FROM_TRANSITION = {
     "Endpoint", "DeclaredOutcome", "ExceptionMapping",
-    "Parameter", "Field", "Class", "Check",
+    "Parameter", "Class", "Check",
 }
 
 
@@ -417,3 +492,199 @@ def test_episode_is_reachable_by_property_and_that_is_the_decision():
         assert f"FOR (n:{label}) ON (n.source_episode_id)" in cypher, (
             f"{label} does not index the provenance property, so reaching its "
             f"Episode is a full scan")
+
+
+def test_a_semicolon_inside_a_comment_does_not_eat_the_next_statement():
+    """The generated schema contains one, and it cost three uniqueness constraints.
+
+    `Episode`'s purpose line is "Immutable record of one ingested unit;
+    everything derived points here". Splitting on `;` before stripping `//`
+    lines cut inside that comment, orphaned its tail, and glued the prose onto
+    the following `CREATE CONSTRAINT` — which Neo4j then refused. The database
+    came up missing `episode_id_unique`, `jira_item_id_unique`, `page_id_unique`
+    and `rel_c_o_v_e_r_s_sequence`, and nothing said so.
+    """
+    text = (
+        "// Immutable record of one ingested unit; everything derived points here\n"
+        "CREATE CONSTRAINT episode_id_unique IF NOT EXISTS "
+        "FOR (n:Episode) REQUIRE n.id IS UNIQUE;\n"
+        "// another; comment\n"
+        "CREATE INDEX page_component IF NOT EXISTS FOR (n:Page) ON (n.component);\n"
+    )
+    out = statements(text)
+    assert len(out) == 2, out
+    assert out[0].startswith("CREATE CONSTRAINT episode_id_unique")
+    assert out[1].startswith("CREATE INDEX page_component")
+    assert not any("derived points here" in s for s in out)
+
+
+def test_every_generated_statement_is_one_create():
+    """The real files, not a fixture: no chunk may carry stray prose.
+
+    A statement that does not begin with CREATE is the signature of the split
+    above, whatever produced it.
+    """
+    for generator in FILES.values():
+        for stmt in statements(generator()):
+            assert stmt.startswith("CREATE "), stmt[:120]
+
+
+def test_the_marker_cannot_disagree_with_lifecycle():
+    """`NeedReview` is derived from `lifecycle_state`, never independent of it.
+
+    Two representations of one fact is where most of this codebase's real
+    defects have come from, so the second one is only safe while something
+    proves it agrees with the first. This is that proof for the planning half;
+    `test_landing.py` covers the write, and the removal on decision is covered
+    where the decision is recorded.
+    """
+    from metis_mcp.model_sources.landing import PlannedNode, _with_marker
+    from metis_mcp.ontology.labels import (
+        LIFECYCLE_STATES, NEED_REVIEW, NEEDS_REVIEW_STATES,
+    )
+
+    node = PlannedNode(label="State", properties={})
+    for state in LIFECYCLE_STATES:
+        marked = NEED_REVIEW in _with_marker(node, {"lifecycle_state": state})
+        assert marked == (state in NEEDS_REVIEW_STATES), (
+            f"{state}: marker={marked}, but NEEDS_REVIEW_STATES says "
+            f"{state in NEEDS_REVIEW_STATES}")
+
+    # A node with no lifecycle at all is a FACT, not a candidate. An Endpoint or
+    # an Episode is not reviewed, and marking one would put evidence in a queue
+    # nobody can clear.
+    assert NEED_REVIEW not in _with_marker(node, {})
+
+    # And it never displaces a label the node already carries.
+    both = _with_marker(PlannedNode(label="Component", properties={}, also=("Cached",)),
+                        {"lifecycle_state": "Quarantine"})
+    assert "Cached" in both and NEED_REVIEW in both
+
+
+def test_the_marker_carries_no_properties_of_its_own():
+    """A marker that accreted properties would become a second place to look."""
+    from metis_mcp.ontology.labels import LABELS, NEED_REVIEW
+
+    spec = LABELS[NEED_REVIEW]
+    assert spec.required == (), "the node's real label carries its properties"
+    assert spec.enums == {}
+    assert not spec.is_specialisation, (
+        "a specialisation REPLACES its parent; this is carried alongside one")
+
+
+def test_relationships_with_no_writer_are_named_as_such():
+    """D-1 wants a named writer AND a named reader for everything catalogued.
+
+    Three relationships have neither: `LINKS_TO` (Jira issue links, which
+    `intake_landing` would write), and `ON_EVENT`/`RENDERS` (the UI surface,
+    whose packs are declared `status: unwired`). They stay in the catalogue
+    because each has a real intended writer — but a gap nobody has written down
+    is a gap somebody rediscovers, so this asserts the comment is there.
+
+    When a writer appears, delete its name from here and from the comment.
+    """
+    source = Path("metis_mcp/ontology/labels.py").read_text()
+    for rel, why in (("LINKS_TO", "written by nothing"),
+                     ("ON_EVENT", "nothing writes either"),
+                     ("RENDERS", "nothing writes either")):
+        assert rel in source
+    assert "Catalogued, written by nothing" in source
+    assert "status: unwired" in source
+
+
+# ---------------------------------------------------------------------------
+# Cypher may not name a label the ontology does not have (D-2, fifth place)
+# ---------------------------------------------------------------------------
+#
+# The bug this exists for: staging out `Field` (X-6d) left
+# `(t)-[:REQUIRES]->(f:Field)` in `read.py`. It stayed valid Cypher, matched
+# nothing, and returned an empty list -- so `get_transition` reported a payload
+# of no fields for every transition that had one. Nothing failed. It was found by
+# calling the tool, which is the expensive way.
+#
+# D-2 already requires four places to agree when the ontology changes. Cypher
+# written by hand is the fifth, and it is the one no generator covers.
+
+_NODE_PATTERN = re.compile(r"\(\s*\w*\s*:\s*([A-Za-z_|`\s]+?)\s*[){]")
+_IS_CYPHER = re.compile(r"\b(MATCH|MERGE|CREATE|OPTIONAL MATCH)\b")
+
+
+def _labels_in_cypher(text: str) -> set[str]:
+    """Node labels named by a Cypher string.
+
+    Node patterns only: `-[:REQUIRES]->` is a relationship type and lives in a
+    different namespace, so anchoring on `(` is what keeps the two apart.
+    """
+    out: set[str] = set()
+    for match in _NODE_PATTERN.finditer(text):
+        for token in match.group(1).split("|"):
+            token = token.strip().strip("`")
+            if token.isidentifier() and token[:1].isupper():
+                out.add(token)
+    return out
+
+
+def _cypher_strings():
+    """`(path, lineno, text)` for every string literal that looks like Cypher."""
+    roots = (Path("metis_mcp"), Path("code_analysis"))
+    for root in roots:
+        for path in sorted(root.rglob("*.py")):
+            if path.name == "labels.py":
+                continue          # the source of truth, not a consumer of it
+            try:
+                tree = ast.parse(path.read_text())
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                if (isinstance(node, ast.Constant)
+                        and isinstance(node.value, str)
+                        and _IS_CYPHER.search(node.value)):
+                    yield path, node.lineno, node.value
+
+
+def test_the_label_scanner_reads_node_labels_and_not_relationship_types():
+    """**The guard's own guard.**
+
+    A scan that finds nothing is indistinguishable from a scan that cannot see,
+    and this session has already shipped two guards that passed with their fix
+    reverted. So the extractor is asserted against the exact shape of the bug it
+    was written for before it is trusted to report on the tree.
+    """
+    sample = ("MATCH (t:Transition|ApiCall)-[:REQUIRES]->(f:Field) "
+              "OPTIONAL MATCH (t)-[:GUARDED_BY]->(c:Check {order: 1}) "
+              "MERGE (:Episode)")
+    assert _labels_in_cypher(sample) == {
+        "Transition", "ApiCall", "Field", "Check", "Episode"}, (
+        "the extractor must see specialisations, staged-out labels and "
+        "map-suffixed patterns")
+    assert "REQUIRES" not in _labels_in_cypher(sample), "relationship type"
+    assert "GUARDED_BY" not in _labels_in_cypher(sample), "relationship type"
+
+
+def test_the_scanner_finds_the_cypher_that_is_actually_in_the_tree():
+    """And that it is pointed at something. An empty corpus passes anything."""
+    seen = list(_cypher_strings())
+    assert len(seen) > 20, f"only {len(seen)} Cypher strings found — scan is wrong"
+    assert any(_labels_in_cypher(text) for _, _, text in seen)
+
+
+def test_no_cypher_names_a_label_the_ontology_does_not_have():
+    """Staging a label out must break every query that names it, loudly.
+
+    A staged-out label is the interesting failure: `Field` was removed
+    deliberately and correctly, and the cost was a query that silently matched
+    nothing for weeks. `STAGED_OUT` is therefore *not* accepted here — it is the
+    set most likely to be left behind.
+    """
+    offences = []
+    for path, lineno, text in _cypher_strings():
+        for label in sorted(_labels_in_cypher(text)):
+            if label in LABELS:
+                continue
+            why = ("staged out — see STAGED_OUT" if label in STAGED_OUT
+                   else "not in the ontology")
+            offences.append(f"{path}:{lineno} names :{label} ({why})")
+    assert not offences, (
+        "Cypher names labels the ontology does not have. A query naming a "
+        "label that no longer exists is valid Cypher that matches nothing:\n  "
+        + "\n  ".join(offences))

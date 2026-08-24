@@ -36,7 +36,7 @@ def _report(**overrides) -> ExtractionReport:
     report = ExtractionReport(
         pack="jvm-structural", pack_version="0.1.0",
         engine="joern", engine_version="4.0.604",
-        repo="athena-boot-git", commit=COMMIT, frontend="javasrc2cpg",
+        repo="archive-service", commit=COMMIT, frontend="javasrc2cpg",
         layers=(1, 2, 3),
         methods=[
             MethodFact("m1", "login", "AuthController", "(String,String):Response", _anchor()),
@@ -272,3 +272,80 @@ if __name__ == "__main__":
             print(f"ERROR {t.__name__}: {type(e).__name__}: {e}")
     print(f"\n{len(tests) - failures}/{len(tests)} passed")
     sys.exit(1 if failures else 0)
+
+
+def test_the_schema_role_carries_documentation_and_two_facts_that_are_not():
+    """springdoc's `@Schema`, through the annotation table's `schema` role.
+
+    71 of these in one service and not one read: `Class.description` was null on
+    every node while the text sat in the source. Two of the fields are not
+    documentation at all — `required` and `allowed_values` are test-design
+    inputs, because an enum's values ARE its equivalence partitions.
+    """
+    from code_analysis.contract import MemberFact
+
+    member = MemberFact(
+        type_name="RecordDto", name="channel", type_full_name="java.lang.String",
+        anchor=None, description="Delivery channel", required="true",
+        allowed_values=("SMS", "VOICE"), owner_description="An RECORDS request")
+    assert member.description == "Delivery channel"
+    assert member.allowed_values == ("SMS", "VOICE")
+
+
+def test_required_keeps_three_answers_not_two():
+    """"Not stated" and "stated optional" are different facts about a payload.
+
+    A boolean would collapse them, and a fixture built from the collapse would
+    omit a field the API in fact requires.
+    """
+    from code_analysis.contract import MemberFact
+
+    for raw, meaning in (("true", "stated required"), ("false", "stated optional"),
+                         ("", "not stated")):
+        m = MemberFact(type_name="T", name="f", type_full_name="java.lang.String",
+                       anchor=None, required=raw)
+        assert m.required == raw, meaning
+
+
+def test_only_present_schema_facts_are_written():
+    """An empty description stored as "" is a property every reader must test
+    for. Absent says the same thing once."""
+    from metis_mcp.model_sources.raw_landing import _present
+
+    assert _present(description="x", required="") == {"description": "x"}
+    assert _present(description="", required="") == {}
+
+
+# --------------------------------------------------------------------------
+# The manifests themselves
+# --------------------------------------------------------------------------
+
+def test_every_pack_manifest_is_valid_yaml_and_declares_its_pin():
+    """**`react-ui/pack.yaml` was not valid YAML and nothing noticed** — a
+    `known_limits` entry contained `\\'` inside a double-quoted scalar, which is an
+    illegal escape. It went unseen because nothing parses these files: X-3's pin
+    is read with a text scan, so a manifest can say anything at all and still
+    appear to work. A file whose job is to record a claim has to be readable.
+    """
+    import yaml
+
+    manifests = sorted(Path("code_analysis/packs").glob("*/pack.yaml"))
+    assert len(manifests) == 5, "every pack carries one (X-3 pins per pack)"
+    for path in manifests:
+        data = yaml.safe_load(path.read_text())
+        assert data["engine"]["version"], path
+        assert data["status"] in {"working", "unwired", "scaffold"}, path
+        assert data.get("verified_against"), f"{path}: an unverified pack claims nothing"
+
+
+def test_no_manifest_names_a_private_repository():
+    """A pack's claim has to be re-checkable by whoever reads it. Five manifests
+    named five repositories a customer will never have, so every correctness claim
+    in the extraction layer was unfalsifiable prose."""
+    import yaml
+
+    for path in sorted(Path("code_analysis/packs").glob("*/pack.yaml")):
+        blob = yaml.safe_load(path.read_text())
+        verified = str(blob.get("verified_against", ""))
+        assert "demo_project" in verified, (
+            f"{path}: verified_against must name the checked-in corpus")

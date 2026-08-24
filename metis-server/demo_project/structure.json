@@ -1,0 +1,169 @@
+{
+  "structure_version": "metis.structure/1",
+
+  "_notes": [
+    "The authored half of the demo corpus (spec §5.2a, §5.2b).",
+    "It is authored, not extracted, because no pack can recover a selector or",
+    "tell a library <DataGrid> from a hand-rolled <div role=\"table\">. That is",
+    "the limit a Page Object generator inherits, and it is a design decision",
+    "rather than a gap to engineer around.",
+    "",
+    "Selectors are NOT here. They are extracted from the page's own code —",
+    "`document.getElementById(\"archive\")` is a literal `js-ui` reads — so this",
+    "file says what is on a page and the code says how to find it."
+  ],
+
+  "pages": {
+    "records-list": [
+      {
+        "id": "rl-menu",
+        "kind": "Menu",
+        "name": "Main menu",
+        "contains": [
+          {
+            "id": "rl-nav-new",
+            "kind": "Navigation",
+            "name": "New record",
+            "navigates_to": "record-detail"
+          }
+        ]
+      },
+      {
+        "id": "rl-filter",
+        "kind": "Form",
+        "name": "Filter records",
+        "contains": [
+          {
+            "id": "rl-apply",
+            "kind": "Action",
+            "name": "Apply filter",
+            "on_event": "rl-apply-click"
+          },
+          {
+            "id": "rl-apply-click",
+            "kind": "Event",
+            "name": "click"
+          }
+        ]
+      },
+      {
+        "id": "rl-table",
+        "kind": "UiTable",
+        "name": "Records table",
+        "contains": [
+          {
+            "id": "rl-row",
+            "kind": "Row",
+            "name": "Record row",
+            "contains": [
+              {
+                "id": "rl-archive",
+                "kind": "Action",
+                "name": "Archive",
+                "on_event": "rl-archive-click"
+              },
+              {
+                "id": "rl-archive-click",
+                "kind": "Event",
+                "name": "click"
+              },
+              {
+                "id": "rl-export",
+                "kind": "Action",
+                "name": "Export",
+                "on_event": "rl-export-click"
+              },
+              {
+                "id": "rl-export-click",
+                "kind": "Event",
+                "name": "click"
+              }
+            ]
+          },
+          {
+            "id": "rl-pager",
+            "kind": "Pagination",
+            "name": "Pager"
+          },
+          {
+            "id": "rl-sort-title",
+            "kind": "Sort",
+            "name": "Sort by title"
+          }
+        ]
+      }
+    ],
+
+    "record-detail": [
+      {
+        "id": "rd-form",
+        "kind": "Form",
+        "name": "Record form",
+        "contains": [
+          {
+            "id": "rd-save",
+            "kind": "Action",
+            "name": "Save",
+            "on_event": "rd-save-click"
+          },
+          {
+            "id": "rd-save-click",
+            "kind": "Event",
+            "name": "click"
+          },
+          {
+            "id": "rd-back",
+            "kind": "Navigation",
+            "name": "Back to list",
+            "navigates_to": "records-list"
+          }
+        ]
+      }
+    ]
+  },
+
+  "datasources": [
+    {
+      "id": "ds-records",
+      "name": "records-store",
+      "dialect": "postgresql",
+      "database": "db-records"
+    }
+  ],
+
+  "databases": [
+    {
+      "id": "db-records",
+      "name": "records",
+      "schemas": [
+        {
+          "id": "sch-public",
+          "name": "public",
+          "objects": [
+            {
+              "id": "tbl-record",
+              "kind": "Table",
+              "name": "record",
+              "columns": [
+                {"name": "id", "data_type": "uuid", "constraints": ["PRIMARY KEY"]},
+                {"name": "title", "data_type": "varchar(120)", "constraints": ["NOT NULL"]},
+                {"name": "owner", "data_type": "varchar(120)", "constraints": ["NOT NULL"]},
+                {"name": "visibility", "data_type": "varchar(16)"},
+                {"name": "archived", "data_type": "boolean", "constraints": ["NOT NULL"]}
+              ]
+            },
+            {
+              "id": "tbl-record-tag",
+              "kind": "Table",
+              "name": "record_tag",
+              "columns": [
+                {"name": "record_id", "data_type": "uuid", "constraints": ["NOT NULL"]},
+                {"name": "tag", "data_type": "varchar(40)", "constraints": ["NOT NULL"]}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

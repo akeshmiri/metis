@@ -2,7 +2,7 @@
 Drafting acceptance criteria from an extracted model (spec §4.5, S-19; R5).
 
 **The problem this exists for.** A real estate frequently has no acceptance
-criteria at all. The athena estate has 145 API transitions and 8 criteria that
+criteria at all. The the pilot estate estate has 145 API transitions and 8 criteria that
 validate anything — and even those were written after the code. S-3 says a
 deployment running only code extraction gets coverage, not correctness, so
 without criteria the chain stops permanently at coverage.
@@ -13,7 +13,7 @@ the right starting point: it is far easier to disagree with a sentence than to
 compose one from a blank page.
 
 **The trap, and the rule that defuses it.** A criterion written from the code,
-used to check the code, can only ever report agreement. §4.1 says so; athena
+used to check the code, can only ever report agreement. §4.1 says so; the pilot estate
 demonstrates it. So every draft this module produces is stamped `CODE_DERIVED`,
 and S-19 keeps that grade out of every correctness claim until a **human edits or
 affirms it**. The draft is a prompt for disagreement, not evidence.

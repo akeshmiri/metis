@@ -29,12 +29,12 @@
   ],
   "connectors": {
     "application_code": {
-      "athena": {
+      "reporting": {
         "host": "localhost",
         "port": 5432,
-        "dbname": "athena",
-        "user": "athena",
-        "password_env": "METIS_ATHENA_PASSWORD"
+        "dbname": "reporting",
+        "user": "reporting",
+        "password_env": "METIS_REPORTING_PASSWORD"
       }
     }
   },

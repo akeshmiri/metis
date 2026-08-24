@@ -57,8 +57,8 @@ INPUT = "input"
 def input_condition(param: dict) -> str:
     """One parameter, as a CONDITION on the data (spec M-9, T-9c).
 
-    `body.metricDto is a required MetricDto` states what the fixture must
-    satisfy. It deliberately stops there: constructing a MetricDto is solving the
+    `body.metricDto is a required RecordDto` states what the fixture must
+    satisfy. It deliberately stops there: constructing a RecordDto is solving the
     condition, and solving conditions to concrete data is out of scope (§12).
     Anything that looks like a value here would be Métis inventing test data.
     """

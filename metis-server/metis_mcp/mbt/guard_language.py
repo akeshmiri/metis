@@ -106,7 +106,7 @@ def decode_atom(atom: str, resource: str = "") -> str:
     `resource` is the noun the presence idiom is about, established from the
     endpoint's path -- never from the guard's own variable, which is `t` at 42
     different endpoints because it comes from one shared helper in
-    `athena-common`. Keying on the variable would call every resource in the
+    `records-common`. Keying on the variable would call every resource in the
     estate the same thing, which is the mistake `unfolding.resource_of` exists
     to avoid.
     """

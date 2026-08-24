@@ -91,9 +91,9 @@ _WORD = re.compile(r"[^A-Za-z0-9]+")
 
 # Statuses that carry no body, per RFC 9110. The handler's declared return type
 # is what it *can* return, not what THIS path returns: `getActionById` declares
-# `ResponseEntity<MetricDto>` and its 204 branch sends nothing at all. Copying
+# `ResponseEntity<RecordDto>` and its 204 branch sends nothing at all. Copying
 # the declared type onto the 204 would tell a generated test to assert a
-# `MetricDto` the caller never receives — a wrong assertion, not a vague one.
+# `RecordDto` the caller never receives — a wrong assertion, not a vague one.
 BODYLESS_STATUSES = frozenset({204, 304}) | frozenset(range(100, 200))
 
 
@@ -130,20 +130,39 @@ def outcome_state_for(endpoint: dict | None, status: int, discriminator: str) ->
     situations and a later GET tells them apart, so merging them on the response
     alone erased a distinction the surface really does expose.
 
-    Named from the handler -- `EnvironmentController.getById` + 200 ->
-    `EnvironmentGetByIdOk200` -- which is X-7's tier 2, a code convention rather
-    than an invention. The controller prefix is load-bearing, not decoration:
-    `save`, `getById` and `getAll` recur in every controller in a service, so
-    the method name alone would fuse `ProjectController.save`'s outcome with
-    `UserController.save`'s.
+    **Named from the ROUTE, because that is what two intakes agree on** (I-2).
+    It was named from the handler — `EnvironmentController.getById` + 200 ->
+    `EnvironmentGetByIdOk200` — and every ingredient of that is representation:
+    the controller class, the method name, and the discriminator the pack chose.
+    Describe the same service twice and none of them survives. Measured on the
+    demo corpus, `GET /record/page` -> 200:
+
+        code intake     RecordPageOk200
+        OpenAPI intake  DefaultPageRecordsAPageOfRecords200
+
+    One endpoint, two nodes, and the graph then says the service has twice the
+    behaviour it has. The route and the status are the observable facts both
+    carry, so `GetRecordPage200` is what both produce.
+
+    The prefix stays load-bearing for the reason it always was — `save`,
+    `getById` and `getAll` recur in every controller — and the route separates
+    them at least as well: `POST /project` and `POST /user` are different routes
+    before they are different methods.
+
+    The **verb** is part of it because a state is the situation the system is
+    left in, not the bytes on the wire: after `PUT /record/{id}` the record is
+    changed and after `GET /record/{id}` it is not, and both answer 200.
+
+    `discriminator` survives only as the fallback when no endpoint is known,
+    which is the one case where there is no route to name.
     """
-    label = state_name(status, discriminator)
     if not endpoint:
-        return label
-    owner = (endpoint.get("handler_type") or "").removesuffix("Controller")
-    handler = endpoint.get("handler_name") or ""
-    prefix = "".join(p[:1].upper() + p[1:] for p in (owner, handler) if p)
-    return f"{prefix}{label}" if prefix else label
+        return state_name(status, discriminator)
+    verb = (endpoint.get("http_method") or "").lower()
+    path = endpoint.get("path") or ""
+    parts = [p for p in _WORD.split(f"{verb} {path}") if p and not p.startswith("{")]
+    label = "".join(p[:1].upper() + p[1:] for p in parts) or "Outcome"
+    return f"{label}{status}"
 
 
 @dataclass(frozen=True)
@@ -171,6 +190,9 @@ class Rejection:
     # points AT, rather than quotes.
     fields: tuple = ()
     exception_ref: str = ""
+    # The body this rejection actually returns, from the exception handler's own
+    # return type. "" means no claim is made — not "no body".
+    response_body: str = ""
 
 
 def _plan_rejections(behaviour: ExtractionReport, endpoint_by_handler: dict,
@@ -230,6 +252,67 @@ def _plan_rejections(behaviour: ExtractionReport, endpoint_by_handler: dict,
         if o.discriminator == "declared" and getattr(o, "anchor", None)
     }
 
+    # **A controller's own `@ExceptionHandler` is a declared rejection for its
+    # endpoints.** Spring scopes an in-controller handler to that controller, so
+    # `@ExceptionHandler(RecordConflictException)` returning 400 in
+    # `RecordController` means every endpoint on that controller can answer
+    # 400. Nothing else says so: demo_project/records-service annotates only `@ApiResponse(200)`,
+    # so `declared` held no rejection at all and the service modelled as twelve
+    # transitions and no error path whatever.
+    #
+    # Scoped to the DECLARING class, never estate-wide. A `@ControllerAdvice`
+    # bean applies globally and is a different claim; attributing one
+    # controller's handler to every endpoint would invent rejections that cannot
+    # occur, which is worse than missing them.
+    declared = {k: set(v) for k, v in declared.items()}
+    scoped = 0
+    # `endpoint_id -> [(exception, advice)]`, so a scoped rejection can name its
+    # cause instead of falling back to the anonymous `NOT (request_accepted)`.
+    # "RecordConflictException is thrown" is a setup a tester can build;
+    # "the request was not accepted" is not.
+    scoped_cause: dict[str, list] = {}
+    # An `@ControllerAdvice` bean applies to every controller, so nothing in the
+    # annotations says which endpoints can reach its throw. Those mappings are
+    # therefore not attributed -- but they were *extracted*, and dropping them
+    # without a word is how a recovered 404 disappears between two stages while
+    # both report success. Collected here and reported below.
+    unattributed: list[tuple[str, int, str]] = []
+    for fact in list(getattr(structural, "exception_mappings", ()) or ()):
+        advice = getattr(fact, "advice_type", "")
+        status = getattr(fact, "status", None)
+        if not advice or status is None or 200 <= status < 300:
+            continue
+        if not any(e.get("handler_type") == advice
+                   for e in endpoint_by_handler.values()):
+            unattributed.append(
+                (getattr(fact, "exception_type", ""), status, advice))
+        for handler, endpoint in endpoint_by_handler.items():
+            if endpoint.get("handler_type") != advice:
+                continue
+            for outcome_id in (o.endpoint_id for o in behaviour.outcomes
+                               if o.endpoint_id.rsplit("::", 1)[0] == handler):
+                if status not in declared.get(outcome_id, set()):
+                    declared.setdefault(outcome_id, set()).add(status)
+                    scoped += 1
+                scoped_cause.setdefault(outcome_id, []).append(
+                    (getattr(fact, "exception_type", ""), advice,
+                     getattr(fact, "response_body", "")))
+    for exception, status, advice in sorted(set(unattributed)):
+        result.findings.append(
+            f"{exception} -> {status} is declared by {advice}, which is an "
+            f"estate-wide @ControllerAdvice: it applies to every controller, so "
+            f"nothing here says which endpoints can reach the throw. The mapping "
+            f"is recovered and NOT modelled as a transition — attributing it to "
+            f"all of them would invent rejections that cannot occur. An "
+            f"acceptance criterion naming the endpoint would settle it")
+    if scoped:
+        result.findings.append(
+            f"{scoped} rejection(s) attributed from in-controller "
+            f"@ExceptionHandler scope — Spring applies a controller's own "
+            f"handler to its own endpoints. Weigh them: the handler exists, and "
+            f"whether a given endpoint can reach the throw is not established "
+            f"here")
+
     planned: dict[str, Rejection] = {}
     for endpoint_id in sorted(declared):
         rejected = sorted(s for s in declared[endpoint_id]
@@ -274,7 +357,42 @@ def _plan_rejections(behaviour: ExtractionReport, endpoint_by_handler: dict,
                 f"is real; its setup is not yet specific enough to build a fixture "
                 f"from, and an acceptance criterion can sharpen it")
 
-        exception_ref = ""
+        # A scoped rejection knows its cause where exactly one exception in the
+        # controller produces this status. Two would mean guessing which, and
+        # GD-9 refuses that — the generic precondition stays and says so.
+        expression = recovery.rejection_expression()
+        causes = {c for c, _, _ in scoped_cause.get(endpoint_id, ())
+                  if c and c != BEAN_VALIDATION_EXCEPTION}
+        # **The rejection's body is the HANDLER's return type, not the
+        # endpoint's.** A 400 built by `handleX` returning
+        # `ResponseEntity<ErrorDto>` has that body; taking the
+        # endpoint's success type would be wrong, and taking nothing is worse —
+        # landing documents an empty `response_body` as meaning NO body, so a
+        # generated case asserted an empty payload against a populated one.
+        #
+        # Where the handlers disagree, no claim is made rather than picking.
+        scoped_bodies = {b for _, _, b in scoped_cause.get(endpoint_id, ()) if b}
+        rejection_body = scoped_bodies.pop() if len(scoped_bodies) == 1 else ""
+        scoped_ref = ""
+        if not recovery.has_validation and causes:
+            if len(causes) == 1:
+                cause = next(iter(causes))
+                expression = f"{cause} is thrown"
+                advice = next(a for c, a, _ in scoped_cause[endpoint_id]
+                              if c == cause)
+                from metis_mcp.model_sources.raw_landing import mapping_id
+
+                scoped_ref = mapping_id(getattr(structural, "repo", "") or "repo",
+                                        cause, advice)
+                claim = "advice-scope"
+            else:
+                result.findings.append(
+                    f"{endpoint_id}: {len(causes)} exceptions in this controller "
+                    f"produce {status} ({', '.join(sorted(causes))}); which one a "
+                    f"given call raises is not statically decidable, so the "
+                    f"precondition stays generic (GD-9)")
+
+        exception_ref = scoped_ref
         if recovery.has_validation:
             from metis_mcp.model_sources.raw_landing import mapping_id
             advice = next((m.advice_type for m in
@@ -286,13 +404,13 @@ def _plan_rejections(behaviour: ExtractionReport, endpoint_by_handler: dict,
         planned[endpoint_id] = Rejection(
             endpoint_id=endpoint_id,
             trigger=f"{endpoint['http_method']} {endpoint['path']}",
-            status=status, expression=recovery.rejection_expression(),
+            status=status, expression=expression,
             claim=claim, anchor=anchor, constraints=recovery.constraints,
             inputs=tuple(endpoint.get("parameters", ())),
             security=tuple(endpoint.get("security", ())),
             media_types=tuple(endpoint.get("produces", ())),
             endpoint=endpoint, fields=recovery.fields,
-            exception_ref=exception_ref)
+            exception_ref=exception_ref, response_body=rejection_body)
 
     return planned
 
@@ -467,8 +585,17 @@ def synthesise(behaviour: ExtractionReport, endpoints: list[dict],
                                    rejection=rejection, declared=known_types,
                                    by_simple=types_by_simple),
             # A rejection's body is the framework's error shape, not the
-            # handler's declared type -- claiming `EnvironmentDto` here would
+            # ENDPOINT's declared type -- claiming `EnvironmentDto` here would
             # tell a test to assert a body the caller never receives.
+            #
+            # Where the exception handler's own return type is known, that IS
+            # the error shape and it is used: `handleRecordConflictException`
+            # returns `ResponseEntity<ErrorDto>`, so the 400 carries
+            # `ErrorDto`. Leaving it empty was not neutral — landing
+            # documents an empty `response_body` as meaning NO body, so twelve
+            # generated cases would have asserted an empty payload against a
+            # populated one. "" now means only that no handler stated it.
+            response_body=rejection.response_body,
             media_types=rejection.media_types,
         )
 

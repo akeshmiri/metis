@@ -917,12 +917,121 @@ Seven steps. Each is independently testable.
 | 6 | **Name states** | Resolved names via the cascade (§5.4) |
 | 7 | **Emit candidates** | `State` / `Transition` elements at `Quarantine` |
 
+**X-7a — Métis never executes anything against the System Under Test.** It reads
+from intake sources and it writes to its own graph. It does not call the API it
+models, drive the UI it models, or run a query against the database it models —
+not to extract, not to verify, and not to check the outcome of a test it
+generated. A generated test case is for a person or a pipeline to run; running it
+is not Métis's act.
+
+The distinction that does the work: **a database Métis reads is an intake source;
+the same database reached to check a test's outcome is the System Under Test.**
+Same server, different act, and only the first is available.
+
+This is structural rather than remembered. `connectors/intakes.json` declares
+every intake with an `access` mode, and **there is no mode meaning "runs
+something"** — the four are `local_files`, `read_only_connection`,
+`authored_file` and `uif_document`. `executes_against_sut` is a schema `const`
+of `false`, and `metis_mcp.intakes.load` refuses a declaration that says
+otherwise. Adding a mode that executes is the change that would have to be argued
+for, which is the point.
+
+Publication (§18) is the deliberate exception and is gated separately: writing a
+test case into a test-management tool is an external write behind G2 and
+`METIS_ALLOW_EXTERNAL_WRITES`, and it still touches no System Under Test.
+
 **X-5.** A partially-parsed source tree **fails the run.** No partial extraction
 report is emitted. A partially parsed repository silently under-reports, and
 under-reporting is indistinguishable from clean code.
 
+**X-5a — intake noise is filtered on provable inertness, never on visibility or
+reachability, and the reduction is reported.** Extraction may drop elements that
+cannot carry behaviour, because a graph in which the entry points are outnumbered
+nine to one by accessors is harder to review, and a reviewer who stops reading is
+a gate that does not function. What it may drop is narrow, and the two obvious
+axes are both wrong:
+
+- **Not visibility.** A private method can be the guard on an entry point and can
+  raise the exception its own `@ExceptionHandler` maps. Measured on a
+  twelve-endpoint service: `private` was 59 of 389 methods, two of them reachable
+  from a handler, and one of those two guarded an endpoint and raised the cause of
+  a 400 — so the filter would have deleted a rejection path while leaving all 166
+  accessors in place. For **fields** the axis is worse than wrong, it is
+  inverted: a DTO's fields are private, and they are where `@Schema`
+  descriptions, required-ness and validation bounds live — the inputs test design
+  is derived from.
+- **Not call-reachability from an entry point.** On the same service only 46 of
+  389 methods were reachable, but that is largely the frontend not resolving
+  interface dispatch: dropping the remainder would have deleted a service
+  implementation's 31 business methods, where the guards and the throws are.
+
+An element may be dropped only when its inertness is **structural and joint** —
+for an accessor, that means a matching field exists, the body is short, and it
+contains no control structure and no call other than operators. Any one of those
+alone is insufficient: a getter that branches is behaviour whatever it is named.
+
+Filtering is a **fact about a codebase, so a project declares it** (`drop_noise`),
+and the count dropped with its reason is emitted in the report either way. This is
+X-5 one level down: a reduction nobody can see is indistinguishable from a
+repository that never contained those elements.
+
 **X-6.** Every extracted element records the exact commit, file and line
 (M-14). An element without a code anchor is not emitted.
+
+**X-6d — a fact earns its place by what the model can reach, and a user-facing
+fact the model cannot account for is a finding rather than a node.** "Has an
+edge" is the wrong test: a method fifteen `CALLS` deep has plenty and tells the
+model nothing, while an `ExceptionMapping` producing a 400 a caller sees had
+none. Every fact is classified against the model:
+
+| | |
+|---|---|
+| `surface` | what a caller sends, receives, or is answered with. `Endpoint`, `Parameter`, `DeclaredOutcome` and `ExceptionMapping` **by their label**; `Class`, `Enum` and `Field` when a payload chain reaches them |
+| `supporting` | named by a declared reader, bounded to what that reader needs |
+| `internal` | neither — **not landed**, counted by label and reported (X-5a) |
+
+`surface` is decided by the label's meaning as well as by traversal, and that is
+not a shortcut: traversal alone is circular for exactly the nodes that matter,
+because an unreferenced `ExceptionMapping` is unreachable *by definition* and a
+purely structural test files it under `internal`, which is the noise it is
+supposed to be distinguished from.
+
+A `surface` fact no path of meaningful edges reaches from the model is a **gap**,
+reported where a person will see it. It is not always a defect: a
+`@ControllerAdvice` bean applies to every controller and nothing says which
+endpoints can reach its throw, so no rejection is attributed to it and the
+mapping is correctly left unreached. The graph's report and synthesis's own
+finding must then agree on the count — two representations of one fact that can
+disagree is where this system's real defects come from.
+
+Reachability is judged over **meaningful** edges only: the behaviour-to-evidence
+and payload chains. `CALLS` and `DECLARES_METHOD` are excluded, because on a real
+service they took apparent reachability from 324 nodes to 546 while telling the
+model nothing, which would have made the invariant unfalsifiable.
+
+**X-6b — a payload is a graph, not a type name, and its validation is data, not
+prose.** The request and response of an entry point must be reachable as a
+structure a test case can be constructed from:
+
+    Endpoint -ACCEPTS-> Parameter -OF_TYPE-> Class -HAS_FIELD-> Field -OF_TYPE-> Class …
+
+followed as far as the declared types go, stopping on a type already on the path
+and on any type the repository does not declare (REQ-CGA-010 — no stub for a JDK
+type). Without that last edge a field whose type is another payload is a dead
+end, and the payload a case has to build is only ever one level deep.
+
+**Validation lands as typed properties on the element it constrains, not as the
+annotation text.** `constraints: ["@Size(max = 40)"]` is a string every consumer
+must re-parse, and two consumers parsing it slightly differently is a defect
+nobody can see; `expected_max_length: 40` is a bound a boundary criterion reads
+directly. The vocabulary Métis honours is closed, for the same reason the
+ontology is, and an annotation outside it **stays in `constraints` and becomes no
+property** — visible as unhandled rather than silently dropped (X-5a).
+
+An `Enum` is the one type whose value space is fully known from source: its
+constants are the equivalence partitions of every field of that type, so such a
+field carries them as `allowed_values` and needs no boundary analysis at all.
+
 
 **X-6a — a declared rejection is a user path; a declared success is a recovery
 gap.** An outcome may be *constructed* (the code was seen building it) or only
@@ -1056,6 +1165,43 @@ make coverage numbers meaningless while appearing to solve the matching problem.
 **X-18.** A match is **proposed, never asserted** (F-7). Matching is a judgement
 and is treated as one throughout.
 
+**X-19 — a join that cannot be made yet is proposed, never dropped and never
+invented.** Two facts that belong together frequently arrive from different
+intakes at different times. Both obvious responses are wrong: dropping the join
+loses a real relationship, and writing the edge anyway produces one pointing at
+a node that may not exist — which `land` reports as `unmatched` without
+failing, so both stages report success over a broken chain.
+
+A proposal is therefore a first-class record carrying **the basis it was made
+on**, and resolution has **three** outcomes, not two:
+
+| | |
+|---|---|
+| `confirmed` | the confirming intake ran and holds the target — this becomes an edge, or a property |
+| `refuted` | it ran and does **not** hold the target — the belief was wrong, and that is a finding |
+| `proposed` | it has **not run** — the join may yet resolve |
+
+Collapsing `refuted` into `proposed` is the specific failure this rule exists to
+prevent: a retry treats "no" as "not yet" and never stops, and a reviewer never
+learns their proposal was wrong.
+
+An intake **declares** which joins it can offer and which it can settle, so a
+new intake adds a row rather than code. Where the confirming side supplies a
+value rather than a target node — a selector is how to reach an element, not a
+thing in the system — the join resolves to a **property**, and landing it as a
+node would put a locator string in the label space.
+
+**X-19a — a query is a node, labelled by its dialect.** What an application asks
+a database is a fact about its behaviour and belongs in the graph with the
+statement it sends. It is written as `Postgres` / `Oracle` / `MySql` **instead
+of** `:Query`, so every estate-wide question uses `label_expression("Query")`.
+
+A query for which **no statement could be produced** — an unparseable form, or a
+derived method whose table no catalogue confirms — lands as `JpaQuery` with its
+raw text and the reason. Landing it as its dialect would place it in the set a
+reader queries when they want runnable statements, with an empty `query`; a
+plausible-looking statement that does not run is worse than an absent one.
+
 ### 5.8 Limits — stated, not discovered later
 
 | Limit | Consequence | Handling |
@@ -1072,7 +1218,9 @@ and is treated as one throughout.
 - Control dependence as the disqualifying capability for engine choice (X-1)
 - Sidecar isolation; pinned engine and query set (X-2, X-3)
 - Both surfaces extracted, with UI framework support declared not guessed (X-4)
-- A seven-step pipeline, failing on partial parse (§5.3, X-5)
+- A seven-step pipeline, failing on partial parse (§5.3, X-5), dropping only
+  provably inert intake, reported (X-5a), and landing payloads as a graph with
+  typed validation (X-6b)
 - The naming cascade with recorded provenance and human backstop (§5.4)
 - **Naming is not agreement** — the circularity guard (X-11, X-12)
 - Bounds from guard literals; no guessed bounds (X-13, X-14)
@@ -1481,6 +1629,48 @@ a password or an attempt count.
 section as well as appearing per step, so a tester can prepare the fixture before
 executing rather than discovering requirements mid-run.
 
+### 7.4b The authoring surface — the call, the scaffold, the answer
+
+A model you can traverse is not yet a model you can act on. **X-6e** says the
+graph must yield the artefact somebody runs, and yield it under the same rules
+that govern every other rendered thing.
+
+**T-9c holds: the space, not a value.** A generated call carries placeholders
+describing what each field accepts — `<OOBSMS_TWILIO|OOBPHONE_TWILIO|QUESTIONS>`,
+`<string, length 3..40, required>` — and never a sample. That is not caution for
+its own sake: a single valid value is one test case, where the accepted space is
+what a case is *chosen from*, so the space is the more useful answer as well as
+the honest one. A rendered call contains no literal that was not recovered, and a
+test asserts it.
+
+**T-9d holds: what could not be recovered is marked.** A base URL lives in
+deployment config, not in a controller, so it renders as `{base}` with the reason
+attached. A UI element with no authored selector renders as a stub that raises,
+never as a plausible `#export-button` — a fabricated selector looks usable, which
+is what makes it worse than an empty field.
+
+Three surfaces, and they are not equally ready, which the output states:
+
+| surface | yields | bounded by |
+|---|---|---|
+| `api` | a `curl` with its outcomes and what produces each rejection | the base URL, which is not in source |
+| `ui` | a Page Object whose methods chain along `NAVIGATES_TO` | **selectors, which no pack can recover** — §5.2a is authored for exactly this reason |
+| data | a `SELECT` over the catalogue's own columns | generation only; **nothing in Métis executes SQL**, and a connection to a real database is a capability decision rather than a rendering one |
+
+**Answering is composition, never narration.** The tools state facts —
+`call_recipe`, `auth_facts`, `payload_shape`, `journey_walkthrough` — and `ask`
+routes a question to them and returns what they said. It **may state nothing
+absent from their output**, which is T-6 applied one level up, and a question no
+tool answers is reported as unroutable rather than answered from general
+knowledge. A fluent wrong sentence about how authentication works is the most
+expensive thing this system could produce.
+
+The auth answer carries its own caveat for the same reason. Declarative security
+is all extraction can see; a filter chain or a gateway enforces authentication
+invisibly to it. Measured on a real service: **zero endpoints declared any**, and
+its identity travelled as ordinary header parameters — so "nothing declared" and
+"open" are different claims, and only the first is ever made.
+
 ### 7.4a Automation-support detail
 
 R8 selected human-readable test cases, not executable code. But a case that is
@@ -1646,7 +1836,7 @@ TestCase → TestPath → Transition → AcceptanceCriterion → Requirement →
 application needs twelve. Retaining the other thirty-three would advertise
 capability that does not exist — the precise failure this specification corrects.
 
-*Where it landed:* **fifty-five** (§8.2), and the number is a warning to
+*Where it landed:* **fifty-six** (§8.2), and the number is a warning to
 heed rather than explain away. What makes it a different set from v1's is that
 every label added since carries a named writer and a named reader, which the
 original thirty-three did not — the business, Web and data layers were each
@@ -1662,10 +1852,10 @@ a bug in the fourth, not a variant reading.
 **D-3 — nothing is destructively overwritten.** Supersession creates a new
 version; the prior one remains reconstructable (M-15).
 
-### 8.2 Labels — fifty-five, and closed
+### 8.2 Labels — sixty-one, and closed
 
 The count is pinned by `test_ontology.py`
-(`assert len(KNOWN_LABELS) == 55`), so this table and
+(`assert len(KNOWN_LABELS) == 61`), so this table and
 `metis_mcp/ontology/labels.py` cannot drift apart without a test failing. D-1
 governs additions: name the writer and name the reader, or stage it in §8.7.
 
@@ -1693,6 +1883,25 @@ and `landing.transition_label_for(surface)` to plan an edge into one.
 | 12 | **`TestCase`** | One rendered, human-executable artefact | Rendering (§7) |
 | 13 | **`Finding`** | A divergence, gap, unverifiable guard, or drift item | Reconciliation, validation, drift |
 
+**`NeedReview` — a marker, not a thing in the world.** It is carried *alongside*
+a node's real label, never instead of one, and it says exactly what
+`lifecycle_state` already says: a human still owes a decision here
+(`Quarantine` or `Disputed`).
+
+It exists for the one question the property cannot answer. `lifecycle_state` is
+indexed on 54 labels, so asking it of any *one* of them is cheap; there is no
+way to ask it of *all* of them without scanning every node in the graph.
+`MATCH (n:NeedReview)` is the review queue, whatever the node happens to be.
+
+**`lifecycle_state` remains authoritative and this is never consulted to decide
+anything.** The marker is maintained from it — set by `landing.land` when a node
+arrives in a reviewable state, removed by the same statement that records a
+decision. Two representations of one fact is where most of this codebase's real
+defects have come from, so the rule is that they cannot disagree, and
+`test_ontology.py` asserts it rather than trusting it.
+
+| 56 | **`NeedReview`** | Marker: a human still owes a decision on this node | Landing, finding writer |
+
 **The evidence layer.** The nine below hold the processed intake the control-flow
 model above is derived from. They were added together because they are one
 claim, and four of them (`Endpoint`, `Class`, `Method`, and `Repository`'s
@@ -1703,8 +1912,12 @@ neighbours) come off §8.7's staging list under D-11 — see **D-12**.
 | 14 | **`Endpoint`** | One HTTP entry point as recovered from code (Layer 2) | Raw landing (§5) |
 | 15 | **`Parameter`** | One input an endpoint reads: where it rides and what it must be | Raw landing |
 | 16 | **`Class`** | One declared type: a controller, a service, or a payload schema | Raw landing |
+| 57 | **`Enum`** | A type whose instances are a closed set of named constants. **Specialises `Class` and is written instead of it** — an enum's `constants` ARE the equivalence partitions of any field of that type, so it needs no boundary analysis. Numbered 57 and sitting here for the same reason `NeedReview` is numbered 56 and sits above row 14: the ordinal is order of addition, the position is the layer | Raw landing |
 | 17 | **`Field`** | One field of a type, with the constraints declared on it | Raw landing |
 | 18 | **`Method`** | One method, from Layer 1's structural pass | Raw landing |
+| 58 | **`Query`** | One thing the application asks a database, with the statement it sends. **Written as its dialect, never as `:Query`** — so every estate-wide question uses `label_expression("Query")` | Raw landing (X-19a) |
+| 59 | **`Postgres`** · **`Oracle`** · **`MySql`** | The dialect a query is sent in. Labels rather than a property because `MATCH (q:Oracle)` is the question people ask; they specialise `Query`, so the estate-wide form still exists and a service talking to two databases stays one queryable set | Raw landing |
+| 60 | **`JpaQuery`** | A repository call whose statement could not be recovered — carried raw with its reason, for a person to complete. The tier that exists so nothing is guessed | Raw landing |
 | 19 | **`DeclaredOutcome`** | One observable result of an entry point, as recovered | Raw landing |
 | 20 | **`Check`** | One condition evaluated on a path — a guard's own evidence | Raw landing |
 | 21 | **`ExceptionMapping`** | An `@ExceptionHandler`'s exception → status mapping | Raw landing |
@@ -1768,10 +1981,22 @@ derived from. Every one of these facts sat in a JSON file outside the repository
 so "which endpoint produced this transition" and "which transitions send a field
 constrained `@NotNull`" were not questions the graph could answer.
 
-**D-13 — `Method` and `CALLS` are landed ahead of their reader, knowingly.** Their
-stated trigger, impact analysis, is not built. D-1 requires a reader, and theirs
-today is `Endpoint-[:HANDLED_BY]->Method` alone. If nothing comes to query the
-call graph, D-1 says remove them rather than let the ontology accrete.
+**D-13 — `Method` and `CALLS` were landed ahead of their reader, and that clause
+has now been exercised.** Their stated trigger, impact analysis, is not built.
+D-1 requires a reader, and this rule said: *if nothing comes to query the call
+graph, remove them rather than let the ontology accrete.*
+
+Nothing came. The nearest thing to a reader is `behavior_model.corroborate`,
+which queries `Method` and `CALLS` and **is called by nothing**; measured on a
+twelve-endpoint service it would need 17 of the 199 methods landed. So the call
+graph is **not landed by default** (`include_call_graph`), and what stays is
+every method something points at — the handlers behind
+`Endpoint-[:HANDLED_BY]->Method` and the `@ExceptionHandler`s behind
+`ExceptionMapping-[:HANDLED_BY]->Method`.
+
+"Off" therefore means **bounded, not absent**, and the distinction was a defect:
+the flag predates both of those edges, so switching it off left the graph unable
+to say which method serves a route. The count dropped is reported (X-5a).
 
 **Not nodes, by decision:**
 
@@ -1829,6 +2054,10 @@ call graph, D-1 says remove them rather than let the ontology accrete.
 | `Class` | `DECLARES_METHOD` | `Method` | Its methods |
 | `Endpoint` | `HANDLED_BY` | `Method` | The handler behind the route |
 | `Method` | `CALLS` | `Method` | A resolved call edge (Layer 1) |
+| `Method` | `ISSUES` | `Query` | A query this method sends to a database |
+| `Query` | `QUERIES` | `Table` | A table this query reads or writes |
+| `Query` | `QUERIES` | `View` | A view this query reads |
+| `Query` | `USES` | `Column` | A column this query names — a test-design input, because it is what a fixture has to populate |
 | `Endpoint` | `DECLARES` | `DeclaredOutcome` | A result this entry point can produce |
 | `DeclaredOutcome` | `GUARDED_BY` | `Check` | The condition selecting this outcome |
 | `ExceptionMapping` | `HANDLED_BY` | `Method` | The `@ExceptionHandler` that maps it |
@@ -2132,9 +2361,28 @@ teams who prefer review-as-code.
 
 ### 9.5 Agent / MCP surface
 
-**N-8.** Read-only. Query models, coverage, traceability, findings and
-explanations from a development session. **No decision may be taken through this
-surface** — decisions require the evidence presentation of N-3.
+**N-8 (superseded 2026-08-23).** *Originally:* read-only; no decision may be
+taken through this surface, because decisions require the evidence presentation
+of N-3 and a chat session cannot provide it.
+
+**That prohibition was lifted by an explicit product decision.** The reasoning
+behind it was not, and it is now carried by four invariants instead of one rule:
+
+| | |
+|---|---|
+| **off by default** | `METIS_MCP_WRITE` is `off` \| `author` \| `full`, and an unconfigured server is read-only *by construction* — the write modules are not imported at all |
+| **everything lands at `Quarantine`** | S-4. Authoring is not approving; only the gate module may write `Approved` |
+| **a gate costs its literal** | G1 needs `approve`, G2 needs `publish`, in that call. No default, no timeout, no truthy value |
+| **every write is audited** | through `roles.record_decision(..., surface="mcp")` — the same function every other surface uses (N-1) |
+
+**N-8a.** Identity on this surface is *asserted by the caller and trusted*, as
+the review UI trusts its identity header. Honest for a localhost tool;
+unacceptable for anything reachable by others, and `describe_policy` says so to
+any agent that asks.
+
+Read-only remains the default and the recommended deployment. What changed is
+that it is now a configuration rather than a property of the code — and the
+tests that used to prove the prohibition now prove the four invariants above.
 
 ### 9.6 Roles
 
@@ -2368,6 +2616,10 @@ The application is accepted when all of these hold against a real feature.
 |---|---|
 | **A-5** | Every extracted element carries commit, file and line; an element without an anchor is not emitted (X-6) |
 | **A-6** | A partially-parsed source tree **fails the run**; no partial report is emitted (X-5) |
+| **A-6a** | Intake noise is filtered on joint structural inertness, never on visibility or reachability; a getter that branches survives, fields are never filtered, and the count dropped is reported (X-5a) |
+| **A-6b** | A payload is reachable as a graph to its full declared depth, and its validation is typed properties rather than annotation text; an unrecognised constraint stays visible in `constraints` (X-6b) |
+| **A-6d** | Every fact is classified against the model; an `internal` fact is not landed and the reduction reported, and a `surface` fact the model cannot reach is raised as a gap whose count agrees with synthesis's own finding (X-6d) |
+| **A-6e** | A generated call, Page Object or query contains no literal that was not recovered; an unrecoverable detail is marked, and `ask` states nothing its tools did not (X-6e) |
 | **A-7** | A state named from the AC vocabulary is **not** thereby counted as agreeing with the AC-mined model (X-11, X-12) |
 | **A-8** | An unrecognised UI framework is reported, not guessed (X-4) |
 

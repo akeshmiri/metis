@@ -47,11 +47,11 @@ from metis_mcp.mbt.model import CONSTRUCTED, DECLARED
 from metis_mcp.mbt.validation import BLOCKING, validate
 
 A = Anchor("Controller.java", 42, "sha")
-DTO_A = Anchor("MetricDto.java", 12, "sha")
+DTO_A = Anchor("RecordDto.java", 12, "sha")
 ADVICE_A = Anchor("GlobalExceptionHandler.java", 81, "sha")
 
-SAVE = "MetricController.save::POST"
-READ = "MetricController.getActionById::GET"
+SAVE = "RecordController.save::POST"
+READ = "RecordController.getActionById::GET"
 
 
 def _behaviour(*outcomes, checks=()) -> ExtractionReport:
@@ -60,9 +60,9 @@ def _behaviour(*outcomes, checks=()) -> ExtractionReport:
 
 def _structural(constrained: bool = True, mapped: bool = True) -> ExtractionReport:
     return ExtractionReport(
-        members=[MemberFact("MetricDto", "duration", "java.lang.Long", DTO_A,
+        members=[MemberFact("RecordDto", "duration", "java.lang.Long", DTO_A,
                             constraints=("@NotNull",) if constrained else ()),
-                 MemberFact("MetricDto", "project", "java.lang.String", DTO_A,
+                 MemberFact("RecordDto", "project", "java.lang.String", DTO_A,
                             constraints=("@Size(max=64)",) if constrained else ())],
         exception_mappings=([ExceptionMappingFact(
             BEAN_VALIDATION_EXCEPTION, 400, "GlobalExceptionHandler", ADVICE_A)]
@@ -73,13 +73,13 @@ def _endpoints(validated: bool = True, body: bool = True) -> list[dict]:
     anchor = {"file": A.file, "line": A.line, "commit": A.commit}
     return [
         {"id": SAVE, "http_method": "POST", "path": "/metric",
-         "handler_method_id": "MetricController.save", "validated": validated,
+         "handler_method_id": "RecordController.save", "validated": validated,
          "parameters": ([{"name": "metric", "location": "body",
-                          "type_name": "org.catools.athena.model.MetricDto",
+                          "type_name": "org.example.records.dto.RecordDto",
                           "required": True, "constraints": []}] if body else []),
          "security": [], "anchor": anchor},
         {"id": READ, "http_method": "GET", "path": "/metric/{id}",
-         "handler_method_id": "MetricController.getActionById", "validated": False,
+         "handler_method_id": "RecordController.getActionById", "validated": False,
          "parameters": [{"name": "id", "location": "path",
                          "type_name": "java.lang.Long", "required": True,
                          "constraints": []}],
@@ -103,7 +103,7 @@ def _built(endpoint_id: str, status: int, discriminator: str,
 
 def _model(behaviour, structural=None, endpoints=None, unfold=False):
     result = synthesise(behaviour, endpoints if endpoints is not None else _endpoints(),
-                        journey="athena-metric", surface="api",
+                        journey="records", surface="api",
                         unfold_resources=unfold, structural=structural)
     assert result.ok, result.errors
     return result
@@ -221,7 +221,7 @@ def test_an_endpoint_without_a_rejection_is_left_completely_alone():
 # --------------------------------------------------------------------------
 
 def test_a_declared_status_the_endpoint_also_constructs_is_not_duplicated():
-    """Three athena controllers declare a 409 AND build it, with a real
+    """Three the pilot estate controllers declare a 409 AND build it, with a real
     `ast-enclosure` guard. Taking both would give one behaviour two transitions,
     one of them guarded on a minted atom."""
     result = _model(_behaviour(

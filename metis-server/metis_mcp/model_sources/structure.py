@@ -61,6 +61,11 @@ class Element:
     # For an Action: the event that invokes it. For a Navigation: where it goes.
     on_event: str = ""
     navigates_to: str = ""
+    # **A selector is NOT authored here.** It was, briefly, and that was the
+    # wrong source: a plain-DOM page names its elements in code —
+    # `document.getElementById("archive")` — and `js-ui` reads that literal, so
+    # the selector is *extracted* like every other fact. What this file
+    # describes is what is ON a page; how to find it comes from the code.
 
     def walk(self):
         yield self
@@ -272,6 +277,85 @@ def validate(structure: Structure) -> list[Problem]:
     return problems
 
 
+# The suffixes a UI name carries that say what a thing IS rather than which
+# thing it is. Closed on purpose: an open list is a guess that grows, and each
+# addition silently re-keys every element that ends in it.
+_UI_SUFFIXES = ("button", "input", "link", "field")
+
+
+def normalised_page_name(name: str) -> str:
+    """The join basis between a router screen and an authored page.
+
+    `RecordDetailPage` and `record-detail` both reduce to `recorddetail`.
+
+    **No plural handling, deliberately.** The demo's `RecordListPage` does NOT
+    meet `records-list`, and that refutation is the right answer: stripping an
+    `s` is an open-ended guess of exactly the kind the UI-suffix list is closed
+    to avoid, and it would silently marry a `Records` page to a `Record` route
+    on some estate where those are different screens. A reviewer gets a finding
+    naming both sides instead.
+    """
+    flat = "".join(ch for ch in (name or "").casefold() if ch.isalnum())
+    return flat[:-4] if flat.endswith("page") and len(flat) > 4 else flat
+
+
+def normalised_name(name: str) -> str:
+    """The join basis between an authored element and an extracted selector.
+
+    Case-folded, separators removed, and one trailing UI suffix stripped — so
+    `Archive`, `archive-btn`'s authored `Archive`, and the code's
+    `archiveButton` all reduce to `archive`. Verified against the demo page:
+    `Apply filter`/`applyFilter`, `New record`/`newRecord`, `Export`/
+    `exportButton` all meet.
+
+    Only ONE suffix is stripped, and only from the end. `inputField` is a real
+    element name and reducing it to nothing would fuse it with every other.
+    """
+    flat = "".join(ch for ch in (name or "").casefold() if ch.isalnum())
+    for suffix in _UI_SUFFIXES:
+        if flat.endswith(suffix) and len(flat) > len(suffix):
+            return flat[: -len(suffix)]
+    return flat
+
+
+def element_index(page_elements, name: str) -> dict[int, int]:
+    """`{position in walk order: index}` for every element sharing `name`.
+
+    Zero unless the page really does repeat a name, so the common element keeps
+    the shortest possible identity and adding a second `Click` does not re-key
+    the first.
+    """
+    positions = [i for i, e in enumerate(page_elements)
+                 if normalised_name(e.name) == normalised_name(name)]
+    return {pos: n for n, pos in enumerate(positions)}
+
+
+def element_id_for(page: str, name: str, index: int = 0) -> str:
+    """`(page, normalised name, index)` — the identity, not the authored id.
+
+    **The authored `id` becomes display data**, which is the move D-8 already
+    made for `name` and I-2 for a transition. Renaming `rl-archive` to
+    `archive-btn` in the structure file must not produce a second node for the
+    same button; and `records-list` already carries three elements named
+    `click`, so a key without an index fuses them into one.
+    """
+    from metis_mcp.identity.keys import short
+
+    return f"ui:{short(f'{page}|{normalised_name(name)}|{index}')}"
+
+
+def element_display_name(name: str, index: int, total: int) -> str:
+    """The element name, suffixed only where the page has more than one.
+
+    `Click` stays `Click` on a page with one; a page with three gets `Click`,
+    `Click 2`, `Click 3`. One-based after the first, because "Click 2" is what a
+    person calls the second one and "Click 1" implies there is a zeroth.
+    """
+    if total <= 1 or index == 0:
+        return name
+    return f"{name} {index + 1}"
+
+
 def page_id_for(component: str, page: str) -> str:
     """The id `landing` writes a Page with, so the two agree (I-2).
 
@@ -281,6 +365,127 @@ def page_id_for(component: str, page: str) -> str:
     writers touch the same node.
     """
     return f"{component}::page::{page}" if component else page
+
+
+def pending_selectors(structure: Structure) -> list:
+    """One `element_selector` proposal per authored element (X-19).
+
+    **The last hand-made join.** Until now the authored element and the
+    extracted selector were married in `test_scaffold.py` by a dict — which
+    meant the Page Object a test asserted on was one the engine could not
+    produce. This is the same deferred-join machinery the data layer uses, so
+    the answer is the same three-way one: confirmed where the web intake found
+    a selector, refuted where it ran and found none, and still proposed where it
+    has not run. Those are different facts and a reviewer needs to know which.
+    """
+    from metis_mcp.resolution import PendingJoin
+
+    out = []
+    for page, roots in sorted(structure.pages.items()):
+        walked = [e for root in roots for e in root.walk()]
+        by_name: dict[str, list] = {}
+        for element in walked:
+            by_name.setdefault(normalised_name(element.name), []).append(element)
+        for join_name, group in sorted(by_name.items()):
+            for index, element in enumerate(group):
+                out.append(PendingJoin(
+                    kind="element_selector",
+                    from_id=element_id_for(page, element.name, index),
+                    to_ref=join_name,
+                    basis=f"element name {element.name!r} on page {page!r}",
+                    detail=element.kind))
+    return out
+
+
+def pending_routes(routes) -> list:
+    """One `route_page` proposal per frontend route (X-19).
+
+    `RENDERS` was declared in the ontology with **no writer at all** — the third
+    relationship in that state, alongside `USES` and `LINKS_TO`. It is a name
+    join between two intakes that arrive separately, which is exactly what the
+    resolution engine is for, so it becomes a proposal rather than a writer.
+
+    `routes` is `[{"path": ..., "screen": ...}]` as the web intake reports them.
+    A route whose screen the router did not name is skipped: there is nothing to
+    join on, and proposing against an empty string would marry every such route
+    to whichever page also has none.
+    """
+    from metis_mcp.resolution import PendingJoin
+
+    out = []
+    for route in routes or ():
+        path = route.get("path") if isinstance(route, dict) else str(route)
+        screen = route.get("screen", "") if isinstance(route, dict) else ""
+        if not path or not screen:
+            continue
+        out.append(PendingJoin(
+            kind="route_page", from_id=path, to_ref=normalised_page_name(screen),
+            basis=f"router screen {screen!r} for route {path!r}",
+            detail=screen))
+    return out
+
+
+def route_resolution(structure: Structure | None, routes):
+    """Settle `Route -[:RENDERS]-> Page`. `(Resolution, [(route, page)])`.
+
+    `structure` is None where the structure intake has not run, which leaves
+    every proposal `proposed` rather than refuting it.
+    """
+    from metis_mcp.resolution import resolve
+
+    pending = pending_routes(routes)
+    if structure is None:
+        return resolve(pending, {}), []
+
+    by_basis = {normalised_page_name(page): page for page in structure.pages}
+    resolution = resolve(pending, {"structure": set(by_basis)})
+    return resolution, [(join.from_id, by_basis[join.to_ref])
+                        for join, _ in resolution.confirmed]
+
+
+def selector_resolution(structure: Structure, extracted: dict | None):
+    """Run the deferred join. `(Resolution, {element_id: selector})`.
+
+    `extracted` is `{normalised name: selector}` from the web intake, or **None
+    where that intake has not run** — and the difference is the whole point of
+    routing this through `resolve` rather than a `dict.get`. An absent intake
+    leaves every proposal `proposed`; a present one that lacks the name
+    `refutes` it. A dict collapses those into the same empty string, and a
+    reviewer never learns which of the two they are looking at.
+    """
+    from metis_mcp.resolution import properties_for, resolve
+
+    pending = pending_selectors(structure)
+    available = {} if extracted is None else {"web": set(extracted)}
+    resolution = resolve(pending, available)
+    values = properties_for(
+        resolution, lambda ref: (extracted or {}).get(ref, ""))
+    return resolution, {from_id: value for _, from_id, _, value in values}
+
+
+def elements_for(structure: Structure, page: str, selectors: dict) -> list[dict]:
+    """The flat element list a Page Object is rendered from.
+
+    Identity and display name come from the same helpers `plan_structure` uses,
+    so what is rendered and what is landed cannot disagree.
+    """
+    walked = [e for root in structure.pages.get(page, ()) for e in root.walk()]
+    by_name: dict[str, list] = {}
+    for element in walked:
+        by_name.setdefault(normalised_name(element.name), []).append(element)
+
+    out = []
+    for group in by_name.values():
+        for index, element in enumerate(group):
+            node_id = element_id_for(page, element.name, index)
+            out.append({
+                "id": node_id, "kind": element.kind,
+                "name": element_display_name(element.name, index, len(group)),
+                "selector": selectors.get(node_id, ""),
+                "on_event": element.on_event,
+                "navigates_to": element.navigates_to,
+            })
+    return sorted(out, key=lambda e: e["name"])
 
 
 def plan_structure(structure: Structure, episode_id: str,
@@ -324,21 +529,50 @@ def plan_structure(structure: Structure, episode_id: str,
                 "name": page, "component": component,
                 "lifecycle_state": QUARANTINE,
             })
+        # Identity is `(page, normalised name, index)`, so the walk has to be
+        # materialised before any node is written: the index of the first
+        # `Click` depends on whether a second one exists further down.
+        walked = [e for root in roots for e in root.walk()]
+        by_name: dict[str, list] = {}
+        for element in walked:
+            by_name.setdefault(normalised_name(element.name), []).append(element)
+        identity: dict[int, tuple[str, str, str]] = {}
+        for group in by_name.values():
+            for index, element in enumerate(group):
+                identity[id(element)] = (
+                    element_id_for(page, element.name, index),
+                    element_display_name(element.name, index, len(group)),
+                    normalised_name(element.name))
+
         for root in roots:
             for element in root.walk():
+                node_id, display, join_name = identity[id(element)]
                 add_node(element.kind, {
-                    "id": element.id, "source_episode_id": episode_id,
-                    "name": element.name, "element_type": element.kind,
+                    "id": node_id, "source_episode_id": episode_id,
+                    "name": display, "element_type": element.kind,
                     "page": page, "lifecycle_state": QUARANTINE,
+                    # What the authored file called it. Display data now, and
+                    # kept so a reviewer can find the entry that produced this.
+                    "authored_id": element.id,
+                    # The basis the extracted selector joins on (X-19).
+                    "join_name": join_name,
                 })
                 for child in element.contains:
-                    add_edge(element.kind, element.id, "HAS_ELEMENT",
-                             child.kind, child.id)
+                    add_edge(element.kind, node_id, "HAS_ELEMENT",
+                             child.kind, identity[id(child)][0])
+                # `Action -[:ON_EVENT]-> Event` — catalogued since the Web
+                # layer landed, read out of the file into `Element.on_event`,
+                # and never written. The interaction that invokes an action is
+                # what a generated Page Object method actually performs, so
+                # without it the graph holds the button and not the click.
+                if element.on_event:
+                    add_edge(element.kind, node_id, "ON_EVENT",
+                             "Event", element.on_event)
                 if element.kind == "Navigation" and element.navigates_to:
-                    add_edge("Navigation", element.id, "NAVIGATES_TO",
+                    add_edge("Navigation", node_id, "NAVIGATES_TO",
                              "Page", page_id_for(component, element.navigates_to))
             add_edge("Page", page_id_for(component, page), "HAS_ELEMENT",
-                     root.kind, root.id)
+                     root.kind, identity[id(root)][0])
 
     for ds in structure.datasources:
         add_node("Datasource", {

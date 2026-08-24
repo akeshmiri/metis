@@ -22,9 +22,9 @@ from metis_mcp.reconciliation import (
     reconcile,
 )
 
-# The real code-derived shape from athena-git.
+# The real code-derived shape from archive-service.
 MODEL = Model(
-    id="athena-git-api",
+    id="archive-api",
     states={
         "Ready": State(id="Ready", name="Ready", surface="api", is_initial=True),
         "Ok200": State(id="Ok200", name="Ok200", surface="api"),
@@ -290,7 +290,7 @@ def test_s19_the_report_separates_intent_from_documentation():
 
 
 def test_s19_an_all_documentation_run_supports_no_correctness_claim():
-    """The athena case: specs marked IMPLEMENTED, documenting what was built."""
+    """The the pilot estate case: specs marked IMPLEMENTED, documenting what was built."""
     ac = _ac("ac1", "GET /commit returns 204 when empty")
     proposal = prefilter(ac, MODEL, ROUTES)
     doc = confirm(proposal, "get-commit-empty", "bob", provenance=CODE_DERIVED)

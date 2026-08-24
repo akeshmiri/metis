@@ -1,0 +1,33 @@
+{
+  "version": "metis.project-profile/1",
+  "project": "demo-records",
+  "repo": "demo_project/records-service",
+  "language": "javasrc",
+  "framework": "spring-mvc",
+  "journeys": [
+    {
+      "journey": "records",
+      "surface": "api",
+      "modules": [
+        "records-service"
+      ],
+      "exclude": []
+    }
+  ],
+  "annotations": {
+    "DemoSecured": {
+      "role": "security",
+      "detail": "role"
+    },
+    "Audited": {
+      "role": "ignore"
+    }
+  },
+  "_notes": [
+    "The profile for the demo corpus. It exists so the project-annotation path is",
+    "exercised by a test rather than described: DemoSecured and Audited are known to",
+    "nothing that M\u00e9tis ships, and this file is the only reason extraction understands",
+    "them. `exclude` is deliberately empty \u2014 the Feign client must be excluded by the",
+    "outbound_client role, not by a path glob, because a glob would prove nothing."
+  ]
+}

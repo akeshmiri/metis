@@ -382,3 +382,81 @@ def test_the_reprint_instruction_is_runnable_from_the_graph():
     )
     # And the scope is chosen, not assumed.
     assert re.search(r"if args\.model", block)
+
+
+# ---------------------------------------------------------------------------
+# The gate in front of the gate: an autopilot can type a literal.
+# ---------------------------------------------------------------------------
+
+def _real_batch():
+    """A batch with real work in it, built the way the A-22 test builds one."""
+    model, cases = _cases()
+    return plan_publication(
+        compare(cases, PublicationLedger(model_id="login-api")), cases)
+
+
+def _live_transport(recorder):
+    from metis_mcp.publishing.publish import Transport
+
+    class Live(Transport):
+        name = "live-stub"
+        is_dry_run = False
+
+        def send(self, operation):
+            recorder.append(operation)
+            return "sent"
+
+    return Live()
+
+
+def test_a_live_transport_is_refused_unless_the_installation_permits_it(monkeypatch):
+    """G2's literal is a string an agent can supply as easily as a person.
+
+    T-18 was written against a human forgetting to confirm; it was not written
+    against a caller confirming on the human's behalf. A real write therefore
+    needs two things from different places: the literal, from whoever is driving
+    the run, and this, from the environment the deployment was configured with.
+    """
+    from metis_mcp.publishing.publish import (
+        AFFIRMATIVE, EXTERNAL_WRITES_ENV, confirm, publish,
+    )
+
+    monkeypatch.delenv(EXTERNAL_WRITES_ENV, raising=False)
+    attempts = []
+    batch = _real_batch()
+    result = publish(batch, _live_transport(attempts),
+                     confirm(AFFIRMATIVE, "sam", batch.size))
+
+    assert not result.ok
+    assert attempts == [], "A-22: zero attempts, not an attempt rolled back"
+    assert EXTERNAL_WRITES_ENV in result.refused
+    assert "Nothing was sent" in result.refused
+
+
+def test_only_the_exact_word_yes_enables_external_writes(monkeypatch):
+    """`true`, `1` and `on` are what a script sets by accident or a config
+    template carries by default. The value of this switch is that it cannot be
+    arrived at without meaning it."""
+    from metis_mcp.publishing.publish import (
+        EXTERNAL_WRITES_ENV, external_writes_allowed,
+    )
+
+    for value in ("true", "1", "on", "YES please", "", "no"):
+        monkeypatch.setenv(EXTERNAL_WRITES_ENV, value)
+        assert not external_writes_allowed(), f"{value!r} must not enable writes"
+    for value in ("yes", "YES", " yes "):
+        monkeypatch.setenv(EXTERNAL_WRITES_ENV, value)
+        assert external_writes_allowed(), f"{value!r} should enable writes"
+
+
+def test_a_dry_run_never_needs_the_switch(monkeypatch):
+    """Off means DRY RUN, not an error: the safe failure is "nothing was sent",
+    never "something was sent because nobody said not to"."""
+    from metis_mcp.publishing.publish import (
+        AFFIRMATIVE, EXTERNAL_WRITES_ENV, DryRunTransport, confirm, publish,
+    )
+
+    monkeypatch.delenv(EXTERNAL_WRITES_ENV, raising=False)
+    batch = _real_batch()
+    result = publish(batch, DryRunTransport(), confirm(AFFIRMATIVE, "sam", batch.size))
+    assert result.ok and result.dry_run

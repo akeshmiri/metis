@@ -145,9 +145,9 @@ MULTI_MODULE_WARNING = (
 def analysis_unit_is_sufficient(report: ExtractionReport) -> tuple[bool, str]:
     """Whether guards are recoverable from this report's analysis unit.
 
-    A measured finding, not a theoretical one. Extracting `athena-boot-git` alone
+    A measured finding, not a theoretical one. Extracting `archive-service` alone
     left `ResponseEntityUtils.okOrNoContent` unresolved, so the condition
-    selecting 200 from 204 was invisible. Adding `athena-common` recovered
+    selecting 200 from 204 was invisible. Adding `records-common` recovered
     `return t.isEmpty() ? noContent() : ok(t)` -- the guard itself.
 
     Detecting this *before* Layer 4 runs matters: otherwise it reports zero guards

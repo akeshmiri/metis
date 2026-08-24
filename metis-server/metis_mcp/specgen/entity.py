@@ -83,8 +83,8 @@ class EntityRule:
         """The `AC-` form `spec_kit._AC_HEADING` can parse out of the markdown.
 
         **Display only.** It was briefly the same value as `criterion_id`, which
-        meant a criterion whose real id is `athena-spec-api-ac1` got cited as
-        `AC-athena-spec-api-ac1` -- an id no node carries, so every `CITES` edge
+        meant a criterion whose real id is `records-spec-api-ac1` got cited as
+        `AC-records-spec-api-ac1` -- an id no node carries, so every `CITES` edge
         matched nothing. Exactly the mistake `plan_spec_document` makes with
         `Rule.criterion_id`, repeated here.
 

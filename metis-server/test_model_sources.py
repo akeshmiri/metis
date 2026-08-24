@@ -105,11 +105,11 @@ def test_the_code_source_refuses_to_merge_several_services_into_one_model():
             {"id": "o1", "endpoint_id": "e1", "signature": "s", "status": 200,
              "discriminator": "", "guarding_check_ids": [], "guard_sense": "",
              "link": "declared",
-             "anchor": {"file": "athena-boot-metric/A.java", "line": 1, "commit": "c"}},
+             "anchor": {"file": "records-service/A.java", "line": 1, "commit": "c"}},
             {"id": "o2", "endpoint_id": "e2", "signature": "s", "status": 200,
              "discriminator": "", "guarding_check_ids": [], "guard_sense": "",
              "link": "declared",
-             "anchor": {"file": "athena-boot-git/B.java", "line": 1, "commit": "c"}},
+             "anchor": {"file": "archive-service/B.java", "line": 1, "commit": "c"}},
         ],
         "parse_errors": [], "partial": False,
     }
@@ -117,7 +117,7 @@ def test_the_code_source_refuses_to_merge_several_services_into_one_model():
         path = pathlib.Path(d) / "r.json"
         path.write_text(json.dumps(report))
         try:
-            get("code").produce(path=str(path), journey="athena-metric")
+            get("code").produce(path=str(path), journey="records")
         except ValueError as e:
             assert "spans 2 services" in str(e) and "--service" in str(e)
             return

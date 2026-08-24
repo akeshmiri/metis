@@ -5,8 +5,9 @@ The model sources (application spec §4.5, §4.6, §5).
     CodeExtractedSource   implemented   — §5, from a query pack's validated report
     WebExtractedSource    implemented   — §5, the ui surface
     ACMinedSource         implemented   — §4.5, from acceptance-criteria prose
+    OpenAPISource         implemented   — §5.2, from a declared contract
 
-All four are real. `ModelSource.available` / `why_unavailable` remain part of the
+All five are real. `ModelSource.available` / `why_unavailable` remain part of the
 interface anyway: a source that cannot run says why rather than being absent, and
 §4.3's layered architecture depends on reconciliation being able to name a source
 it could not compare against.
@@ -171,7 +172,7 @@ class CodeExtractedSource(ModelSource):
                               if _service_of(_anchor_file(e)) == service]
             # `structural` is deliberately NOT scoped. Its two remaining uses are
             # cross-service by construction: `GlobalExceptionHandler` lives in
-            # athena-common and the DTOs in athena-model, so scoping it to a
+            # records-common and the DTOs in records-model, so scoping it to a
             # deployable would empty both and every rejection would silently fall
             # back to the generic precondition.
         elif len(services) > 1:
@@ -197,11 +198,37 @@ class CodeExtractedSource(ModelSource):
                       "repo": behaviour.repo, "commit": behaviour.commit,
                       "engine": f"{behaviour.engine} {behaviour.engine_version}",
                       "pack": f"{behaviour.pack} {behaviour.pack_version}"},
-            skipped=[(e, "synthesis finding") for e in result.findings],
+            skipped=[_split_finding(f) for f in result.findings],
+            # Carried so the workflow can land the evidence layer without
+            # re-reading and re-validating a file it has already parsed.
+            reports={"structural": structural, "behaviour": behaviour},
             # M-13 / N-10: the analyser is the proposer. Naming a person here
             # would let them approve their own machine's output unchallenged.
             proposed_by=author or f"{behaviour.pack}@{behaviour.pack_version}",
         )
+
+
+def _split_finding(text: str) -> tuple[str, str]:
+    """`"<element>: <reason>"` -> the two halves.
+
+    `skipped` used to be built as `(whole_finding, "synthesis finding")` — the
+    entire message in the ID slot and a constant where the reason goes. Every
+    consumer then showed the useless half: the G1 gate listed eight skipped
+    elements each explained as "synthesis finding", when the real text says
+    "declares [200] but no construction was recovered".
+
+    Splitting on the FIRST ": " would be wrong: these ids contain colons
+    (`...challengeTransaction:org.springframework...::POST`). The separator is
+    the first ": " after the `::VERB` marker that ends an endpoint id, and a
+    finding with no id at all keeps the whole text as its reason.
+    """
+    marker = text.rfind("::")
+    if marker != -1:
+        sep = text.find(": ", marker)
+        if sep != -1:
+            return text[:sep], text[sep + 2:]
+    sep = text.find(": ")
+    return (text[:sep], text[sep + 2:]) if sep != -1 else ("", text)
 
 
 def _anchor_file(fact) -> str:
@@ -213,7 +240,7 @@ def _anchor_file(fact) -> str:
 
 
 def _service_of(file_path: str) -> str:
-    """`athena-boot-metric/src/main/...` -> `metric`.
+    """`records-service/src/main/...` -> `metric`.
 
     The same derivation `mbt/test_levels.service_of_path` uses, so the module a
     test is attributed to and the module a transition is extracted from cannot
@@ -307,7 +334,10 @@ def _report_from_dict(data: dict) -> "ExtractionReport":
         checks=rows("checks", contract.CheckFact),
         outcomes=rows("outcomes", contract.OutcomeFact),
         exception_mappings=rows("exception_mappings", contract.ExceptionMappingFact),
+        entities=rows("entities", contract.EntityFact),
+        repository_queries=rows("repository_queries", contract.RepositoryQueryFact),
         parse_errors=list(data.get("parse_errors", ())),
+        filtered=dict(data.get("filtered", {}) or {}),
         partial=bool(data.get("partial", False)),
     )
 

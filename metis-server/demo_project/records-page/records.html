@@ -1,0 +1,41 @@
+<!doctype html>
+<!--
+  The web surface, as a page rather than as a description of one.
+
+  **Selectors come from processing the code, not from somebody authoring them.**
+  A plain-DOM page carries them where a pack can read them: an `id`, a `class`, a
+  `data-testid`. That is the difference between this and JSX, whose handler
+  bindings jssrc2cpg keeps as raw text and which is why `react-ui` recovers
+  routes and states but no selectors at all.
+
+  Deliberately small: every element here exists to be extracted, and a Page
+  Object generated from it is the check that extraction worked.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>Records</title></head>
+<body>
+  <nav id="main-menu" aria-label="Main">
+    <a id="new-record" href="/records/new" data-testid="nav-new">New record</a>
+  </nav>
+
+  <form id="record-filter">
+    <input id="filter-owner" name="owner" type="text" maxlength="120">
+    <button id="apply-filter" type="submit" data-testid="apply">Apply filter</button>
+  </form>
+
+  <table id="records">
+    <tbody id="record-rows">
+      <tr class="record-row">
+        <td class="record-title"></td>
+        <!-- An action WITHOUT a stable hook: no id, no data-testid. It must be
+             reported as unrecoverable rather than matched on its text. -->
+        <td><button class="btn">Export</button></td>
+        <td><button id="archive" data-testid="archive">Archive</button></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <nav id="pager" class="pagination"></nav>
+  <script src="page.js"></script>
+</body>
+</html>

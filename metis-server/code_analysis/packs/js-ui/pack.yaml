@@ -1,0 +1,27 @@
+# Query pack: browser-UI behaviour extraction (application spec §5.2, M-2).
+name: js-ui
+version: 0.1.0
+contract: metis.cpg-extract/1
+
+engine:
+  name: joern
+  version: "4.0.604"
+  frontends: [jssrc2cpg]
+
+layers: [4]
+
+# `dom-events` selects this pack and `test_extraction.py` asserts its output
+# against demo_project/records-page, so it is no longer scaffold.
+status: working
+verified_against:
+  repo: demo_project/records-page
+  result: "3 triggers, 3 outcomes, 1 API call. Handler bodies resolve through
+    inline closures and named references; anything else is reported unresolved
+    rather than attributed to the enclosing module."
+  asserted_by: test_extraction.py
+known_limits:
+  - "no end-to-end run exists: pack selection by surface is unimplemented"
+  - "handler bodies resolve through inline closures and named references;
+     anything else is reported unresolved rather than attributed to the
+     enclosing module"
+  - "an element selector is frequently NOT recoverable"

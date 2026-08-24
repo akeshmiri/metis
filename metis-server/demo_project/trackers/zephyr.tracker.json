@@ -1,0 +1,14 @@
+{
+  "tracker_version": "metis.tracker-item/1",
+  "system": "scale",
+  "base_url": "https://tracker.example.com/rest/tests/1.0",
+  "items": [
+    {
+      "key": "DEMO-T1",
+      "name": "Archived record rejects an update",
+      "objective": "While a record is archived, the system shall respond 409 to PUT /record/{id}.",
+      "status": {"name": "Approved"},
+      "labels": ["regression"]
+    }
+  ]
+}

@@ -316,3 +316,93 @@ if __name__ == "__main__":
             print(f"ERROR {t.__name__}: {type(e).__name__}: {e}")
     print(f"\n{len(tests) - failures}/{len(tests)} passed")
     sys.exit(1 if failures else 0)
+
+
+# ---------------------------------------------------------------------------
+# `GUARDED_BY` — the checks are read, not merely stored
+# ---------------------------------------------------------------------------
+#
+# The edge was written by landing and read by NOTHING: `guard_expression` had
+# six production readers, the `Check` node had zero. What the string cannot
+# carry is the evaluation order, and the order is a data requirement — a fixture
+# aimed at the third condition never reaches it if the first short-circuits.
+
+def _guarded(checks, guard="a AND b"):
+    from metis_mcp.mbt.model import GuardCheck, Model, State, Transition
+    return Model(
+        id="g-api",
+        states={"A": State(id="A", name="A", is_initial=True),
+                "B": State(id="B", name="B"), "C": State(id="C", name="C")},
+        transitions={
+            "ok": Transition(id="ok", source="A", trigger="POST /x", target="B",
+                             guard=guard, lifecycle_state=APPROVED,
+                             checks=tuple(GuardCheck(*c) for c in checks)),
+            "no": Transition(id="no", source="A", trigger="POST /x", target="C",
+                             guard=f"NOT ({guard})", lifecycle_state=APPROVED),
+        })
+
+
+def _guard_notes(model):
+    from metis_mcp.mbt.criteria import targets_for
+    return {t.key: t.data_note
+            for t in targets_for(model, "guard-coverage").targets
+            if t.key.startswith("ok::")}
+
+
+def test_a_landed_check_supplies_the_condition_instead_of_the_split_string():
+    """One check, one condition — and the guard string is not consulted."""
+    notes = _guard_notes(_guarded(
+        [("payload is present", 1, "structural", "Ctl.java:38@c0ffee")],
+        guard="this AND that AND theother"))
+    assert any("payload is present must hold" in n for n in notes.values())
+    assert not any("theother" in n for n in notes.values()), (
+        "the guard string was split anyway — the checks were ignored")
+
+
+def test_a_targets_note_carries_the_line_the_condition_came_from():
+    """T-9a. A condition a reviewer cannot trace is one they take on trust, and
+    the anchor is the single thing a split string can never recover."""
+    notes = _guard_notes(_guarded(
+        [("accepted", 1, "business", "ScopedController.java:41@c0ffee")]))
+    assert any("[ScopedController.java:41@c0ffee]" in n for n in notes.values())
+
+
+def test_a_later_check_states_what_must_already_hold_to_reach_it():
+    """**The fact that only `GUARDED_BY` holds.**
+
+    Checks short-circuit. A fixture built to exercise the third condition never
+    reaches it unless the first two are already satisfied, so "vary condition 3"
+    is not an executable instruction on its own. Splitting `a AND b AND c` gives
+    three conditions and no such statement.
+    """
+    notes = _guard_notes(_guarded([
+        ("present", 1, "structural", ""),
+        ("owned", 2, "business", ""),
+        ("summarisable", 3, "business", "")]))
+    third = [n for k, n in notes.items() if "summarisable" in k]
+    assert third, "no target for the third condition"
+    assert all("present and owned already hold" in n for n in third)
+
+    first = [n for k, n in notes.items() if k.startswith("ok::present::")]
+    assert all("already hold" not in n for n in first), (
+        "the first check requires nothing before it")
+
+
+def test_the_note_states_a_condition_and_never_a_value(_=None):
+    """M-9 survives the change: the model says what must be true, never what to
+    send. A precedence note that named a value would be solving the guard."""
+    notes = _guard_notes(_guarded([("attempts < 3", 1, "business", "")]))
+    for note in notes.values():
+        assert "=" not in note.replace("<=", "").replace(">=", "").replace("!=", "")
+
+
+def test_a_transition_with_no_landed_check_is_covered_exactly_as_before():
+    """The fallback is most of the estate. `GUARDED_BY` is written only where
+    dimension recovery resolved the checks, and mfa has none at all — so a
+    regression here would be invisible on the live graph and total."""
+    from metis_mcp.mbt.criteria import atomic_conditions, guard_conditions
+    from metis_mcp.mbt.model import Transition
+
+    t = Transition(id="t", source="A", trigger="go", target="B",
+                   guard="alpha AND beta")
+    assert guard_conditions(t) == [(c, "") for c in atomic_conditions(t.guard)]

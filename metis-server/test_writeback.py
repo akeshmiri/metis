@@ -25,6 +25,24 @@ from metis_mcp.specgen.writeback import (
 )
 from mbt_fixtures import login_model
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _installation_permits_external_writes(monkeypatch):
+    """These tests exercise what happens when a write IS permitted.
+
+    Write-back puts files into somebody else's repository, so it now sits behind
+    `METIS_ALLOW_EXTERNAL_WRITES` as well as its confirmation — a literal can be
+    supplied by whatever drives the run, and only a deployment decision made out
+    of band says an installation may touch a product tree. The switch is asserted
+    on its own in `test_the_installation_switch_is_required_as_well`; everything
+    else here is about T-15 and classification, which are downstream of it.
+    """
+    from metis_mcp.publishing.publish import EXTERNAL_WRITES_ENV
+
+    monkeypatch.setenv(EXTERNAL_WRITES_ENV, "yes")
+
 AT = "2026-08-16T09:00:00+00:00"
 
 
@@ -207,3 +225,24 @@ if __name__ == "__main__":
             print(f"ERROR {t.__name__}: {type(e).__name__}: {e}")
     print(f"\n{len(tests) - failures}/{len(tests)} passed")
     sys.exit(1 if failures else 0)
+
+
+def test_the_installation_switch_is_required_as_well(monkeypatch, tmp_path):
+    """A confirmation alone must not put a file in somebody's repository.
+
+    The literal is a string; an agent can type it. Only a deployment decision
+    taken out of band says this installation may write to a product tree at all.
+    """
+    from metis_mcp.publishing.publish import EXTERNAL_WRITES_ENV
+
+    monkeypatch.delenv(EXTERNAL_WRITES_ENV, raising=False)
+    docs, specs = _docs()
+    plan = plan_writeback(str(tmp_path), docs, specs=specs)
+    assert plan.size, "there is real work in this plan"
+
+    result = apply(plan, confirm(AFFIRMATIVE, "sam", plan.size))
+
+    assert not result["ok"]
+    assert result["written"] == [], "not one file, not a partial plan"
+    assert EXTERNAL_WRITES_ENV in result["refused"]
+    assert not any(tmp_path.rglob("*.md")), "nothing reached the disk"

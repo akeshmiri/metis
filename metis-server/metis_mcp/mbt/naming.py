@@ -157,7 +157,7 @@ def transition_display_name(transition, states: dict | None = None,
     **D-8 says `name` is display data, not identity** -- and landing was setting
     it to the id, so the graph showed a reviewer
 
-        org.catools.athena.metric.controller.MetricController.getActionById:
+        com.example.records.RecordController.one:
         org.springframework.http.ResponseEntity(java.lang.Long)::GET->NoContent204
 
     where it meant to show them a behaviour. The id is unchanged and still

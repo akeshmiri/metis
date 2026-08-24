@@ -22,7 +22,7 @@ from metis_mcp.mbt.test_levels import (
 
 def _model() -> Model:
     m = Model(
-        id="athena-metric-api",
+        id="records-api",
         states={"Ready": State(id="Ready", name="Ready", surface="api", is_initial=True),
                 "Ok200": State(id="Ok200", name="Ok200", surface="api"),
                 "NoContent204": State(id="NoContent204", name="NoContent204", surface="api")},
@@ -39,7 +39,7 @@ def _model() -> Model:
 
 def _inv(routes, asserts=()):
     return Inventory(tests=[ExistingTest(
-        name="shallDoSomething", owner="MetricControllerIT", level=API_FUNCTIONAL,
+        name="shallDoSomething", owner="RecordControllerIT", level=API_FUNCTIONAL,
         routes=tuple(routes), asserts=tuple(asserts))])
 
 
@@ -52,7 +52,7 @@ def test_a_transition_whose_outcome_is_asserted_is_covered_and_skipped():
                                service="metric")
     assert grades["list"].grade == COVERED
     assert not grades["list"].should_generate
-    assert "MetricControllerIT.shallDoSomething" in grades["list"].evidence
+    assert "RecordControllerIT.shallDoSomething" in grades["list"].evidence
 
 
 def test_a_transition_nothing_reaches_is_uncovered_and_generates():
@@ -74,7 +74,7 @@ def test_the_reason_is_recorded_never_a_silent_skip():
 # --------------------------------------------------------------------------
 
 def test_reaching_an_endpoint_does_not_excuse_an_unasserted_outcome():
-    """The real athena case: a test calls GET /{id} and asserts 200. That is
+    """The real the pilot estate case: a test calls GET /{id} and asserts 200. That is
     evidence for the 200 transition and says NOTHING about the 204 one."""
     grades = grade_transitions(
         _model(), _inv([("GET", "/metric/{id}")], ["200"]), service="metric")
@@ -143,15 +143,64 @@ def test_another_services_test_never_credits_this_one():
     assert grades["sum"].grade == UNCOVERED, "git's test must not cover metric"
 
     same = Inventory(tests=[ExistingTest(
-        name="x", owner="MetricControllerIT", level=API_FUNCTIONAL,
+        name="x", owner="RecordControllerIT", level=API_FUNCTIONAL,
         routes=(("GET", "/summary"),), asserts=("200",), service="metric")])
     assert grade_transitions(m, same, service="metric")["sum"].grade == COVERED
 
 
-def test_the_service_is_derived_from_the_anchor_path():
+def test_the_service_defaults_to_the_first_path_segment():
+    """No profile, no convention: the module is the directory it is in.
+
+    This used to be a regex matching one estate's directory naming, compiled into
+    the engine. Against any other layout it matched nothing and `--service`
+    reported "nothing recognisable" — true of the regex, false of the code.
+    """
     from metis_mcp.mbt.test_levels import service_of_path
-    assert service_of_path("athena-boot-metric/src/it/java/X.java") == "metric"
-    assert service_of_path("somewhere/else/X.java") == ""
+
+    assert service_of_path("records-service/src/main/java/X.java") == "records-service"
+    assert service_of_path("archive-service/src/it/java/X.java") == "archive-service"
+    assert service_of_path("X.java") == ""
+    assert service_of_path("") == ""
+
+
+def test_a_build_layout_directory_is_not_a_service_name():
+    """A single-module repository has paths starting `src/`, and answering "src"
+    was worse than answering nothing: `Inventory.reaching` treats "" as unscoped
+    and still matches on the route, where a wrong service name blocks every match.
+    Three recovered tests graded eight transitions as uncovered that way."""
+    from metis_mcp.mbt.test_levels import service_of_path
+
+    assert service_of_path("src/test/java/com/example/records/RecordIT.java") == ""
+    assert service_of_path("main/java/X.java") == ""
+    assert service_of_path("target/classes/X.java") == ""
+
+
+def test_a_project_profile_overrides_the_default():
+    """The migration path: any convention is expressible, none is assumed."""
+    import re
+
+    from metis_mcp.mbt.test_levels import service_of_path, set_service_resolver
+
+    try:
+        # A real convention: the deployable is named by a suffixed directory,
+        # `<name>-boot/`, and everything else belongs to no module.
+        pattern = re.compile(r"^([a-z]+)-boot/")
+        set_service_resolver(
+            lambda p: (pattern.search(p).group(1) if pattern.search(p) else ""))
+        assert service_of_path("records-boot/src/it/java/X.java") == "records"
+        assert service_of_path("records-service/src/main/java/X.java") == ""
+    finally:
+        set_service_resolver(None)
+    # and it is really reset, so one test cannot leak a convention into another
+    assert service_of_path("records-service/src/main/java/X.java") == "records-service"
+
+
+def test_the_model_id_strip_takes_only_the_surface():
+    """M-1 says `<journey>-<surface>`; it says nothing about a prefix."""
+    from metis_mcp.mbt.test_levels import _service_of
+
+    assert _service_of(Model(id="records-api")) == "records"
+    assert _service_of(Model(id="records-api")) == "records"
 
 
 def test_the_verb_must_still_match():
@@ -188,14 +237,14 @@ def test_planned_transitions_are_not_graded():
 
 def test_an_inventory_is_built_from_the_pack_report():
     inv = from_pack({
-        "tests": [{"name": "shallX", "owner": "MetricControllerIT",
+        "tests": [{"name": "shallX", "owner": "RecordControllerIT",
                    "level": API_FUNCTIONAL,
                    "routes": [{"verb": "GET", "path": "/metric/all"}],
                    "asserts": ["200"],
-                   "anchor": {"file": "a/b/MetricControllerIT.java", "line": 42}}],
+                   "anchor": {"file": "a/b/RecordControllerIT.java", "line": 42}}],
         "unresolved": [{"name": "helperish", "reason": "no Feign route reached"}]})
     assert len(inv.tests) == 1
-    assert inv.tests[0].anchor == "MetricControllerIT.java:42"
+    assert inv.tests[0].anchor == "RecordControllerIT.java:42"
     assert inv.levels_present == {API_FUNCTIONAL}
     assert inv.unresolved == [("helperish", "no Feign route reached")]
 

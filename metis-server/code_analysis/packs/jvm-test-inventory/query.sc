@@ -16,7 +16,7 @@
 // The join that does work, verified against the real CPG before this pack was
 // written, is the **Feign client**:
 //
-//     MetricControllerIT.shallReturnInventoryPage…
+//     RecordControllerIT.shallReturnInventoryPage…
 //        --calls-->  MetricFeignClient.getAll
 //        --@RequestLine("GET /metric/all?…")-->  GET /all
 //
@@ -36,15 +36,30 @@
 
 import java.io.PrintWriter
 
-@main def main(cpgPath: String, commit: String, repo: String, out: String) = {
+// `pathPrefix` exists because this pack is the one run against a CPG rooted
+// INSIDE the repository (see `engine.test_roots`): javasrc2cpg ignores test
+// directories by name, so the only way to get tests into a graph is to make the
+// test directory the input root. Every filename the CPG then reports is relative
+// to THAT root -- `com/example/...` rather than `src/test/java/com/example/...`.
+// An anchor like that is wrong for a human opening the file and wrong for
+// `test_levels.service_of_path`, whose default rule is "the module is the first
+// path segment": it read the Java package root `com` as the service name, and
+// every existing test then credited a service called `com`, so nothing matched
+// and three recovered tests graded eight transitions as uncovered.
+@main def main(cpgPath: String, commit: String, repo: String, out: String,
+               pathPrefix: String = "") = {
   importCpg(cpgPath)
 
   def esc(s: String): String =
     if (s == null) "" else s.replace("\\", "\\\\").replace("\"", "\\\"")
       .replace("\n", " ").replace("\r", " ").replace("\t", " ")
 
+  def repoRelative(file: String): String =
+    if (pathPrefix.isEmpty || file.startsWith(pathPrefix)) file
+    else pathPrefix.stripSuffix("/") + "/" + file
+
   def anchor(file: String, line: Option[Int]): String =
-    s"""{"file":"${esc(file)}","line":${line.getOrElse(0)},"commit":"${esc(commit)}"}"""
+    s"""{"file":"${esc(repoRelative(file))}","line":${line.getOrElse(0)},"commit":"${esc(commit)}"}"""
 
   def unquote(s: String): String =
     s.trim.stripPrefix("\"").stripSuffix("\"").trim

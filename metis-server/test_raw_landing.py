@@ -39,9 +39,9 @@ from metis_mcp.model_sources.raw_landing import (
     type_names_in,
 )
 
-A = Anchor("MetricController.java", 42, "sha1")
-DTO_A = Anchor("MetricDto.java", 12, "sha1")
-REPO = "athena"
+A = Anchor("RecordController.java", 42, "sha1")
+DTO_A = Anchor("RecordDto.java", 12, "sha1")
+REPO = "the pilot estate"
 
 
 def _structural(**kw) -> ExtractionReport:
@@ -49,23 +49,23 @@ def _structural(**kw) -> ExtractionReport:
         pack="jvm-structural", pack_version="0.1.0", engine="joern",
         engine_version="4.0.604", repo=REPO, commit="sha1", frontend="javasrc2cpg",
         methods=kw.get("methods", [
-            MethodFact(id="c.MetricController.save:R(D)", name="save",
-                       type_name="MetricController", signature="R(D)", anchor=A)]),
+            MethodFact(id="c.RecordController.save:R(D)", name="save",
+                       type_name="RecordController", signature="R(D)", anchor=A)]),
         endpoints=kw.get("endpoints", [
             EndpointFact(id="e1", http_method="POST", path="/metric",
-                         handler_method_id="c.MetricController.save:R(D)", anchor=A,
-                         handler_type="MetricController", handler_name="save",
+                         handler_method_id="c.RecordController.save:R(D)", anchor=A,
+                         handler_type="RecordController", handler_name="save",
                          validated=True, response_type="ResponseEntity<Void>",
                          response_body="",
                          parameters=(
                              ParameterFact("metricDto", "body",
-                                           "org.catools.athena.model.MetricDto"),
+                                           "org.example.records.dto.RecordDto"),
                              ParameterFact("page", "query", "int"),
                          ))]),
         members=kw.get("members", [
-            MemberFact("MetricDto", "duration", "java.lang.Long", DTO_A,
+            MemberFact("RecordDto", "duration", "java.lang.Long", DTO_A,
                        constraints=("@NotNull",)),
-            MemberFact("MetricDto", "project", "java.lang.String", DTO_A)]),
+            MemberFact("RecordDto", "project", "java.lang.String", DTO_A)]),
         exception_mappings=kw.get("mappings", [
             ExceptionMappingFact("MethodArgumentNotValidException", 400,
                                  "GlobalExceptionHandler", A)]),
@@ -78,15 +78,15 @@ def _behaviour() -> ExtractionReport:
         engine_version="4.0.604", repo=REPO, commit="sha1", frontend="javasrc2cpg",
         checks=[CheckFact("chk-1", "t.isEmpty()", 1, A)],
         outcomes=[OutcomeFact(
-            id="c.MetricController.save:R(D)::POST::201",
-            endpoint_id="c.MetricController.save:R(D)::POST",
+            id="c.RecordController.save:R(D)::POST::201",
+            endpoint_id="c.RecordController.save:R(D)::POST",
             signature="201/created", status=201, discriminator="created",
             guarding_check_ids=("chk-1",), link="name-match", anchor=A)],
     )
 
 
 def _plan(**kw):
-    return plan_raw_landing(_structural(**kw), journey="athena", repo=REPO,
+    return plan_raw_landing(_structural(**kw), journey="the pilot estate", repo=REPO,
                             behaviour=kw.get("behaviour", _behaviour()),
                             ui_facts=kw.get("ui_facts"),
                             include_call_graph=kw.get("include_call_graph", True))
@@ -114,10 +114,33 @@ def test_the_plan_passes_the_same_gate_every_other_write_does():
 
 
 def test_every_layer_of_the_intake_becomes_nodes():
+    # `Field` is absent on purpose since X-6d: a scalar field is a property of
+    # its type, not a node. What must still be true is that the fields are THERE
+    # — asserted below rather than dropped from the list silently.
     labels = _labels(_plan())
-    for label in ("Endpoint", "Parameter", "Class", "Field", "Method",
+    for label in ("Endpoint", "Parameter", "Class", "Method",
                   "DeclaredOutcome", "Check", "ExceptionMapping"):
         assert labels[label] >= 1, f"nothing landed for {label}"
+    assert "Field" not in labels, "a field is a property of its type (X-6d)"
+
+
+def test_a_types_fields_travel_on_the_type():
+    """The counterpart to the line above: the fields did not vanish with the
+    label. `RecordDto` declares `duration` and `project`, one of them with a
+    `@NotNull`, and all of that has to survive the flattening."""
+    from metis_mcp.ontology.facts import expand_fields
+
+    node = next(n for n in _plan().nodes
+                if n.label == "Class" and n.properties.get("name") == "RecordDto")
+    fields = expand_fields(node.properties)["fields"]
+    assert set(fields) == {"duration", "project"}
+    assert fields["duration"]["constraints"] == ["@NotNull"]
+    assert fields["duration"]["type"] == "java.lang.Long"
+    # `required` is absent here because this fixture's MemberFact does not carry
+    # it: the pack derives it from `@NotNull`, and landing deliberately does NOT
+    # re-parse the annotation text — re-deriving it here would be the second
+    # parser X-6b exists to remove.
+    assert "required" not in fields["duration"]
 
 
 def test_every_evidence_node_carries_its_anchor():
@@ -155,7 +178,7 @@ def test_ids_exclude_the_commit_so_a_new_commit_updates_in_place():
     The commit stays where it belongs — on the anchor."""
     later = _structural()
     later.commit = "sha2"
-    plan = plan_raw_landing(later, journey="athena", repo=REPO,
+    plan = plan_raw_landing(later, journey="the pilot estate", repo=REPO,
                             behaviour=_behaviour())
     endpoints = [n for n in plan.nodes if n.label == "Endpoint"]
     assert endpoints[0].properties["id"] == endpoint_id(REPO, "POST", "/metric")
@@ -164,7 +187,7 @@ def test_ids_exclude_the_commit_so_a_new_commit_updates_in_place():
 
 
 def test_two_repositories_declaring_one_type_stay_two_nodes():
-    assert class_id("athena", "MetricDto") != class_id("other", "MetricDto")
+    assert class_id("the pilot estate", "RecordDto") != class_id("other", "RecordDto")
 
 
 # --------------------------------------------------------------------------
@@ -176,7 +199,7 @@ def test_a_parameter_typed_by_a_jdk_class_gets_no_edge_and_no_stub_node():
     would be a fabricated node; an edge to one would dangle."""
     plan = _plan()
     class_names = {n.properties["name"] for n in plan.nodes if n.label == "Class"}
-    assert "MetricDto" in class_names
+    assert "RecordDto" in class_names
     assert not {"int", "Long", "String"} & class_names
 
     # The body parameter resolves; the `int` query parameter does not.
@@ -211,7 +234,7 @@ def test_the_two_packs_endpoint_keys_are_joined():
     structural pack keys on method+path. Without the join,
     `Endpoint-[:DECLARES]->DeclaredOutcome` is catalogued and never written."""
     by_handler = endpoints_by_handler(_structural(), REPO)
-    assert by_handler["c.MetricController.save:R(D)::POST"] == \
+    assert by_handler["c.RecordController.save:R(D)::POST"] == \
            endpoint_id(REPO, "POST", "/metric")
     assert _edges(_plan())["Endpoint-DECLARES->DeclaredOutcome"] == 1
 
@@ -238,19 +261,66 @@ def test_a_guard_reaches_the_check_that_justifies_it():
 # D-13: the call graph is landed ahead of its reader, reversibly.
 # --------------------------------------------------------------------------
 
-def test_the_call_graph_can_be_left_out_without_a_code_change():
-    """D-1 requires a reader. Impact analysis — `Method`'s stated trigger — is
-    not built, so the flag keeps that choice reversible."""
+def test_the_call_graph_is_left_out_by_default_and_the_handlers_stay():
+    """**"Off" means bounded, not absent, and that distinction was a bug.**
+
+    This asserted `Method == 0` with the flag off, and the endpoint's
+    `HANDLED_BY` was suppressed alongside — consistent, but it meant a graph
+    without the call graph could not say which method serves a route, and
+    `ExceptionMapping -[:HANDLED_BY]-> Method` had no such guard at all.
+
+    What is dropped is the call graph, whose only reader
+    (`behavior_model.corroborate`) is called by nothing; what stays is every
+    method something points at. On a real service that is 17 of 199.
+    """
     assert _labels(_plan(include_call_graph=True))["Method"] == 1
-    assert _labels(_plan(include_call_graph=False))["Method"] == 0
+    off = _plan(include_call_graph=False)
+    assert _labels(off)["Method"] == 1, "the handler is referenced, so it stays"
+    assert _edges(off)["Endpoint-HANDLED_BY->Method"] == 1, (
+        "the edge that made dropping every method wrong in the first place")
+
+
+def test_the_default_leaves_the_call_graph_out():
+    """D-13 chose to land it ahead of its reader. The reader never arrived, and
+    182 unreferenced nodes per service is what the choice costs."""
+    import inspect
+
+    from metis_mcp.model_sources.raw_landing import plan_raw_landing
+
+    default = inspect.signature(plan_raw_landing).parameters["include_call_graph"].default
+    assert default is False
+
+
+def test_dropping_the_call_graph_is_reported_not_silent():
+    """A graph that quietly lost its call graph looks exactly like a codebase
+    whose methods call nothing (X-5a).
+
+    The fixture's one method IS the handler, so nothing is dropped and nothing is
+    reported — which is the honest behaviour and worth pinning. The report is
+    asserted where something is actually dropped: a second, unreferenced method.
+    """
+    from code_analysis.contract import MethodFact
+
+    plan = _plan(include_call_graph=False)
+    assert not any("call graph is not landed" in why for _, why in plan.skipped), (
+        "nothing was dropped, so nothing should be claimed")
+
+    extra = _structural().methods + [
+        MethodFact(id="c.Helper.hidden:V()", name="hidden", type_name="Helper",
+                   signature="V()", anchor=A)]
+    noisy = _plan(include_call_graph=False, methods=extra)
+    assert any("call graph is not landed" in why for _, why in noisy.skipped), (
+        noisy.skipped)
 
 
 def test_leaving_out_the_call_graph_keeps_the_rest_intact():
     plan = _plan(include_call_graph=False)
     assert plan.is_legal, plan.errors
     labels = _labels(plan)
-    assert labels["Endpoint"] == 1 and labels["Field"] == 2
-    assert _edges(plan)["Endpoint-HANDLED_BY->Method"] == 0
+    assert labels["Endpoint"] == 1 and labels["Class"] >= 1
+    # The handler survives: it is referenced, and "off" bounds the call graph
+    # rather than deleting every method (see the test above).
+    assert _edges(plan)["Endpoint-HANDLED_BY->Method"] == 1
 
 
 # --------------------------------------------------------------------------
@@ -258,7 +328,7 @@ def test_leaving_out_the_call_graph_keeps_the_rest_intact():
 # --------------------------------------------------------------------------
 
 def test_a_missing_behaviour_report_yields_a_partial_layer_not_an_error():
-    plan = plan_raw_landing(_structural(), journey="athena", repo=REPO)
+    plan = plan_raw_landing(_structural(), journey="the pilot estate", repo=REPO)
     assert plan.is_legal
     assert _labels(plan)["Endpoint"] == 1
     assert _labels(plan)["DeclaredOutcome"] == 0
@@ -266,7 +336,7 @@ def test_a_missing_behaviour_report_yields_a_partial_layer_not_an_error():
 
 def test_the_field_id_is_keyed_on_its_owning_type():
     """Two DTOs both declaring `id` must not become one node."""
-    assert field_id(REPO, "MetricDto", "id") != field_id(REPO, "ProjectDto", "id")
+    assert field_id(REPO, "RecordDto", "id") != field_id(REPO, "ProjectDto", "id")
 
 
 if __name__ == "__main__":

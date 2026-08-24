@@ -54,7 +54,7 @@ def bare_id(model_id: str, element_id: str) -> str:
     graph, and it did not.** `landing.graph_state_id` namespaces every state by
     its model — deliberately, so seven services' `Metric` do not MERGE onto one
     node — and nothing stripped it back on load. So a graph-loaded `Metric` keyed
-    as `athena-metric-api::Metric` and a freshly-synthesised one keyed as
+    as `records-api::Metric` and a freshly-synthesised one keyed as
     `Metric`, every key differed, and `diff` reported 20 ADDED + 20 REMOVED where
     the right answer was 20 UNCHANGED.
 

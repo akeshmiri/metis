@@ -71,6 +71,21 @@ class State:
 
 
 @dataclass(frozen=True)
+class GuardCheck:
+    """One condition that selected an outcome, as recovered.
+
+    Ordered, anchored, and classified. A bare guard string is none of those.
+    """
+
+    expression: str
+    order: int = 0
+    dimension_class: str = ""
+    # `file:line@commit` — T-9a: a condition a reviewer cannot trace is a claim
+    # they must take on trust.
+    anchor: str = ""
+
+
+@dataclass(frozen=True)
 class Transition:
     """One interaction: trigger, guard, source and target state.
 
@@ -146,6 +161,18 @@ class Transition:
     # rather than objects so this module stays database-free and the pure model
     # keeps its meaning.
     evidence: tuple = ()
+    # The `Check` nodes reached by `DERIVED_FROM -> DeclaredOutcome -> GUARDED_BY`.
+    #
+    # **Why this exists when `guard` already does.** `guard` is one string. A
+    # `Check` is one condition, at one line, with the position it holds in the
+    # evaluation sequence — and that ordering is a test data requirement, not
+    # trivia: if check 1 short-circuits, no fixture reaches check 3 without
+    # satisfying check 1 first. Splitting the string cannot recover it.
+    #
+    # `GUARDED_BY` was written by landing for a long time and read by nothing;
+    # this field, and `_guard_coverage` below it, are what make it a fact the
+    # engine uses rather than a fact the engine stores.
+    checks: tuple = ()
 
     @property
     def is_callable(self) -> bool:

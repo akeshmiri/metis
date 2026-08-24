@@ -26,6 +26,7 @@ from metis_mcp.mbt.model import QUARANTINE
 from metis_mcp.mbt.naming import transition_display_name
 from metis_mcp.model_sources.base import SourceResult
 from metis_mcp.ontology import validate, validate_relationship
+from metis_mcp.ontology.labels import NEED_REVIEW, NEEDS_REVIEW_STATES
 
 
 # **Human facts. A write path may never assert these.**
@@ -100,20 +101,52 @@ def namespaced_id(model_id: str, element_id: str) -> str:
     return f"{model_id}::{element_id}"
 
 
+def graph_transition_id(model, transition_id: str) -> str:
+    """The id a transition is WRITTEN with — its natural key, not its source's id.
+
+    **This is what lets two intakes describe one behaviour once** (I-2, R12).
+    A transition's id comes from whatever recovered it: the code intake mints a
+    Java signature, the OpenAPI intake mints an operationId. Measured on the demo
+    corpus, `POST /record` reaches the graph as
+
+        code     com.example.records.RecordController.create:…ResponseEntity(…)::POST
+        OpenAPI  createRecord::POST->PostRecord201
+
+    — two nodes for one behaviour, and a model that then claims twice the
+    behaviour the service has, with no edge between the halves and nothing
+    reporting it.
+
+    `identity.keys.transition_key` has defined the natural key all along —
+    `(model, source state, trigger, target state)` — and no writer used it.
+    Landing does now, so the same behaviour recovered twice MERGEs onto one node
+    and a deviation is what is left over rather than what has to be hunted for.
+
+    Every writer of a transition id must go through here. One that mints its own
+    plans an edge against a node that does not exist, which `land` reports as
+    unmatched rather than failing.
+    """
+    from metis_mcp.identity.keys import short, transition_key
+
+    transition = model.transitions.get(transition_id)
+    if transition is None:
+        return ensure_namespaced(model.id, transition_id)
+    return f"{model.id}::{short(transition_key(model.id, transition, model))}"
+
+
 def ensure_namespaced(model_id: str, element_id: str) -> str:
     """`namespaced_id`, but idempotent — safe on an id that already carries it.
 
     Both forms are real and reach the same writers. A model read from a **file**
     has bare ids (`Ready`); the same model read from the **graph** comes back
-    already namespaced (`athena-git-api::Ready`), because that is what landing
+    already namespaced (`archive-api::Ready`), because that is what landing
     wrote. `plan_persist` takes either, so applying `namespaced_id`
-    unconditionally produced `athena-git-api::athena-git-api::Ready` and every
+    unconditionally produced `archive-api::archive-api::Ready` and every
     edge matched nothing.
 
     The test is a prefix check, **not** `"::" in element_id`: a Web element id
     is `ui::ApiSpecDetailPage::/spec/::Ok200`, which contains `::` while being
     entirely un-namespaced. That containment test is what left
-    `athena-spec-ui`'s findings unattached.
+    `records-spec-ui`'s findings unattached.
     """
     prefix = f"{model_id}::"
     return element_id if element_id.startswith(prefix) else prefix + element_id
@@ -287,7 +320,7 @@ def plan_landing(result: SourceResult, journey: str,
     for tid in model.transition_ids():
         transition = model.transitions[tid]
         add_node(transition_label, {
-            "id": ensure_namespaced(model.id, tid), "source_episode_id": episode_id,
+            "id": graph_transition_id(model, tid), "source_episode_id": episode_id,
             # D-8: `name` is display data, not identity. It used to be the id --
             # a Java signature with a return type in it -- so every review screen
             # and every report showed a reviewer the implementation instead of
@@ -335,8 +368,8 @@ def plan_landing(result: SourceResult, journey: str,
             "name_tier": getattr(transition, "name_tier", ""),
         })
         add_edge("State", graph_state_id(transition.source), "WHEN",
-                 transition_label, ensure_namespaced(model.id, tid))
-        add_edge(transition_label, ensure_namespaced(model.id, tid), "THEN", "State",
+                 transition_label, graph_transition_id(model, tid))
+        add_edge(transition_label, graph_transition_id(model, tid), "THEN", "State",
                  graph_state_id(transition.target))
 
         # D-14: provenance is an edge. Each pair is `(label, evidence node id)`
@@ -346,7 +379,7 @@ def plan_landing(result: SourceResult, journey: str,
         for label, node_id in getattr(transition, "evidence", ()) or ():
             rel = EVIDENCE_RELATIONSHIPS.get(label)
             if rel:
-                add_edge(transition_label, ensure_namespaced(model.id, tid), rel,
+                add_edge(transition_label, graph_transition_id(model, tid), rel,
                          label, node_id)
 
     return plan
@@ -366,6 +399,27 @@ class LandingResult:
     @property
     def ok(self) -> bool:
         return self.refused is None
+
+
+def _with_marker(node: PlannedNode, props: dict) -> tuple:
+    """`node.also`, plus `:NeedReview` when this node still owes a decision.
+
+    **Applied here rather than in each planner, and that is the whole point.**
+    Eight planners produce nodes -- behaviour, documentation, glossary, intent,
+    structure, intake, spec documents, features -- and every one of them lands
+    at Quarantine (S-4). Marking them one by one would mean the ninth planner
+    somebody writes is unmarked, and nothing would notice: the node would look
+    settled while being unreviewed, which is the safest-looking way to get the
+    dangerous answer.
+
+    Driven off `lifecycle_state`, which stays authoritative. A node with no
+    lifecycle at all -- an `Episode`, an `Endpoint` -- is a fact rather than a
+    candidate, and facts are not reviewed.
+    """
+    state = props.get("lifecycle_state")
+    if state in NEEDS_REVIEW_STATES:
+        return tuple(dict.fromkeys((*node.also, NEED_REVIEW)))
+    return node.also
 
 
 def land(session, plan: LandingPlan) -> LandingResult:
@@ -391,10 +445,16 @@ def land(session, plan: LandingPlan) -> LandingResult:
     by_label: dict[tuple, list[dict]] = {}
     for node in plan.nodes:
         props = {k: v for k, v in node.properties.items() if v is not None}
-        by_label.setdefault((node.label, node.also), []).append(props)
+        by_label.setdefault((node.label, _with_marker(node, props)), []).append(props)
 
     nodes_written = 0
     for (label, also), rows in by_label.items():
+        # **After the ON CREATE clause, not before it.** `ON CREATE SET` has to
+        # follow `MERGE` immediately, so appending the label here produced
+        # `MERGE (...) SET n:X ON CREATE SET ...` — a syntax error. The `also`
+        # path had never been exercised (no node carried a second label until
+        # `:NeedReview`), so the bug shipped latent and surfaced the first time
+        # something used it.
         extra = "".join(f" SET n:{extra_label}" for extra_label in also)
         # Split in Python, not in Cypher. The map-manipulation this needs in
         # Cypher is an APOC function, and this deployment is Community with no
@@ -406,9 +466,9 @@ def land(session, plan: LandingPlan) -> LandingResult:
                  for row in rows]
         result = session.run(
             f"UNWIND $rows AS row "
-            f"MERGE (n:{label} {{id: row.id}}){extra} "
+            f"MERGE (n:{label} {{id: row.id}}) "
             f"ON CREATE SET n += row.human "
-            f"SET n += row.machine "
+            f"SET n += row.machine{extra} "
             f"RETURN count(n) AS written", rows=split)
         nodes_written += _count(result)
 

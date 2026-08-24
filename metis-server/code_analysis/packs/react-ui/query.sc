@@ -67,8 +67,19 @@ import java.io.PrintWriter
 
     // The first string literal in the second argument is the resource path,
     // whether passed directly or through buildResourcePath("/summary", ...).
-    val pathLit = c.argument.argumentIndex(2).ast.isLiteral.code.l
-      .map(unquote).find(_.startsWith("/"))
+    //
+    // **A template literal is not a literal path.** jssrc2cpg lowers `` `/${id}` ``
+    // to `<operator>.formatString("/", id, "")`, whose literal fragments are `"/"`
+    // and `""`. Taking the first one reported the endpoint as `/record/` -- not
+    // the route, not the fragment, and not marked as either. A confident wrong
+    // answer is worse than no answer (X-4), so an interpolated path goes to
+    // `unresolved_calls` where a reviewer can see it.
+    val interpolated = c.argument.argumentIndex(2).ast.isCall.l
+      .exists(_.name == "<operator>.formatString")
+    val pathLit =
+      if (interpolated) None
+      else c.argument.argumentIndex(2).ast.isLiteral.code.l
+        .map(unquote).find(_.startsWith("/"))
 
     if (root.nonEmpty && pathLit.nonEmpty) {
       callBuf += s"""{"id":"uicall-$i","screen":"${esc(screen)}",""" +
@@ -80,17 +91,31 @@ import java.io.PrintWriter
       unresBuf += s"""{"id":"uicall-$i","screen":"${esc(screen)}",""" +
         s""""root_code":"${esc(rootCode.take(60))}","path_code":"${esc(pathCode.take(80))}",""" +
         s""""reason":"${esc(
-          if (root.isEmpty && pathLit.isEmpty) "root and path are both computed"
+          if (interpolated) "path is a template literal with an interpolation, " +
+            "so the route it reaches is not statically known"
+          else if (root.isEmpty && pathLit.isEmpty) "root and path are both computed"
           else if (root.isEmpty) "root is a variable, not apiRoots.<name>"
           else "no literal path")}","anchor":${anchor(file, c.lineNumber)}}"""
     }
   }
 
   // ---- 2. The UI's own state vocabulary (X-7 tier 2) ----
-  cpg.call.name("set(Status|SummaryStatus|DriftStatus|TrendStatus)").l.zipWithIndex
+  // **`set<Anything>Status`, not a list of one estate's screens.** This read
+  // `set(Status|SummaryStatus|DriftStatus|TrendStatus)` -- `DriftStatus` and
+  // `TrendStatus` are two screens from the codebase the pack was first written
+  // against, compiled into a shipped pack. Any other project's setter was
+  // invisible, and the convention being matched is `set…Status`, which is
+  // expressible without naming anybody's screens.
+  cpg.call.name("set([A-Z][A-Za-z0-9]*)?Status").l.zipWithIndex
     .foreach { case (c, i) =>
-      val lit = c.argument.isLiteral.code.headOption.map(unquote)
-      lit.foreach { value =>
+      // **Every string literal in the argument, not only a direct one.**
+      // `setStatus(record ? "ready" : "error")` is two real states, and reading
+      // just the immediate argument found neither: a ternary is a call, so
+      // `argument.isLiteral` is empty and two states the UI genuinely has were
+      // dropped without a word. Walking the argument's AST reads both branches.
+      c.argument.ast.isLiteral.code.l.filter(s =>
+        s.startsWith("\"") || s.startsWith("'")).map(unquote)
+        .filter(_.nonEmpty).distinct.foreach { value =>
         stateBuf += s"""{"id":"uistate-$i","screen":"${esc(screenOf(c.method))}",""" +
           s""""setter":"${esc(c.name)}","value":"${esc(value)}",""" +
           s""""anchor":${anchor(c.file.name.headOption.getOrElse(""), c.lineNumber)}}"""
@@ -98,13 +123,46 @@ import java.io.PrintWriter
     }
 
   // ---- 3. Routes: the screens a user navigates ----
-  cpg.literal.code(".*").l.filter { l =>
-    val c = unquote(l.code)
-    l.file.name.headOption.exists(_.endsWith("App.jsx")) &&
-      c.nonEmpty && !c.startsWith("/") && c.matches("[a-z][a-z0-9-]{2,}")
-  }.distinctBy(_.code).zipWithIndex.foreach { case (l, i) =>
-    routeBuf += s"""{"id":"route-$i","path":"${esc(unquote(l.code))}",""" +
-      s""""anchor":${anchor(l.file.name.headOption.getOrElse(""), l.lineNumber)}}"""
+  //
+  // **This took any lowercase literal of three or more characters in a file
+  // called App.jsx, and explicitly EXCLUDED anything starting with `/`.** So it
+  // rejected the one shape a route actually has, and accepted everything else.
+  // Measured against a React application with no router it reported six routes, every one a false
+  // positive: `prop-types` and `react` (import specifiers), `null`/`true`/
+  // `false` (defaultProps values) and `default` (from `export default App`).
+  // Six confident answers, zero routes, which is worse than none (X-4).
+  //
+  // A route is recovered from routing evidence or not at all. jssrc2cpg lowers
+  // a router config — `createBrowserRouter([{ path: '/about', ... }])` — into
+  // an assignment `_tmp_4.path = "/about"`, so the `path` KEY is structurally
+  // present even though the surrounding JSX is not. That is the signal.
+  //
+  // `<Route path="...">` in JSX stays unrecoverable and is not guessed at
+  // (T-9d); a project using only that form gets zero routes and a note, which
+  // is the honest answer.
+  def looksLikeRoutePath(value: String): Boolean = {
+    // A JS regex literal reaches here as `/\s+/g`. It starts with `/` like a
+    // path does, and a React application with no router's 33 "navigation calls" were every one of
+    // them `String.replace(/regex/g)`.
+    val isRegex = value.length > 1 && value.startsWith("/") &&
+      value.substring(1).matches(".*/[gimsuy]*$")
+    !isRegex && value.startsWith("/")
+  }
+
+  val routeAssignments = cpg.assignment.l.filter { a =>
+    a.target.code.trim.endsWith(".path")
+  }.flatMap { a =>
+    val raw = a.source.code.trim
+    val quoted = raw.startsWith("\"") || raw.startsWith("'")
+    val value = unquote(raw)
+    if (quoted && looksLikeRoutePath(value))
+      Some((value, a.file.name.headOption.getOrElse(""), a.lineNumber))
+    else None
+  }.distinctBy(_._1)
+
+  routeAssignments.zipWithIndex.foreach { case ((value, file, line), i) =>
+    routeBuf += s"""{"id":"route-$i","path":"${esc(value)}",""" +
+      s""""anchor":${anchor(file, line)}}"""
   }
 
   val report =

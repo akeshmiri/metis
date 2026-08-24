@@ -4,10 +4,12 @@ Authored page and data structure (application spec §5.2a, §5.2b; D-1, D-14).
 Free to run: pure loading, validation and planning. No Neo4j, no model calls.
 """
 import json
+import pytest
 import sys
 from pathlib import Path
 
 from metis_mcp.model_sources.structure import (
+    element_id_for,
     DANGLING_REFERENCE,
     DB_KINDS,
     ILLEGAL_CONTAINMENT,
@@ -169,8 +171,11 @@ def test_the_ui_table_is_not_the_database_table():
     by_label = {}
     for node in plan.nodes:
         by_label.setdefault(node.label, []).append(node.properties["id"])
-    assert by_label["UiTable"] == ["rl-table"]
-    assert by_label["Table"] == ["tb-record"]
+    # The UI element is keyed on (page, name, index) now, so the assertion is
+    # agreement with the identity function rather than the authored id — which
+    # is display data (D-8) and must be free to change without re-keying.
+    assert by_label["UiTable"] == [element_id_for("records-list", "Records table")]
+    assert by_label["Table"] == ["tb-record"], "the database table keeps its own id"
 
 
 def test_everything_lands_at_quarantine():
@@ -241,3 +246,172 @@ def test_without_a_component_pages_are_referenced_not_created():
 
     plan = plan_structure(load("test_fixtures/structure.json"), "ep-1")
     assert not [n for n in plan.nodes if n.label == "Page"]
+
+
+# --------------------------------------------------------------------------
+# Element identity: (page, normalised name, index) — X-19's element_selector
+# --------------------------------------------------------------------------
+
+from metis_mcp.model_sources.structure import (  # noqa: E402
+    element_display_name,
+    elements_for,
+    normalised_name,
+    pending_selectors,
+    selector_resolution,
+)
+
+
+@pytest.mark.parametrize("authored,extracted", [
+    ("Archive", "archiveButton"),
+    ("Apply filter", "applyFilter"),
+    ("New record", "newRecord"),
+    ("Export", "exportButton"),
+])
+def test_the_authored_name_and_the_extracted_name_reduce_to_the_same_basis(
+        authored, extracted):
+    """All four demo pairs, which is what makes the join possible at all."""
+    assert normalised_name(authored) == normalised_name(extracted)
+
+
+def test_only_one_ui_suffix_is_stripped_and_only_from_the_end():
+    """An open suffix list is a guess that grows, and each addition silently
+    re-keys every element ending in it. `inputField` is a real name."""
+    assert normalised_name("inputField") == "input"
+    assert normalised_name("Button") == "button", "not reduced to nothing"
+
+
+def test_renaming_the_authored_id_does_not_produce_a_second_node():
+    """**The reason identity moved off the authored id** (D-8, I-2). A
+    structure file that renames `rl-archive` to `archive-btn` describes the same
+    button, and a new node would silently split its history in two."""
+    before = {n.properties["id"] for n in plan_structure(_structure(), "ep").nodes}
+    renamed = _mutated(lambda d: d["pages"]["records-list"][0]["contains"][0]
+                       .__setitem__("id", "totally-different-id"))
+    after = {n.properties["id"] for n in plan_structure(renamed, "ep").nodes}
+    assert before == after
+
+
+def test_elements_sharing_a_name_on_one_page_keep_distinct_identities():
+    """`records-list` already carries more than one element named `click`, so a
+    key without an index fuses them into a single node."""
+    def add_twin(d):
+        page = d["pages"]["records-list"]
+        page.append({"id": "rl-extra", "kind": "Action", "name": "Archive"})
+    twinned = _mutated(add_twin)
+    ids = [n.properties["id"] for n in plan_structure(twinned, "ep").nodes
+           if n.properties.get("join_name") == "archive"]
+    assert len(ids) == 2 and len(set(ids)) == 2, "the two Archives fused"
+
+
+def test_a_repeated_name_is_suffixed_for_display_and_a_unique_one_is_not():
+    assert element_display_name("Click", 0, 1) == "Click"
+    assert element_display_name("Click", 0, 3) == "Click"
+    assert element_display_name("Click", 1, 3) == "Click 2"
+
+
+def test_the_authored_id_survives_as_display_data():
+    """It stops being identity; it does not stop being useful. A reviewer needs
+    to find the entry in the file that produced a node."""
+    authored = {n.properties.get("authored_id")
+                for n in plan_structure(_structure(), "ep").nodes}
+    assert "rl-table" in authored
+
+
+# --------------------------------------------------------------------------
+# The join itself
+# --------------------------------------------------------------------------
+
+def test_an_intake_that_has_not_run_leaves_the_join_proposed():
+    """Not refuted. The distinction is the reason this goes through `resolve`
+    at all: `proposed` means run the web intake, `refuted` means the belief was
+    wrong. A dict lookup returns "" for both."""
+    resolution, selectors = selector_resolution(_structure(), None)
+    assert resolution.counts["confirmed"] == 0
+    assert resolution.counts["refuted"] == 0
+    assert resolution.counts["proposed"] == len(pending_selectors(_structure()))
+    assert selectors == {}
+
+
+def test_an_intake_that_ran_and_lacks_the_name_refutes_it():
+    """The web intake read the page and the element is not there — that is a
+    fact about the code, and reporting it as "not yet" would have a reviewer
+    waiting for an intake that has already answered."""
+    resolution, _ = selector_resolution(_structure(), {"archive": "#archive"})
+    assert resolution.counts["confirmed"] == 1
+    assert resolution.counts["refuted"] > 0
+    assert resolution.counts["proposed"] == 0
+
+
+def test_a_confirmed_selector_reaches_the_element_it_was_proposed_for():
+    """End to end, with no lookup of the test's own — this join used to live in
+    `test_scaffold.py` as a dict, which meant the rendered Page Object was one
+    the engine could not produce."""
+    structure = _structure()
+    _, selectors = selector_resolution(structure, {"archive": "#archive"})
+    archive = [e for e in elements_for(structure, "records-list", selectors)
+               if e["name"] == "Archive"]
+    assert archive and archive[0]["selector"] == "#archive"
+
+
+def test_a_selector_is_a_property_and_never_a_node():
+    """`edges_for` skips property-valued joins; `properties_for` is what picks
+    them up. Landing `#archive` as an entity would put a CSS string in the
+    label space and give a reviewer a thing to approve that is not a fact about
+    the system."""
+    from metis_mcp.resolution import KINDS, edges_for, resolve
+
+    resolution = resolve(pending_selectors(_structure()),
+                         {"web": {"archive"}})
+    assert KINDS["element_selector"].property_name == "selector"
+    assert edges_for(resolution, lambda ref: ref) == []
+
+
+# --------------------------------------------------------------------------
+# `RENDERS` — Route -> Page, the third relationship that had no writer
+# --------------------------------------------------------------------------
+
+from metis_mcp.model_sources.structure import (  # noqa: E402
+    normalised_page_name,
+    pending_routes,
+    route_resolution,
+)
+
+_ROUTES = [{"path": "/records", "screen": "RecordListPage"},
+           {"path": "/records/:id", "screen": "RecordDetailPage"},
+           {"path": "/summary", "screen": "SummaryPage"}]
+
+
+def test_a_router_screen_meets_the_page_it_shows():
+    _, pairs = route_resolution(_structure(), _ROUTES)
+    assert pairs == [("/records/:id", "record-detail")]
+
+
+def test_a_plural_mismatch_is_refuted_and_not_guessed_away():
+    """**The refutation is the right answer.** `RecordListPage` does not meet
+    `records-list`, and stripping an `s` to make it would be an open-ended guess
+    of exactly the kind the closed suffix list exists to avoid — it would marry
+    a `Records` page to a `Record` route on an estate where those differ. The
+    reviewer gets both names and decides."""
+    resolution, _ = route_resolution(_structure(), _ROUTES)
+    from metis_mcp.resolution import findings_for
+
+    refuted = [d for _, _, d in findings_for(resolution) if "recordlist" in d]
+    assert refuted and "refuted" in refuted[0]
+    assert "RecordListPage" in refuted[0], "the reviewer needs the other side"
+
+
+def test_a_route_whose_screen_the_router_never_named_is_not_proposed():
+    """There is nothing to join on, and an empty basis would marry every such
+    route to whichever page also has none."""
+    assert pending_routes([{"path": "/x", "screen": ""}]) == []
+
+
+def test_no_structure_leaves_the_routes_proposed_rather_than_refuted():
+    resolution, pairs = route_resolution(None, _ROUTES)
+    assert resolution.counts["proposed"] == 3 and pairs == []
+
+
+def test_a_landed_route_carries_the_basis_it_will_join_on():
+    """So the proposal can be re-run against a structure that lands later —
+    which is the whole promise of a deferred join."""
+    assert normalised_page_name("RecordDetailPage") == "recorddetail"

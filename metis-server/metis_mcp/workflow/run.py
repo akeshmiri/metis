@@ -233,11 +233,27 @@ class RunRecord:
         p.write_text(self.to_json())
 
 
-def runs_dir(root: str | Path = ".") -> Path:
-    return Path(root) / ".metis" / "runs"
+def runs_dir(root: str | Path | None = None) -> Path:
+    """Where run records live: `$METIS_HOME/runs`, or under an explicit root.
+
+    **This used to be `./.metis/runs`, relative to the working directory.** So a
+    run started from the repository root and resumed from `metis-server/` looked
+    up a different file, found nothing, and reported "no run to resume" for a
+    run that plainly existed. Profiles and the CPG cache already live in
+    `$METIS_HOME` for the same reason.
+
+    `root` is still honoured, because tests want a `tmp_path` and the engine's
+    resume path passes one.
+    """
+    if root is not None:
+        return Path(root) / ".metis" / "runs"
+
+    from code_analysis.project_profile import metis_home
+
+    return metis_home() / "runs"
 
 
-def run_path(run_id: str, root: str | Path = ".") -> Path:
+def run_path(run_id: str, root: str | Path | None = None) -> Path:
     return runs_dir(root) / f"{run_id}.json"
 
 

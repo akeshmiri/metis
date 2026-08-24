@@ -99,13 +99,48 @@ class Inventory:
         return {t.level for t in self.tests}
 
 
-_SERVICE_IN_PATH = re.compile(r"athena-boot-([a-z]+)/")
+# **The module a file belongs to is a fact about a repository, not about Métis.**
+#
+# This was a regex matching one estate's directory naming — a company
+# convention compiled into the engine. Against any other layout it matched
+# nothing and `--service` reported "this report covers nothing recognisable",
+# which was true of the regex and false of the code.
+#
+# A project declares its own mapping in `.metis/project.json`
+# (`code_analysis.project_profile`). With no profile the fallback is the first
+# path segment — a plain reading of a monorepo, right for most layouts and
+# never a guess dressed as a convention.
+_resolver = None
+
+
+def set_service_resolver(resolve) -> None:
+    """Install the profile's mapping. `resolve(path) -> service`, or None to reset."""
+    global _resolver
+    _resolver = resolve
+
+
+# Directories that are build layout, never a deployable's name. A single-module
+# repository has paths starting `src/`, and returning "src" as the service was
+# worse than returning nothing: `Inventory.reaching` treats "" as unscoped and
+# still matches on the route, but a WRONG service name blocks every match. Three
+# recovered tests graded eight transitions as `uncovered` that way.
+_LAYOUT_DIRS = frozenset({"src", "main", "test", "java", "kotlin", "scala",
+                          "resources", "target", "build", "out", "app"})
 
 
 def service_of_path(path: str) -> str:
-    """`athena-boot-metric/src/it/java/...` -> `metric`."""
-    m = _SERVICE_IN_PATH.search(path or "")
-    return m.group(1) if m else ""
+    """Which deployable a file belongs to, or "" when the layout does not say.
+
+    `records-service/src/main/java/...` -> `records-service` by default, or
+    whatever the loaded project profile says it is. A single-module repository
+    yields "" — unknown, which is honest and harmless — rather than `src`.
+    """
+    if _resolver is not None:
+        return _resolver(path or "")
+    head = (path or "").replace("\\", "/").split("/", 1)[0]
+    if not head or head.endswith(".java") or head in _LAYOUT_DIRS:
+        return ""
+    return head
 
 
 def from_pack(report: dict) -> Inventory:
@@ -214,8 +249,13 @@ def grade_transitions(model: Model, inventory: Inventory, service: str = "",
 
 
 def _service_of(model: Model) -> str:
-    """`athena-metric-api` -> `metric`."""
-    return re.sub(r"^athena-|-(api|ui)$", "", model.id)
+    """The journey half of a `<journey>-<surface>` model id (M-1).
+
+    Was a regex stripping a hardcoded company prefix as well as the surface.
+    M-1 defines the id as `<journey>-<surface>` and says nothing about a prefix,
+    so only the surface comes off.
+    """
+    return re.sub(r"-(api|ui)$", "", model.id)
 
 
 def format_grades(grades: dict[str, Grade], model: Model) -> str:

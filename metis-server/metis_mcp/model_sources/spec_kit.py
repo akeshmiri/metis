@@ -30,7 +30,7 @@ a transition shape they do not have (S-13).
 
     **Given** a `GET /metric/{id}` request
     **When** a metric with the given id exists
-    **Then** the `MetricDto` is returned with `200 OK`
+    **Then** the `RecordDto` is returned with `200 OK`
 
     **When** no metric exists with the given id
     **Then** `204 No Content` is returned
@@ -61,7 +61,7 @@ _STATUS = re.compile(r"Status:\s*\*\*([A-Za-z ]+)\*\*")
 # `201 Created`). Backticks are stripped so the text a matcher sees is the text a
 # reader sees -- but nothing else is rewritten.
 _TICKS = re.compile(r"`([^`]*)`")
-# `<sub>`athena-metric-api::…::POST->MetricSaveRejected400`</sub>` — the
+# `<sub>`records-api::…::POST->MetricSaveRejected400`</sub>` — the
 # transition a generated rule came from.
 #
 # **`specgen` has always written this and nothing ever read it.** So the document
@@ -71,7 +71,7 @@ _TICKS = re.compile(r"`([^`]*)`")
 # which is a far stronger link than name similarity, and X-17 forbids treating
 # similarity as sufficient evidence anyway.
 #
-# Absent on a hand-written spec, which is correct — athena's 66 criteria have no
+# Absent on a hand-written spec, which is correct — the pilot estate's 66 criteria have no
 # binding and must keep going through `reconciliation.prefilter`.
 _TRANSITION_REF = re.compile(r"<sub>`([^`]+)`</sub>")
 # `<sub>wording: d159ab82f85d</sub>` — the fingerprint `specgen` stamped over the
@@ -107,7 +107,7 @@ class SpecCriterion:
     # **Only ever True for a generated criterion**, because only a generated one
     # carries a fingerprint to compare against. A hand-written criterion was
     # authored by definition and is not "edited"; claiming otherwise would
-    # promote athena's 66 retro-documentation criteria to intent on the strength
+    # promote the pilot estate's 66 retro-documentation criteria to intent on the strength
     # of them having no fingerprint, which is the opposite of evidence.
     edited_by_hand: bool = False
 

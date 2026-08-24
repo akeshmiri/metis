@@ -23,7 +23,7 @@ present: the endpoint is `@Valid`-annotated, its body type declares at least one
 constraint, and an `@ExceptionHandler` maps the bean-validation exception to the
 status in question. Miss any one and this module returns no validation dimension
 **and says which link was missing** -- it never falls back to assuming payload
-validation, because athena maps four different exceptions onto 400 and only one
+validation, because the pilot estate maps four different exceptions onto 400 and only one
 of them is validation. Labelling the other three "payload invalid" would be
 affirmatively wrong rather than merely unevidenced: a fixture built from it sets
 up the wrong precondition and never reaches the path at all.
@@ -127,8 +127,8 @@ def constrained_members(body_type: str, members) -> list:
     """The declared constraints on a body DTO's fields (GD-3's variants).
 
     Matched on the simple type name because the two packs disagree on form -- a
-    parameter carries `org.catools.athena.model.metrics.MetricDto` and a member
-    carries `MetricDto`. Comparing them unnormalised silently finds nothing,
+    parameter carries `org.example.records.dto.RecordDto` and a member
+    carries `RecordDto`. Comparing them unnormalised silently finds nothing,
     which reads exactly like a DTO with no constraints.
     """
     want = _simple(body_type)

@@ -23,6 +23,8 @@ specified interface and the query functions it needs all exist.
 from __future__ import annotations
 
 import json
+import os
+import sys
 
 from mcp.server.fastmcp import FastMCP
 
@@ -45,7 +47,13 @@ _NOT_CONFIGURED = {
 # exactly what pruning False removes. Every error response was going out without
 # it -- a caller reading `payload["ok"]` got a KeyError, and the test that was
 # meant to catch this asserted on the dict rather than on the serialised bytes.
-_ALWAYS_KEPT = frozenset({"ok"})
+#
+# `may_author` and `may_decide` join it for the same reason one step further on:
+# they are answers to "can I write here", and `false` is the answer that matters.
+# Pruned, `describe_policy` reported `may_decide: null` on a surface that
+# definitely could not decide -- a reader cannot tell "no" from "not mentioned",
+# and this is the one tool whose entire job is to be unambiguous about that.
+_ALWAYS_KEPT = frozenset({"ok", "may_author", "may_decide"})
 
 
 def _prune(value):
@@ -82,6 +90,29 @@ def _json(payload) -> str:
 def _load(journey: str, surface: str):
     with session() as s:
         return load_from_graph(s, journey, surface)
+
+
+def _no_such_model(s, journey: str, surface: str) -> dict:
+    """The refusal for a `<journey>-<surface>` the graph does not hold.
+
+    Necessary because an empty `Model` is what a typo produces, and every tool
+    downstream of it reports cheerfully on nothing: `get_model` returned
+    `ok: true` with zero states, and `coverage` returned a structurally complete
+    ledger with `uncovered: 0` — which reads as "nothing is uncovered". The
+    available pairs are listed because the mistake is nearly always a near-miss.
+    """
+    from metis_mcp.mbt.graph_loader import available_models
+
+    pairs = available_models(s)
+    return {
+        "ok": False,
+        "reason": (f"no model '{journey}-{surface}' — the graph holds no state "
+                   f"or transition for journey {journey!r} on surface "
+                   f"{surface!r}"),
+        "available": [{"journey": j, "surface": sf} for j, sf in pairs],
+        "note": ("`journey` is the journey, not the model id: pass 'mfa', not "
+                 "'mfa-api'" if journey.endswith(f"-{surface}") else ""),
+    }
 
 
 @mcp.tool()
@@ -133,7 +164,10 @@ def get_model(journey: str, surface: str = "api", detail: bool = False) -> str:
     Fields that are null, empty or false are omitted.
     """
     try:
-        report = _load(journey, surface)
+        with session() as s:
+            report = load_from_graph(s, journey, surface)
+            if not report.found:
+                return _json(_no_such_model(s, journey, surface))
     except GraphNotConfigured:
         return _json(_NOT_CONFIGURED)
 
@@ -195,11 +229,14 @@ def validate_model(journey: str, surface: str = "api") -> str:
     from metis_mcp.mbt.validation import validate
 
     try:
-        model = _load(journey, surface).model
+        with session() as s:
+            report = load_from_graph(s, journey, surface)
+            if not report.found:
+                return _json(_no_such_model(s, journey, surface))
     except GraphNotConfigured:
         return _json(_NOT_CONFIGURED)
 
-    result = validate(model)
+    result = validate(report.model)
     return _json({
         "ok": True,
         "model_id": result.model_id,
@@ -216,6 +253,33 @@ def validate_model(journey: str, surface: str = "api") -> str:
 # produced a single row, and no test caught it because none called it. Kept here
 # rather than in the docstring: the docstring is loaded into every request, and
 # this is repo history a caller cannot act on.
+@mcp.tool()
+def impact(changed_files: list[str]) -> str:
+    """Which recovered behaviour a set of changed files touches.
+
+    Pass what `git diff --name-only` prints. Returns the transitions recovered
+    from those files, the evidence each was reached through, and the criteria
+    that validate them — so a reviewer can see what a change puts at risk before
+    merging it.
+
+    **Read-only and safe pre-merge.** It queries the graph and never the
+    repository, so it is current only as of the last extraction; the commits it
+    matched against come back with the answer. A file that matched nothing is
+    named rather than counted as "no impact" — those are different answers.
+
+    Matching is on path suffix, because an anchor holds the path the CPG
+    recorded and a diff path rarely shares its root.
+
+    Fields that are null, empty or false are omitted.
+    """
+    from metis_mcp.impact import impact as _impact
+
+    try:
+        return _json(_impact(changed_files))
+    except GraphNotConfigured:
+        return _json(_NOT_CONFIGURED)
+
+
 @mcp.tool()
 def coverage(journey: str, surface: str = "api",
              criterion: str = "all-transitions",
@@ -240,7 +304,10 @@ def coverage(journey: str, surface: str = "api",
     # change underneath a single reported figure.
     try:
         with session() as s:
-            model = load_from_graph(s, journey, surface).model
+            report = load_from_graph(s, journey, surface)
+            if not report.found:
+                return _json(_no_such_model(s, journey, surface))
+            model = report.model
             component = load_component(s, journey, surface)
             validating = load_validating_criteria(s, journey, surface)
     except GraphNotConfigured:
@@ -594,8 +661,174 @@ def why_read_only() -> str:
     })
 
 
+# Transports FastMCP offers. `stdio` stays the default: it is what a local MCP
+# client launches, and it is the only one that needs no network at all.
+TRANSPORTS = ("stdio", "sse", "streamable-http")
+TRANSPORT_ENV = "METIS_MCP_TRANSPORT"
+HOST_ENV = "METIS_HTTP_HOST"
+PORT_ENV = "METIS_HTTP_PORT"
+
+
+# ---------------------------------------------------------------------------
+# Authoring: how to call it, and how it works (X-6e).
+#
+# Read-only, so these belong here rather than in the write half — the surface at
+# `METIS_MCP_WRITE=off` is read-only **by construction**, and a query that writes
+# nothing has no business behind a write switch. (`read.get_transition` is behind
+# one for historical reasons its own comment admits to.)
+# ---------------------------------------------------------------------------
+from metis_mcp import authoring as _authoring
+
+for _fn in (_authoring.call_recipe, _authoring.auth_facts,
+            _authoring.payload_shape, _authoring.journey_walkthrough,
+            _authoring.ask):
+    mcp.tool()(_fn)
+
+
+# ---------------------------------------------------------------------------
+# The write half (the change to N-8).
+#
+# Registered only when `METIS_MCP_WRITE` says so, and `off` is the default — so
+# an unconfigured server is exactly the read-only surface it has always been,
+# and the nineteen read-only tools are unchanged. Enabling writes is a deployment
+# decision somebody makes, never a consequence of upgrading.
+#
+# The tools are registered here rather than in the modules so that this file
+# stays the whole inventory of what the surface exposes: `grep '@mcp.tool'` has
+# to keep answering "what can an agent do", which is the question N-8 used to
+# answer by construction and now answers by enumeration.
+# ---------------------------------------------------------------------------
+
+def _register_write_tools() -> list[str]:
+    """Register the author group, and return what was registered."""
+    from metis_mcp import policy
+
+    if not policy.may_author():
+        # **The import stays inside the branch, and that is the point.** With
+        # writes off, `metis_mcp.write` is never imported, so no write path
+        # is reachable from this module at all -- N-8 still holds *by
+        # construction* for the default deployment, and `test_mcp_server.py`'s
+        # subprocess check still proves it. Importing at the top and branching
+        # here would have quietly turned that proof into a policy check.
+        return []
+
+    from metis_mcp import write
+
+    registered = []
+    for fn in (write.land_model, write.land_knowledge, write.land_findings):
+        mcp.tool()(_wrap_write(fn))
+        registered.append(fn.__name__)
+
+    # A read query, registered with the write group only because it did not
+    # exist before this package did. It writes nothing.
+    from metis_mcp import read
+
+    mcp.tool()(_wrap_write(read.get_transition))
+    registered.append(read.get_transition.__name__)
+
+    from metis_mcp import flow
+
+    for fn in (flow.run_workflow, flow.resume_workflow):
+        mcp.tool()(_wrap_write(fn))
+        registered.append(fn.__name__)
+
+    if policy.may_decide():
+        # `review_queue` rides with the gate group rather than with the read
+        # tools on purpose: its whole output is the evidence for a decision, and
+        # a surface that cannot decide would be handing out a fingerprint no
+        # tool it exposes can spend.
+        from metis_mcp import decide
+
+        for fn in (decide.review_queue, decide.approve_elements,
+                   decide.reject_elements, decide.defer_elements):
+            mcp.tool()(_wrap_write(fn))
+            registered.append(fn.__name__)
+    return registered
+
+
+def _wrap_write(fn):
+    """Serialise like every read tool, and turn a refusal into an answer.
+
+    A refused write is a *result* — "you are a contributor and may not approve"
+    is information the caller can act on. Letting it propagate as an exception
+    gives an agent a stack trace and no next step.
+    """
+    import functools
+
+    from metis_mcp.policy import ConfirmationRefused, WriteDisabled
+    from metis_mcp.review.roles import NotPermitted
+
+    @functools.wraps(fn)
+    def tool(*args, **kwargs) -> str:
+        try:
+            return _json(fn(*args, **kwargs))
+        except (WriteDisabled, NotPermitted, ConfirmationRefused) as e:
+            return _json({"ok": False, "refused": str(e),
+                          "rule": type(e).__name__})
+        except GraphNotConfigured:
+            return _json(_NOT_CONFIGURED)
+
+    return tool
+
+
+@mcp.tool()
+def describe_policy() -> str:
+    """What this surface may write, what it may not, and which gates apply.
+
+    Replaces `why_read_only` when writes are enabled. Read it before assuming a
+    write will work: the answer depends on deployment configuration, on the
+    role you pass, and — for the two gates — on a literal word.
+    """
+    from metis_mcp import policy
+
+    described = policy.describe()
+    described["registered_write_tools"] = _WRITE_TOOLS
+    return _json(described)
+
+
+_WRITE_TOOLS = _register_write_tools()
+
+
 def main() -> None:
-    mcp.run()
+    """Serve the tools above, over stdio unless the environment says otherwise.
+
+    **This used to be `mcp.run()` and nothing else, which made the container
+    image undeliverable.** `Dockerfile.mcp-server` sets `ENV METIS_HTTP_PORT=8090`
+    and `EXPOSE 8090`, and its `CMD` is this function — so a detached container
+    published a port that nothing ever listened on, while the process sat waiting
+    on a stdin no one was attached to. The Dockerfile was not wrong; it was
+    describing an intent this function had never implemented.
+
+    Read-only is unaffected (N-8). A transport changes who can reach the tools,
+    not what they can do, and none of them writes.
+    """
+    transport = os.environ.get(TRANSPORT_ENV, "stdio").strip() or "stdio"
+    if transport not in TRANSPORTS:
+        # A halt, not a fallback to stdio: silently serving a transport the
+        # operator did not ask for is how a container "starts fine" and is
+        # unreachable, which is the failure this function just had.
+        raise SystemExit(
+            f"{TRANSPORT_ENV}={transport!r} is not one of {', '.join(TRANSPORTS)}."
+        )
+
+    if transport == "stdio":
+        mcp.run()
+        return
+
+    host = os.environ.get(HOST_ENV, "127.0.0.1").strip() or "127.0.0.1"
+    port = int(os.environ.get(PORT_ENV, "8090"))
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        # The same warning `review_ui.serve` prints, for the same reason and with
+        # a different consequence: there is no authentication here either, and
+        # while these tools cannot decide anything, they will read out every
+        # requirement, criterion and specification in the graph to whoever asks.
+        print(f"WARNING: binding {host}. This surface does not authenticate. It "
+              f"cannot approve or publish (N-8), but it will read out the whole "
+              f"knowledge graph to anyone who reaches it.", file=sys.stderr)
+    mcp.settings.host = host
+    mcp.settings.port = port
+    print(f"metis MCP ({transport}) on {host}:{port}", file=sys.stderr)
+    mcp.run(transport=transport)
 
 
 if __name__ == "__main__":

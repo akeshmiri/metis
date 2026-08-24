@@ -41,8 +41,11 @@ def test_x4_a_declared_framework_resolves():
 
 
 def test_x4_an_undeclared_framework_is_refused_with_the_reason():
+    # `vue` and not `react`: react became a declared framework once the demo
+    # corpus gave `react-ui` a verified positive AND negative case. The rule
+    # under test is the refusal, so it needs a name nothing has been run against.
     try:
-        default().get("react", UI)
+        default().get("vue", UI)
     except FrameworkUnsupported as e:
         assert "not a declared framework" in str(e)
         assert "worse than no model" in str(e)
@@ -66,13 +69,15 @@ def test_the_shipped_config_declares_only_what_has_actually_been_run():
     """Listing an unverified framework would make X-4's support check report
     support that does not exist.
 
-    Both declared frameworks have been run against real code with a real CPG:
-    `spring-mvc` against athena-git (javasrc2cpg), `dom-events` against
-    atlas-site (jssrc2cpg). The rule enforced here is not the *count* but the
-    evidence: every declaration must name what it was verified against.
+    Every declared framework has been run against real code with a real CPG,
+    and since the demo corpus exists that code is checked in and the run is
+    reproducible by anyone: `spring-mvc` and `dom-events` and `react` all name
+    a `demo_project/` tree, and `test_extraction.py` asserts the numbers. The
+    rule enforced here is not the *count* but the evidence.
     """
     config = default()
-    assert {f.name for f in config.frameworks} == {"spring-mvc", "dom-events"}
+    assert {f.name for f in config.frameworks} == {"spring-mvc", "dom-events",
+                                                   "react"}
     for framework in config.frameworks:
         assert "Verified against" in framework.notes, framework.name
         assert framework.pack, f"{framework.name} names no query pack"
@@ -88,9 +93,10 @@ def test_both_surfaces_are_now_declared():
 def test_an_unverified_framework_is_still_refused():
     config = default()
     try:
-        config.get("react", UI)
+        config.get("svelte", UI)
     except FrameworkUnsupported as e:
         assert "dom-events" in str(e), "it names the UI framework that IS declared"
+        assert "react" in str(e)
         return
     raise AssertionError("declaring one UI framework does not imply support for all")
 
@@ -275,3 +281,54 @@ if __name__ == "__main__":
             print(f"ERROR {t.__name__}: {type(e).__name__}: {e}")
     print(f"\n{len(tests) - failures}/{len(tests)} passed")
     sys.exit(1 if failures else 0)
+
+
+def test_pack_selection_comes_from_the_declaration_not_from_code():
+    """`engine` ran the two JVM packs whatever the profile's surface said.
+
+    A `surface: ui` journey therefore built a CPG and ran a Java pack against
+    JavaScript — recovering nothing, and reporting "no behaviour" rather than
+    "wrong pack". `FrameworkSpec.pack` had named the right ones all along and
+    nothing read it.
+    """
+    from code_analysis.engine import packs_for
+    from code_analysis.framework_config import default
+
+    assert default().get("spring-mvc", "api").packs == (
+        "jvm-structural", "jvm-behaviour")
+    assert packs_for("spring-mvc") == (
+        "jvm-structural", "jvm-behaviour", "jvm-test-inventory")
+    assert packs_for("dom-events") == ("js-ui",)
+
+
+def test_react_is_declared_and_its_refusals_are_what_earn_it():
+    """This used to assert that `react` was NOT declared, and it was right to.
+
+    Run against a real React app the pack reported six routes and all six were
+    false positives: two import specifiers, three defaultProps values and
+    `export default`. Six confident answers and zero routes is worse than none
+    (X-4), so the declaration was refused and this test held the line.
+
+    What changed is not the judgement but the evidence. Route detection now keys
+    on the router config jssrc2cpg actually lowers, and `demo_project/records-ui`
+    pins **both** directions: four routes that are exactly the config, and a
+    regex literal that looks like a path and must not become one. A recogniser is
+    only as good as its refusals, so that negative case is what the assertion
+    below is about — deleting the demo's regex would delete the proof.
+    """
+    import pathlib
+
+    from code_analysis.framework_config import default
+
+    spec = default().get("react", "ui")
+    assert spec.pack == "react-ui"
+    assert "Verified against demo_project/records-ui" in spec.notes
+    assert "regex literal" in spec.notes, "the refusal is part of the claim"
+
+    manifest = pathlib.Path("code_analysis/packs/react-ui/pack.yaml").read_text()
+    assert "status: working" in manifest
+    assert "negative:" in manifest, (
+        "a recogniser is only as good as its refusals — the zero-route case has "
+        "to stay recorded alongside the positive one")
+
+

@@ -55,9 +55,15 @@ uv run python -c "from metis_mcp.ontology import schema; schema.write('schema')"
 ```
 
 Then run `schema/metis2-01-constraints.cypher` and `metis2-02-relationships.cypher`
-against the database. Use `metis2-01-constraints-enterprise.cypher` instead of
-the first on Enterprise — existence constraints are an Enterprise-only feature,
-which is the whole reason for the split.
+against the database.
+
+**Community only** (C1). There is no Enterprise variant: property-existence
+constraints are an Enterprise feature, and generating a second schema that used
+them meant two DDLs could disagree about what the database enforces — leaving
+`metis_mcp/ontology/validation.py` load-bearing on one and redundant on the
+other. It is the enforcement everywhere, and the generated DDL names it on each
+constraint it does not create. The schema applies unchanged to an Enterprise
+instance; it simply does not rely on being one.
 
 ## Connect an MCP client
 

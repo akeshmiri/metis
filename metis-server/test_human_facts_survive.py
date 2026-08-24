@@ -54,8 +54,8 @@ def _model(guard_ok: str = "payload_valid", guard_bad: str = "NOT (payload_valid
     transitions = {
         "ok": Transition(
             id="ok", source="Metric", trigger="POST /metric", target="Created",
-            guard=guard_ok, outcome_status=201, response_body="MetricDto",
-            guard_anchor="MetricController.java:64@sha", guard_wording="the payload is valid",
+            guard=guard_ok, outcome_status=201, response_body="RecordDto",
+            guard_anchor="RecordController.java:64@sha", guard_wording="the payload is valid",
             guard_tier="code_convention", data_requirements=("@NotNull",),
             inputs=({"name": "metricDto", "location": "body"},),
             evidence=(("Endpoint", "ep:abc"), ("Parameter", "prm:def")),
@@ -65,7 +65,7 @@ def _model(guard_ok: str = "payload_valid", guard_bad: str = "NOT (payload_valid
             guard=guard_bad, outcome_status=400,
             guard_wording="the payload is invalid", guard_tier="code_convention"),
     }
-    m = Model(id="athena-metric-api", states=states, transitions=transitions)
+    m = Model(id="records-api", states=states, transitions=transitions)
     m.reindex()
     return m
 

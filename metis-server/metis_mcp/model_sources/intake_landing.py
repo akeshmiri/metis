@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from metis_mcp.ears_checker import check_ears_conformance
@@ -72,6 +73,90 @@ class IntakeRefused(Exception):
     """The document could not be read at all -- shape, not content."""
 
 
+@dataclass(frozen=True)
+class Conformance:
+    """Everything wrong with a UIF document, in one answer.
+
+    `refusals` stop it landing; `advisories` do not, and both are returned
+    together on purpose. `load` used to raise on the FIRST problem, so a
+    document with three took three round-trips to learn about all of them —
+    and two of its checks did not run at the door at all: an unknown
+    `source_system` passed `load` and raised from `anchor_for` in the middle of
+    planning, which is a stack trace where a sentence was wanted.
+    """
+
+    refusals: tuple[str, ...] = ()
+    advisories: tuple[str, ...] = ()
+
+    @property
+    def conformant(self) -> bool:
+        return not self.refusals
+
+    def describe(self) -> str:
+        parts = [f"refused: {r}" for r in self.refusals]
+        parts += [f"advisory: {a}" for a in self.advisories]
+        return "; ".join(parts) or "conformant"
+
+
+def conformance(document: dict) -> Conformance:
+    """Check a UIF document the whole way through before anything is planned.
+
+    Advisories are not defects. A UIF whose text is free prose lands as a
+    `Finding` pointing at `knowledge-capture` rather than as a `Requirement`
+    (S-13) — that is correct behaviour and it is also the single most surprising
+    thing this intake does, so it is said at the door instead of discovered by
+    counting nodes afterwards.
+    """
+    from metis_mcp.ears_checker import check_ears_conformance
+
+    refusals: list[str] = []
+    advisories: list[str] = []
+
+    version = str(document.get("uif_version", ""))
+    if not version:
+        refusals.append("no uif_version — this is not a UIF document")
+    elif not version.startswith(UIF_VERSION_PREFIX):
+        refusals.append(f"uif_version {version!r} is not supported "
+                        f"(this lands {UIF_VERSION_PREFIX}x)")
+
+    scope = document.get("scope") or {}
+    system = scope.get("source_system")
+    if not system:
+        refusals.append("scope.source_system is missing — nothing says where "
+                        "this came from, so no anchor can be chosen")
+    elif system not in ANCHORS:
+        # Was only reachable from `anchor_for`, mid-plan.
+        refusals.append(
+            f"no anchor label for source_system {system!r}. Known: "
+            f"{', '.join(sorted(ANCHORS))}. Adding one is an ontology change "
+            f"under D-2, not an edit here")
+    if not scope.get("primary_id"):
+        refusals.append("scope.primary_id is missing — the artefact has no "
+                        "identity in its own system")
+
+    text = _requirement_text(document)
+    if not text:
+        refusals.append("neither metadata.title nor metadata.description has "
+                        "any text — there is nothing to land")
+    elif not check_ears_conformance(text).conformant:
+        advisories.append(
+            "the text is not EARS-conformant, so this lands as a Finding "
+            "pointing at knowledge-capture and NOT as a Requirement (S-13). "
+            "`ears_pattern` has no empty form and guessing one is what "
+            "ac_mining refuses to do")
+
+    claimed = (document.get("acceptance_criteria")
+               or (document.get("metadata") or {}).get("acceptance_criteria"))
+    if claimed:
+        advisories.append(
+            f"{len(claimed)} claimed acceptance criteria are present and will "
+            "NOT be trusted into AcceptanceCriterion nodes — a criterion "
+            "asserted by the document that raised the requirement is not "
+            "independent evidence of it")
+
+    return Conformance(tuple(refusals), tuple(advisories))
+
+
 def load(path) -> dict:
     """Read a UIF file, refusing a shape this cannot land.
 
@@ -86,18 +171,9 @@ def load(path) -> dict:
     except (OSError, ValueError) as e:
         raise IntakeRefused(str(e)) from e
 
-    version = str(document.get("uif_version", ""))
-    if not version:
-        raise IntakeRefused("no uif_version — this is not a UIF document")
-    if not version.startswith(UIF_VERSION_PREFIX):
-        raise IntakeRefused(
-            f"uif_version {version!r} is not supported (this lands {UIF_VERSION_PREFIX}x)")
-    if not document.get("scope", {}).get("source_system"):
-        raise IntakeRefused("scope.source_system is missing — nothing says where "
-                            "this came from, so no anchor can be chosen")
-    if not document.get("scope", {}).get("primary_id"):
-        raise IntakeRefused("scope.primary_id is missing — the artefact has no "
-                            "identity in its own system")
+    outcome = conformance(document)
+    if not outcome.conformant:
+        raise IntakeRefused("; ".join(outcome.refusals))
     return document
 
 
@@ -135,8 +211,31 @@ def anchor_for(document: dict) -> tuple[str, str]:
 
 
 def _requirement_text(document: dict) -> str:
+    """The text a Requirement would be created from.
+
+    **Whichever field is EARS-conformant wins**, and description only breaks the
+    tie. Found by the tracker intake: a Jira story's *summary* is where the
+    requirement-shaped sentence lives — "When a record has been archived, the
+    system shall reject an update with 409" — and its description is context
+    prose. Preferring description unconditionally threw the conforming sentence
+    away and landed the ticket as a `Finding`.
+
+    This **selects**, it never rewrites. Nothing is reshaped to make it pass,
+    which is the line `ac_mining` refuses to cross (S-13); the only change is
+    which of two verbatim fields is read. It can therefore only turn a Finding
+    into a Requirement where the text already conformed, and never the reverse.
+    """
+    from metis_mcp.ears_checker import check_ears_conformance
+
     metadata = document.get("metadata", {})
-    return (metadata.get("description") or metadata.get("title") or "").strip()
+    description = (metadata.get("description") or "").strip()
+    title = (metadata.get("title") or "").strip()
+
+    if description and check_ears_conformance(description).conformant:
+        return description
+    if title and check_ears_conformance(title).conformant:
+        return title
+    return description or title
 
 
 def plan_intake(document: dict, *, job_id: str = "manual",

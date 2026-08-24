@@ -31,6 +31,7 @@ from metis_mcp.mbt.model import (
     QUARANTINE,
     Model,
     State,
+    GuardCheck,
     Transition,
 )
 from metis_mcp.ontology.labels import label_expression
@@ -53,6 +54,32 @@ RETURN s.id             AS id,
        s.condition      AS condition,
        s.page           AS page
 ORDER BY s.id
+"""
+
+# What a refusal offers instead. A wrong journey is nearly always a near-miss --
+# the model id for the journey, a surface that was never built -- so listing the
+# real pairs turns a dead end into one more call.
+# The two-hop path from a transition to the conditions that selected it.
+# `DERIVED_FROM` reaches the outcome the transition was recovered from, and
+# `GUARDED_BY` the checks that chose that outcome over its siblings.
+CHECKS_CYPHER = """
+MATCH (t:Transition|ApiCall|UiAction)-[:DERIVED_FROM]->(:DeclaredOutcome)
+      -[:GUARDED_BY]->(c:Check)
+WHERE $journey IN t.functional_areas AND t.surface = $surface
+RETURN t.id             AS transition,
+       c.expression     AS expression,
+       c.order          AS order,
+       c.dimension_class AS dimension_class,
+       c.anchor         AS anchor
+ORDER BY t.id, c.order, c.expression
+"""
+
+AVAILABLE_CYPHER = """
+MATCH (s:State)
+WHERE s.functional_areas IS NOT NULL AND s.surface IS NOT NULL
+UNWIND s.functional_areas AS journey
+RETURN DISTINCT journey AS journey, s.surface AS surface
+ORDER BY journey, surface
 """
 
 TRANSITIONS_CYPHER = """
@@ -213,10 +240,20 @@ class LoadReport:
     model: Model
     skipped: list[tuple[str, str]]  # (transition id, reason)
     invokes: dict[str, str]
+    # Whether the graph held anything for this `<journey>-<surface>` at all.
+    #
+    # An empty `Model` is what both a typo and a real-but-empty journey produce,
+    # and the two need different answers: `get_model("mfa-api")` -- the model id
+    # rather than the journey -- returned `ok: true` with zero states, and
+    # `coverage` returned a complete report with `uncovered: 0`. A reader, or an
+    # agent, takes that for "nothing is uncovered". The distinction is made here
+    # because this is the only layer that saw the rows.
+    found: bool = True
 
 
 def rows_to_model(model_id: str, state_rows: list[dict], transition_rows: list[dict],
-                  invokes_rows: list[dict] | None = None) -> LoadReport:
+                  invokes_rows: list[dict] | None = None,
+                  check_rows: list[dict] | None = None) -> LoadReport:
     """Pure mapper: rows in, Model out. No session, no I/O.
 
     Rows are taken as already ordered by the queries; ordering is re-asserted
@@ -236,6 +273,20 @@ def rows_to_model(model_id: str, state_rows: list[dict], transition_rows: list[d
             page=row.get("page") or "",
         )
 
+    # `GUARDED_BY`, grouped by the transition it reaches. The query orders by
+    # `c.order`, so a check's position in this tuple IS its evaluation order.
+    checks_by_transition: dict[str, list[GuardCheck]] = {}
+    for row in check_rows or []:
+        if not (row.get("expression") or "").strip():
+            continue          # a Check with no expression states nothing
+        checks_by_transition.setdefault(row["transition"], []).append(GuardCheck(
+            expression=row["expression"],
+            order=int(row.get("order") or 0),
+            dimension_class=row.get("dimension_class") or "",
+            anchor=row.get("anchor") or ""))
+    for group in checks_by_transition.values():
+        group.sort(key=lambda c: (c.order, c.expression))
+
     transitions: dict[str, Transition] = {}
     skipped: list[tuple[str, str]] = []
     for row in sorted(transition_rows, key=lambda r: r["id"]):
@@ -252,6 +303,7 @@ def rows_to_model(model_id: str, state_rows: list[dict], transition_rows: list[d
             skipped.append((row["id"], "no trigger"))
             continue
         transitions[row["id"]] = Transition(
+            checks=tuple(checks_by_transition.get(row["id"], ())),
             id=row["id"],
             source=source,
             trigger=row["trigger"],
@@ -287,6 +339,7 @@ def rows_to_model(model_id: str, state_rows: list[dict], transition_rows: list[d
         model=Model(id=model_id, states=states, transitions=transitions),
         skipped=skipped,
         invokes=invokes,
+        found=bool(state_rows or transition_rows),
     )
 
 
@@ -317,7 +370,14 @@ def load_from_graph(session, journey: str, surface: str = "api") -> LoadReport:
     state_rows = [dict(r) for r in session.run(STATES_CYPHER, **params)]
     transition_rows = [dict(r) for r in session.run(TRANSITIONS_CYPHER, **params)]
     invokes_rows = [dict(r) for r in session.run(INVOKES_CYPHER, journey=journey)]
-    return rows_to_model(f"{journey}-{surface}", state_rows, transition_rows, invokes_rows)
+    check_rows = [dict(r) for r in session.run(CHECKS_CYPHER, **params)]
+    return rows_to_model(f"{journey}-{surface}", state_rows, transition_rows,
+                         invokes_rows, check_rows)
+
+
+def available_models(session) -> list[tuple[str, str]]:
+    """Every `(journey, surface)` the graph actually holds."""
+    return [(r["journey"], r["surface"]) for r in session.run(AVAILABLE_CYPHER)]
 
 
 # ---------------------------------------------------------------------------

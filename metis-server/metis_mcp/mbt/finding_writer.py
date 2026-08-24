@@ -22,11 +22,13 @@ extraction is a no-op rather than a duplicate (TR-6).
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, field
 
 from metis_mcp.mbt.graph_session import count_written
 from metis_mcp.ontology.labels import label_expression
-from metis_mcp.model_sources.landing import component_label_for, ensure_namespaced
+from metis_mcp.model_sources.landing import (
+    component_label_for, ensure_namespaced, graph_transition_id)
 from metis_mcp.mbt.graph_writer import component_id
 from metis_mcp.mbt.model import Model
 
@@ -76,12 +78,39 @@ class LoadPlan:
     runs: int = 0
 
 
+# `component` is REQUIRED on `Component` and was missing here, while
+# `graph_writer` set it — two writers for one label, disagreeing. Under
+# Community nothing complained, because property-existence constraints are an
+# Enterprise feature; against Enterprise the whole stage failed with
+# "Node(53) with label `RestServer` must have the property `component`".
+#
+# It is the stable half of the identity (D-6): the node is one component AT one
+# commit, so without it you cannot ask for every version of a component, and the
+# estate reads as N components today and 2N after the next commit.
 MODEL_VERSION_CYPHER = """
 MERGE (mv:$COMPONENT_LABEL {id: $id})
 ON CREATE SET mv.created_at = datetime()
+SET mv:NeedReview
 SET mv.journey = $journey, mv.surface = $surface, mv.version = $version,
+    mv.component = $component,
     mv.commit_sha = $commit, mv.source_episode_id = $episode,
     mv.name = $id, mv.lifecycle_state = 'Quarantine'
+"""
+
+# `RestServer -[:EXPOSES]-> Endpoint`, catalogued since the evidence layer landed
+# and written by nothing: 0 of 12 on a real service, so "which entry points does
+# this deployable serve" was unanswerable from a graph whose catalogue said
+# otherwise.
+#
+# It is written HERE rather than in `land` because this is where the Component's
+# content-derived id is computed. Planned earlier, the edge would point at a node
+# that does not exist yet and `MERGE` would match nothing — the same ordering
+# trap the derivation edges have.
+EXPOSES_CYPHER = f"""
+MATCH (mv:{label_expression("Component")} {{id: $version_id}})
+MATCH (e:Endpoint {{id: $endpoint_id}})
+MERGE (mv)-[:EXPOSES]->(e)
+RETURN count(*) AS written
 """
 
 CONTAINS_CYPHER = f"""
@@ -95,9 +124,14 @@ RETURN count(*) AS written
 # no query. The run's identity survives in the Episode and in
 # `.metis/runs/*.json`; what is gone is a node nothing asked about.
 
+# `:NeedReview` alongside `lifecycle_state = 'Quarantine'`. This writer does not
+# go through `landing.land`, which is where the marker is applied centrally, so
+# it sets it itself — and `test_ontology` asserts the two can never disagree,
+# which is what makes a second write path safe rather than a second answer.
 FINDING_CYPHER = """
 MERGE (f:Finding {id: $id})
 ON CREATE SET f.created_at = datetime()
+SET f:NeedReview
 SET f.finding_type = $finding_type, f.severity = $severity, f.detail = $detail,
     f.remedy = $remedy, f.resolution = $resolution, f.name = $finding_type,
     f.source_episode_id = $episode, f.model_id = $model_id,
@@ -116,10 +150,24 @@ RETURN count(*) AS written
 """
 
 
+def _about_id(model: Model, about: str) -> str:
+    """The graph id of whatever a finding concerns.
+
+    A transition carries its natural key (I-2); a state carries its own id. One
+    place, because composing it inline is how 24 `ABOUT` edges came to point at
+    nodes that do not exist.
+    """
+    bare = about.split("::", 1)[-1] if about.startswith(f"{model.id}::") else about
+    if bare in model.transitions:
+        return graph_transition_id(model, bare)
+    return ensure_namespaced(model.id, about)
+
+
 def plan_load(model: Model, *, journey: str, surface: str, version: int,
               commit: str, episode: str, findings: list[FindingRecord],
               run_id: str = "", engine: str = "",
-              source_fingerprint: str = "") -> LoadPlan:
+              source_fingerprint: str = "",
+              endpoint_ids: tuple[str, ...] = ()) -> LoadPlan:
     """Build every statement, in a fixed order, without touching the database.
 
     Ordering is deterministic so two runs produce identical plans -- the same
@@ -144,7 +192,8 @@ def plan_load(model: Model, *, journey: str, surface: str, version: int,
         "version",
         MODEL_VERSION_CYPHER.replace("$COMPONENT_LABEL", component_label), {
             "id": version_id, "journey": journey, "surface": surface,
-            "version": version, "commit": commit, "episode": episode}))
+            "version": version, "component": model.id, "commit": commit,
+            "episode": episode}))
     plan.versions = 1
 
     # D-6: elements are SHARED across versions, never duplicated per version --
@@ -154,7 +203,20 @@ def plan_load(model: Model, *, journey: str, surface: str, version: int,
             "version_id": version_id, "element_id": f"{model.id}::{sid}"}))
     for tid in model.transition_ids():
         plan.statements.append(("contains", CONTAINS_CYPHER, {
-            "version_id": version_id, "element_id": f"{model.id}::{tid}"}))
+            # **Not `f"{model.id}::{tid}"`.** A transition is written with its
+            # NATURAL key since I-2, so a writer that composes the id from the
+            # source's own `tid` addresses a node that does not exist. Caught by
+            # this stage reporting "24 finding(s), 24 unattached" — the count it
+            # reports is the only reason it was not silent.
+            "version_id": version_id,
+            "element_id": graph_transition_id(model, tid)}))
+
+    # The entry points this deployable serves. Absent when the caller has no
+    # structural report — the edge is simply not planned, rather than planned
+    # against ids nobody recovered.
+    for eid in endpoint_ids:
+        plan.statements.append(("exposes", EXPOSES_CYPHER, {
+            "version_id": version_id, "endpoint_id": eid}))
 
 
     for finding in sorted(findings, key=lambda f: (f.finding_type, f.about_id)):
@@ -171,13 +233,62 @@ def plan_load(model: Model, *, journey: str, surface: str, version: int,
             # The test is `startswith(model.id + "::")`, NOT `"::" in id`. A Web
             # element id is `ui::ApiSpecDetailPage::/spec/::Ok200` -- it already
             # contains `::` while being entirely un-namespaced, so the containment
-            # test concluded it was done and left it bare. `athena-spec-ui` was
+            # test concluded it was done and left it bare. `records-spec-ui` was
             # the model that exposed it: two ABOUT statements matched nothing and
             # `land` reported them rather than swallowing them.
-            "about_id": ensure_namespaced(model.id, finding.about_id)}))
+            # Same rule: a finding about a transition has to name the id the
+            # transition was written with, not the one its source used.
+            "about_id": _about_id(model, finding.about_id)}))
         plan.findings += 1
 
     return plan
+
+
+# What each statement kind writes, so `validate_plan` can check the properties
+# against the ontology the way `landing.add_node` does. A kind absent here writes
+# no node — `contains` and `about` are MATCH/MERGE over existing ones.
+_WRITES_NODE = {"version": None, "finding": "Finding"}
+
+
+def validate_plan(plan: LoadPlan) -> list[str]:
+    """Required-property errors, before anything runs (§C1, D-8).
+
+    **This is the guard Community edition does not have.** Property-existence
+    constraints are Enterprise-only, and the community schema's own header says
+    required-property enforcement "lives in metis_mcp/ontology/validation.py
+    instead" — but only `landing.plan_landing` was calling it. This module writes
+    `Component` and `Finding` through its own Cypher, and that is exactly where
+    the missing `component` property lived: caught by an Enterprise constraint we
+    were not supposed to be relying on, and by nothing else.
+
+    Checked against the ontology rather than a hand-written list, so a new
+    required property fails here rather than in somebody's database.
+    """
+    from metis_mcp.ontology import validate
+
+    errors: list[str] = []
+    for kind, cypher, params in plan.statements:
+        if kind not in _WRITES_NODE:
+            continue
+        label = _WRITES_NODE[kind]
+        if label is None:
+            # The Component specialisation is chosen at plan time and appears in
+            # the statement itself; read it back rather than re-deriving it.
+            match = re.search(r"MERGE \(mv:(\w+)", cypher)
+            label = match.group(1) if match else "Component"
+        # `id` is the MERGE key and `name`/`lifecycle_state` are set in the
+        # statement body; the ontology wants them present on the node, which
+        # they are. What it cannot see is a property the statement forgot.
+        props = dict(params)
+        props.setdefault("id", params.get("id", ""))
+        for prop in ("name", "lifecycle_state"):
+            if f"mv.{prop}" in cypher or f"f.{prop}" in cypher:
+                props.setdefault(prop, "set-in-statement")
+        props.setdefault("source_episode_id", params.get("episode", ""))
+        outcome = validate(label, props)
+        if not outcome.valid:
+            errors.extend(outcome.errors)
+    return errors
 
 
 def load(session, plan: LoadPlan) -> dict:
@@ -190,6 +301,14 @@ def load(session, plan: LoadPlan) -> dict:
     element that was never landed, `ABOUT` against an id that is not namespaced),
     and both are then a no-op that used to report as a write.
     """
+    errors = validate_plan(plan)
+    if errors:
+        # Refused whole, not partly written. A half-landed finding set is worse
+        # than none: the counts look plausible and the gap is invisible.
+        raise ValueError(
+            f"{len(errors)} ontology error(s) — nothing was written. "
+            f"First: {errors[0]}")
+
     written = {"versions": 0, "findings": 0, "runs": 0, "contains": 0, "about": 0}
     unmatched: list[str] = []
     for kind, cypher, params in plan.statements:
@@ -245,7 +364,7 @@ def from_validation(result, model: Model) -> list[FindingRecord]:
                 about_label="Transition",
                 # Namespaced HERE, not at statement time. `FindingRecord.id`
                 # hashes `about_id`, and a bare element id like "NoContent204"
-                # is identical across every service -- so seven Athena models
+                # is identical across every service -- so seven Example models
                 # produced ONE Finding node with seven ABOUT edges, carrying
                 # whichever `model_id` landed last. Found by landing the real
                 # estate; a single-model test cannot see it.

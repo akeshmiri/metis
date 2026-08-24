@@ -22,7 +22,7 @@ SPEC = """# Spec: metric-derived-quality-actions
 
 ### AC-1: Metric Append-Only Save
 
-**Given** a `POST /metric` request with a `MetricDto`
+**Given** a `POST /metric` request with a `RecordDto`
 **When** the request is processed
 **Then** a new metric record is always created
 **And** `201 Created` is returned
@@ -35,12 +35,12 @@ SPEC = """# Spec: metric-derived-quality-actions
 
 **Given** a `GET /metric/{id}` request
 **When** a metric with the given id exists
-**Then** the `MetricDto` is returned with `200 OK`
+**Then** the `RecordDto` is returned with `200 OK`
 
 **When** no metric exists with the given id
 **Then** `204 No Content` is returned
 
-**Code reference**: `MetricController.getActionById()`
+**Code reference**: `RecordController.getActionById()`
 
 ---
 

@@ -61,19 +61,19 @@ def _model() -> Model:
             id="read", source="MetricPresent", trigger="GET /metric/{id}",
             target="MetricPresent", guard="", guard_wording="always",
             guard_tier="code_convention", outcome_status=200,
-            response_body="MetricDto", lifecycle_state=APPROVED),
+            response_body="RecordDto", lifecycle_state=APPROVED),
     }
-    m = Model(id="athena-metric-api", states=states, transitions=transitions)
+    m = Model(id="records-api", states=states, transitions=transitions)
     m.reindex()
     return m
 
 
 def _render(model: Model) -> str:
-    return sg.render_markdown(sg.build(model, journey="athena-metric"))
+    return sg.render_markdown(sg.build(model, journey="records"))
 
 
 def _round_trip(model: Model):
-    directory = Path(tempfile.mkdtemp()) / "athena-metric"
+    directory = Path(tempfile.mkdtemp()) / "records"
     directory.mkdir()
     (directory / "spec.md").write_text(_render(model))
     return parse_spec(directory / "spec.md")
@@ -104,7 +104,7 @@ def test_every_criterion_binds_to_the_transition_it_came_from():
 
 
 def test_a_hand_written_criterion_has_no_binding_and_says_so():
-    """athena's 66 criteria carry none. An absent binding is a fact about the
+    """the pilot estate's 66 criteria carry none. An absent binding is a fact about the
     source, not a gap to fill by guessing — those keep going through
     `reconciliation.prefilter`."""
     directory = Path(tempfile.mkdtemp()) / "hand-written"
@@ -136,7 +136,7 @@ def test_the_clauses_carry_no_code_vocabulary():
 
 def test_the_observable_result_is_status_and_body_not_a_node_name():
     md = _render(_model())
-    assert "MetricDto is returned (200)" in md
+    assert "RecordDto is returned (200)" in md
     assert "nothing is returned (400, no body)" in md, (
         "an empty body is a fact — `ResponseEntity<Void>` returns nothing — not "
         "missing information")
@@ -186,12 +186,12 @@ def test_a_machine_wording_is_regenerated_not_frozen():
 # --------------------------------------------------------------------------
 
 def test_ids_do_not_shift_when_a_rule_is_inserted():
-    """athena has 16 positional `AC-4.1` sub-ids. Insert a rule above one and
+    """the pilot estate has 16 positional `AC-4.1` sub-ids. Insert a rule above one and
     every id after it changes, orphaning its approval. The natural key moves
     only when the behaviour does."""
     model = _model()
     before = {r.transition_id: r.criterion_id
-              for r in sg.build(model, journey="athena-metric").rules}
+              for r in sg.build(model, journey="records").rules}
 
     model.transitions["extra"] = Transition(
         id="extra", source="Metric", trigger="DELETE /metric/{id}",
@@ -199,7 +199,7 @@ def test_ids_do_not_shift_when_a_rule_is_inserted():
     model.reindex()
 
     after = {r.transition_id: r.criterion_id
-             for r in sg.build(model, journey="athena-metric").rules}
+             for r in sg.build(model, journey="records").rules}
     for tid, criterion_id in before.items():
         assert after[tid] == criterion_id, f"{tid}'s id shifted on an insertion"
 
@@ -208,10 +208,10 @@ def test_the_id_is_stable_across_a_guard_edit():
     """A guard changing is the commonest edit there is. If it moved identity,
     nothing would survive a code tweak (I-6)."""
     model = _model()
-    before = sg.build(model, journey="athena-metric").rules[0]
+    before = sg.build(model, journey="records").rules[0]
     model.transitions[before.transition_id] = dataclasses.replace(
         model.transitions[before.transition_id], guard="payload_valid AND fresh")
-    after = next(r for r in sg.build(model, journey="athena-metric").rules
+    after = next(r for r in sg.build(model, journey="records").rules
                  if r.transition_id == before.transition_id)
     assert after.criterion_id == before.criterion_id
 
@@ -219,7 +219,7 @@ def test_the_id_is_stable_across_a_guard_edit():
 def test_the_heading_keeps_the_behaviour_not_just_the_id():
     """SP-1: a stakeholder reads this. An element id printed as a section title
     tells them nothing, so the id is a prefix rather than a replacement."""
-    rule = sg.build(_model(), journey="athena-metric").rules[0]
+    rule = sg.build(_model(), journey="records").rules[0]
     assert rule.heading.startswith(f"{rule.criterion_id}: ")
     assert rule.title in rule.heading
 
@@ -238,7 +238,7 @@ def test_an_untouched_generated_criterion_is_not_an_edit():
 
 def test_rewriting_a_clause_is_detected_as_an_edit():
     """S-19: documentation "until a person edits or affirms one"."""
-    directory = Path(tempfile.mkdtemp()) / "athena-metric"
+    directory = Path(tempfile.mkdtemp()) / "records"
     directory.mkdir()
     path = directory / "spec.md"
     path.write_text(_render(_model()))
@@ -253,7 +253,7 @@ def test_rewriting_a_clause_is_detected_as_an_edit():
 
 def test_a_criterion_with_no_fingerprint_is_never_called_edited():
     """Hand-written criteria carry no stamp. Treating "no fingerprint" as
-    evidence of editing would promote athena's 66 retro-documentation criteria
+    evidence of editing would promote the pilot estate's 66 retro-documentation criteria
     to intent on the strength of an absence — the opposite of evidence."""
     directory = Path(tempfile.mkdtemp()) / "hand-written"
     directory.mkdir()
@@ -276,9 +276,9 @@ def test_a_regenerated_lifecycle_mark_is_not_mistaken_for_an_edit():
     model = _model()
     plain = _round_trip(model)
 
-    marked = sg.build(model, journey="athena-metric",
+    marked = sg.build(model, journey="records",
                       acceptance_criteria={"reject": ["AC-9 of PROJ-1"]})
-    directory = Path(tempfile.mkdtemp()) / "athena-metric"
+    directory = Path(tempfile.mkdtemp()) / "records"
     directory.mkdir()
     (directory / "spec.md").write_text(sg.render_markdown(marked))
 

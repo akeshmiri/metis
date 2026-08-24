@@ -1,0 +1,246 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Records API",
+    "version": "1.4.0"
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/record": {
+      "get": {
+        "operationId": "listRecords",
+        "responses": {
+          "200": {
+            "description": "every record"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createRecord",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "created"
+          },
+          "400": {
+            "description": "the body failed validation"
+          }
+        }
+      }
+    },
+    "/record/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "getRecord",
+        "responses": {
+          "200": {
+            "description": "the record"
+          },
+          "404": {
+            "description": "no such record"
+          }
+        }
+      },
+      "put": {
+        "operationId": "replaceRecord",
+        "responses": {
+          "200": {
+            "description": "replaced"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteRecord",
+        "responses": {
+          "200": {
+            "description": "DEVIATION (disagreement): the code returns 204 from ResponseEntity.noContent()"
+          }
+        }
+      }
+    },
+    "/record/{id}/restore": {
+      "post": {
+        "operationId": "restoreRecord",
+        "responses": {
+          "202": {
+            "description": "DEVIATION (contract-only): documented here, implemented nowhere"
+          }
+        }
+      }
+    },
+    "/summary/{id}": {
+      "get": {
+        "operationId": "getSummary",
+        "responses": {
+          "200": {
+            "description": "a summary"
+          },
+          "422": {
+            "description": "the summary could not be produced"
+          }
+        }
+      }
+    },
+    "/record/batch": {
+      "post": {
+        "operationId": "submitBatch",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordBatchDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "the stored records"
+          },
+          "400": {
+            "description": "the batch failed validation"
+          }
+        }
+      }
+    },
+    "/record/page": {
+      "get": {
+        "operationId": "pageRecords",
+        "responses": {
+          "200": {
+            "description": "a page of records"
+          },
+          "204": {
+            "description": "no records matched"
+          }
+        }
+      }
+    },
+    "/record/{id}/label": {
+      "get": {
+        "operationId": "recordLabel",
+        "responses": {
+          "200": {
+            "description": "the display label"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "schemas": {
+      "RecordDto": {
+        "type": "object",
+        "required": [
+          "title",
+          "owner"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "readOnly": true
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "owner": {
+            "type": "string"
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "PRIVATE",
+              "SHARED",
+              "PUBLIC"
+            ]
+          }
+        }
+      },
+      "ErrorDto": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      },
+      "RecordBatchDto": {
+        "type": "object",
+        "required": [
+          "records",
+          "submittedBy"
+        ],
+        "properties": {
+          "records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RecordDto"
+            }
+          },
+          "tags": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 50,
+            "items": {
+              "type": "string"
+            }
+          },
+          "submittedBy": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 40
+          },
+          "reference": {
+            "type": "string",
+            "pattern": "[A-Z]{2}-[0-9]{4}"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "IMMEDIATE",
+              "DEFERRED",
+              "DRY_RUN"
+            ]
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

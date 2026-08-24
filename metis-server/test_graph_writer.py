@@ -114,7 +114,7 @@ def test_setup_edges_are_ordered_and_not_validated():
 def test_edges_target_the_specialised_label_not_the_parent():
     """A classified transition carries `:ApiCall` INSTEAD of `:Transition`. The
     plan is legal either way — `is_allowed` walks the specialisation chain — and
-    then merges nothing. Every CONTAINS and COVERS edge for all thirteen Athena
+    then merges nothing. Every CONTAINS and COVERS edge for all thirteen Example
     models came back `unmatched` before this."""
     _, _, plan = _plan()
     targets = {e.to_label for e in plan.edges if e.rel_type in ("CONTAINS", "COVERS")}

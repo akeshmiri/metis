@@ -38,7 +38,7 @@ default:
   image:
     registry: "REPLACE: your container registry hostname, e.g. registry.example.com"
     repository: "REPLACE: your image path, e.g. my-org/metis-services"
-    tag: "0.1.0"
+    tag: "1.0.0"
     pullPolicy: Always
     pullSecrets: []
 

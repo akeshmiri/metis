@@ -1,0 +1,75 @@
+{
+  "version": "metis.review/1",
+  "model_id": "tiny-api",
+  "fingerprint": "8dfba89b1becac38",
+  "exported_at": "2026-08-23T11:21:49+00:00",
+  "reviewer": "",
+  "allow_self_approval": false,
+  "_instructions": [
+    "Set 'reviewer' to your identity before applying.",
+    "For each item set 'decision' to approve | reject | defer.",
+    "'rationale' is required for reject.",
+    "'evidence' is what you were shown -- do not edit it.",
+    "'criterion_text' IS editable. Editing it, or setting",
+    "'affirmed_as_intent': true, promotes the criterion from",
+    "code_derived to human_confirmed (S-19). Approving it unchanged",
+    "documents the system; it does not validate it.",
+    "Do not edit 'fingerprint': apply refuses if the model has moved."
+  ],
+  "items": [
+    {
+      "kind": "state",
+      "id": "Ok200",
+      "decision": "defer",
+      "current_state": "Quarantine",
+      "evidence": {
+        "name": "Ok200",
+        "surface": "api",
+        "is_initial": false
+      },
+      "rationale": "",
+      "name": "Ok200",
+      "proposed_by": null,
+      "criterion_id": null,
+      "criterion_text": null,
+      "affirmed_as_intent": false
+    },
+    {
+      "kind": "state",
+      "id": "Ready",
+      "decision": "defer",
+      "current_state": "Quarantine",
+      "evidence": {
+        "name": "Ready",
+        "surface": "api",
+        "is_initial": true
+      },
+      "rationale": "",
+      "name": "Ready",
+      "proposed_by": null,
+      "criterion_id": null,
+      "criterion_text": null,
+      "affirmed_as_intent": false
+    },
+    {
+      "kind": "transition",
+      "id": "t1",
+      "decision": "defer",
+      "current_state": "Quarantine",
+      "evidence": {
+        "rule": "Given the system is Ready, when GET /thing, then the result is Ok200",
+        "from": "Ready",
+        "trigger": "GET /thing",
+        "to": "Ok200",
+        "guard": null,
+        "implementation_status": "implemented"
+      },
+      "rationale": "",
+      "name": null,
+      "proposed_by": null,
+      "criterion_id": null,
+      "criterion_text": null,
+      "affirmed_as_intent": false
+    }
+  ]
+}

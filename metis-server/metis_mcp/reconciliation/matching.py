@@ -62,7 +62,7 @@ _STOP = {"the", "a", "an", "and", "or", "of", "to", "is", "be", "shall", "when",
 # **A criterion derived from code is documentation, not intent.** Comparing a
 # code-extracted model against criteria that were themselves written from that
 # code is circular: it can only ever report agreement, and §4.1 says so plainly.
-# This was not hypothetical -- the athena estate's specs are marked IMPLEMENTED
+# This was not hypothetical -- the the pilot estate estate's specs are marked IMPLEMENTED
 # and their own plan says "documents what was built", so all eight confirmed
 # matches there were documentation agreeing with itself.
 #

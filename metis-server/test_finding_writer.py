@@ -79,20 +79,33 @@ def test_about_ids_are_namespaced_so_the_edge_can_match():
     An ABOUT edge that matches nothing is the worst outcome available here — the
     Finding is in the graph and unreachable from the one thing it is about.
     """
+    from metis_mcp.model_sources.landing import graph_transition_id
+
     model, plan = _plan(findings=[FindingRecord(
         finding_type=VALIDATION, severity="advisory", detail="d",
         about_label="Transition", about_id="t01")])
     about = [p for k, _, p in plan.statements if k == "about"]
     assert len(about) == 1
-    assert about[0]["about_id"] == f"{model.id}::t01"
+    # **Asserted against what landing WRITES, not against a literal.** A
+    # transition carries its natural key since I-2, and this writer composed
+    # `{model}::{tid}` from the source's own id — 24 ABOUT edges pointing at
+    # nodes that do not exist, reported by the stage as "24 unattached". A
+    # literal here would have gone on passing while the edge matched nothing.
+    assert about[0]["about_id"] == graph_transition_id(model, "t01")
+    assert about[0]["about_id"].startswith(f"{model.id}::")
 
 
 def test_an_already_namespaced_id_is_not_namespaced_twice():
+    """Both forms reach this writer: a model read from a file has bare ids, one
+    read from the graph has namespaced ones. Either must resolve to the one id
+    the transition was written with."""
+    from metis_mcp.model_sources.landing import graph_transition_id
+
     model, plan = _plan(findings=[FindingRecord(
         finding_type=VALIDATION, severity="advisory", detail="d",
         about_label="Transition", about_id="login-api::t01")])
     about = [p for k, _, p in plan.statements if k == "about"][0]
-    assert about["about_id"] == "login-api::t01"
+    assert about["about_id"] == graph_transition_id(model, "t01")
     assert "::login-api::" not in about["about_id"]
 
 
@@ -218,7 +231,7 @@ def test_findings_land_at_quarantine():
 
 def test_the_same_element_name_in_two_models_makes_two_findings():
     """`FindingRecord.id` hashes `about_id`. A bare id like "NoContent204" is
-    identical across every service, so seven Athena models produced ONE Finding
+    identical across every service, so seven Example models produced ONE Finding
     node with seven ABOUT edges, carrying whichever model landed last.
 
     `ABOUT_CYPHER` matches without a label and the uniqueness constraint is
@@ -266,3 +279,97 @@ def test_the_component_label_matches_what_plan_persist_writes():
     version = next(c for k, c, _ in plan.statements if k == "version")
     assert component_label_for("api") in version
     assert "MERGE (mv:Component " not in version
+
+
+def test_the_component_node_carries_every_required_property():
+    """Two writers for one label, and they used to disagree.
+
+    `Component` requires `component` (D-6's stable identity half).
+    `graph_writer` set it; this module did not. Community edition has no
+    property-existence constraints, so nothing complained for as long as the
+    only deployment was Community — against Enterprise the validate stage died
+    with "Node(53) with label `RestServer` must have the property `component`".
+
+    Asserted against the ontology rather than a hand-written list, so a new
+    required property fails here instead of in a database somebody else runs.
+    """
+    from metis_mcp.mbt.finding_writer import plan_load
+    from metis_mcp.mbt.model import Model, State
+    from metis_mcp.ontology.labels import LABELS
+
+    model = Model(
+        id="records-api",
+        states={"Ready": State(id="Ready", name="Ready", surface="api",
+                               is_initial=True)},
+        transitions={})
+    model.reindex()
+    plan = plan_load(model, journey="records", surface="api", version=1,
+                     commit="abc1234", episode="ep-1", findings=[])
+
+    version = [(cypher, params) for kind, cypher, params in plan.statements
+               if kind == "version"]
+    assert len(version) == 1
+    cypher, params = version[0]
+    assert "RestServer" in cypher, "the api surface writes the specialisation"
+
+    required = set(LABELS["Component"].all_required)
+    written = {name for name in required if f"mv.{name}" in cypher}
+    written |= {"id"} if "{id: $id}" in cypher else set()
+    missing = required - written
+    assert not missing, f"Component requires {sorted(missing)}, and none is set"
+    assert params["component"] == "records-api"
+
+
+def test_a_plan_missing_a_required_property_is_refused_before_writing():
+    """The guard Community edition does not provide.
+
+    Property-existence constraints are Enterprise-only. The community schema's
+    own header says required-property enforcement "lives in
+    metis_mcp/ontology/validation.py instead" — and only `landing` was calling
+    it. This module writes `Component` and `Finding` through its own Cypher, and
+    that is exactly where the missing `component` property lived: caught by an
+    Enterprise constraint the spec (C1) says we should not have been relying on,
+    and by nothing else.
+    """
+    from metis_mcp.mbt.finding_writer import plan_load, validate_plan
+    from metis_mcp.mbt.model import Model, State
+
+    model = Model(
+        id="records-api",
+        states={"Ready": State(id="Ready", name="Ready", surface="api",
+                               is_initial=True)},
+        transitions={})
+    model.reindex()
+    plan = plan_load(model, journey="records", surface="api", version=1,
+                     commit="abc1234", episode="ep-1", findings=[])
+    assert validate_plan(plan) == [], "the real plan is well-formed"
+
+    # Re-introduce the exact defect, and require it to be caught without a database.
+    plan.statements = [
+        (kind, cypher.replace("mv.component = $component,\n    ", ""),
+         {k: v for k, v in params.items() if k != "component"})
+        for kind, cypher, params in plan.statements
+    ]
+    errors = validate_plan(plan)
+    assert errors and "component" in errors[0], errors
+    assert "RestServer" in errors[0], "the specialisation is named, not the parent"
+
+
+def test_load_refuses_the_whole_plan_rather_than_writing_part_of_it():
+    """A half-landed finding set is worse than none: the counts look plausible
+    and the gap is invisible."""
+    import pytest
+
+    from metis_mcp.mbt.finding_writer import LoadPlan, load
+
+    plan = LoadPlan()
+    plan.statements = [("finding", "MERGE (f:Finding {id: $id}) SET f.name = $name",
+                        {"id": "f1"})]  # no finding_type, which Finding requires
+
+    class Boom:
+        def run(self, *a, **k):
+            raise AssertionError("nothing may reach the database")
+
+    with pytest.raises(ValueError) as e:
+        load(Boom(), plan)
+    assert "nothing was written" in str(e.value)

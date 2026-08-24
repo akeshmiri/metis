@@ -124,7 +124,7 @@ def test_a_criterion_id_without_the_prefix_still_renders_a_parseable_heading():
     """The heading is prefixed for the parser; `criterion_id` keeps the real id.
 
     They were briefly the same value, which meant a criterion whose real id is
-    `athena-spec-api-ac1` got cited as `AC-athena-spec-api-ac1` — an id no node
+    `records-spec-api-ac1` got cited as `AC-records-spec-api-ac1` — an id no node
     carries — and every `CITES` edge matched nothing.
     """
     criteria = [dict(CRITERIA[0], id="7")]
@@ -136,12 +136,12 @@ def test_a_criterion_id_without_the_prefix_still_renders_a_parseable_heading():
 
 def test_cites_targets_the_real_node_id_not_the_heading():
     """A document heading has to be parseable; an edge has to be true."""
-    criteria = [dict(CRITERIA[0], id="athena-spec-api-ac1")]
+    criteria = [dict(CRITERIA[0], id="records-spec-api-ac1")]
     spec = E.build(ENTITY, criteria)
     plan = plan_entity_document(spec, episode_id="ep-1")
     cited = {e.to_id for e in plan.edges if e.rel_type == "CITES"}
-    assert cited == {"athena-spec-api-ac1"}
-    assert "AC-athena-spec-api-ac1" not in cited
+    assert cited == {"records-spec-api-ac1"}
+    assert "AC-records-spec-api-ac1" not in cited
 
 
 def test_the_heading_carries_the_behaviour_not_the_id():

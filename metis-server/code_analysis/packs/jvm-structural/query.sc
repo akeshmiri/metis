@@ -15,8 +15,37 @@
 
 import java.io.PrintWriter
 
-@main def main(cpgPath: String, commit: String, repo: String, out: String) = {
+@main def main(cpgPath: String, commit: String, repo: String, out: String,
+               annotations: String = "", constructors: String = "",
+               dropNoise: String = "yes") = {
   importCpg(cpgPath)
+
+  // ---- the annotation table (see code_analysis/annotations.py) -----------
+  //
+  // `name<TAB>role<TAB>detail`, merged from the framework config and the
+  // project profile by `engine.annotation_table`. The tables below used to be
+  // literals here, which meant an annotation nobody had thought of was
+  // invisible — `@ProjectSecured` on every endpoint recovered no security fact and
+  // reported nothing missing.
+  //
+  // The built-in defaults survive so this script stays runnable by hand against
+  // a plain Spring codebase; when the engine runs it, the file wins.
+  val annotationRoles: Map[String, (String, String)] =
+    if (annotations.trim.isEmpty) Map.empty
+    else scala.io.Source.fromFile(annotations).getLines()
+      .filterNot(_.startsWith("#")).filter(_.contains("\t"))
+      .map { line =>
+        val parts = line.split("\t", -1)
+        parts(0).trim -> (parts(1).trim,
+                          if (parts.length > 2) parts(2).trim else "")
+      }.toMap
+
+  def named(role: String): Map[String, String] =
+    annotationRoles.collect { case (n, (r, d)) if r == role => n -> d }
+
+  def hasRole(name: String, role: String): Boolean =
+    annotationRoles.get(name).exists(_._1 == role)
+
 
   def esc(s: String): String =
     if (s == null) "" else s.replace("\\", "\\\\").replace("\"", "\\\"")
@@ -28,7 +57,65 @@ import java.io.PrintWriter
   // ---- Layer 1: methods and calls -------------------------------------
   // isExternal(false) is REQ-CGA-010: a stub for a third-party callee would be
   // a fabricated node, so it is excluded at the source.
-  val internal = cpg.method.isExternal(false).filterNot(_.name.startsWith("<")).l
+  val allMethods = cpg.method.isExternal(false).filterNot(_.name.startsWith("<")).l
+
+  // ---- Noise: the accessors and the generated boilerplate (X-5a) -------
+  //
+  // A 12-endpoint service put **389 methods** into the graph and 189 of them
+  // were `getUserId`, `setUserId`, `isEnablePhoneAuthenticationMethods`,
+  // `equals`, `hashCode`, `toString`. Nothing in Métis reasons about any of
+  // them: not entry points, no guard, they raise nothing, and no criterion can
+  // reference one. They were 49% of the method nodes.
+  //
+  // **The axis is not visibility.** Measured on that service, `private` is only
+  // 59 of 389 -- and two of those ARE reachable from a handler, one of them
+  // guarding an endpoint and raising the exception an @ExceptionHandler maps.
+  // Filtering on `private` deletes a rejection path and leaves all 166 getters
+  // in place. Nor is it call-reachability: only 46 methods are reachable from a
+  // handler, but that is largely javasrc2cpg not resolving interface dispatch,
+  // so dropping the unreachable would delete a service implementation's 31
+  // business methods.
+  //
+  // What makes an accessor safe to drop is that it is **provably** inert:
+  //
+  //   1. named `getX`/`setX`/`isX` where a field `x` exists, AND
+  //   2. short, AND
+  //   3. no control structure and no call but operators -- no branch, no throw,
+  //      no delegation.
+  //
+  // Condition 3 separates `getTitle()` from `getDisplayLabel()`, which is named
+  // like an accessor, has no field behind it, and branches. Verified on the same
+  // service: **zero** dropped methods contained a control structure, and the
+  // only annotation any of them carried was `@Override`.
+  //
+  // Fields are untouched. `@Schema`, `@NotBlank` and `@Size` sit on the field
+  // rather than its getter, and they are test-design inputs -- which is also why
+  // "drop private" would be exactly backwards for members.
+  val fieldNames = cpg.member.name.l.toSet
+  val boilerplateNames = Set("equals", "hashCode", "toString", "builder",
+                             "canEqual", "clone", "compareTo", "iterator")
+
+  def propertyOf(name: String): Option[String] = {
+    def decap(s: String) = if (s.isEmpty) s else s.head.toLower + s.tail
+    if (name.startsWith("get") && name.length > 3) Some(decap(name.substring(3)))
+    else if (name.startsWith("set") && name.length > 3) Some(decap(name.substring(3)))
+    else if (name.startsWith("is") && name.length > 2) Some(decap(name.substring(2)))
+    else None
+  }
+
+  def isInertAccessor(m: Method): Boolean =
+    propertyOf(m.name).exists(fieldNames.contains) &&
+      m.numberOfLines <= 4 &&
+      m.ast.isControlStructure.isEmpty &&
+      m.call.l.forall(_.name.startsWith("<operator>"))
+
+  def isNoise(m: Method): Boolean =
+    dropNoise != "no" && (isInertAccessor(m) || boilerplateNames.contains(m.name))
+
+  val droppedMethods = allMethods.filter(isNoise)
+  val internal = allMethods.filterNot(isNoise)
+  val droppedAccessors = droppedMethods.count(isInertAccessor)
+  val droppedBoilerplate = droppedMethods.size - droppedAccessors
 
   val methods = internal.map { m =>
     s"""{"id":"${esc(m.fullName)}","name":"${esc(m.name)}",""" +
@@ -72,23 +159,55 @@ import java.io.PrintWriter
   // and collided with StatusController's -- surfacing as a phantom determinism
   // failure on a model that was correct. Found by chasing that finding to the
   // source, not by a test.
+  // **The RAW initialiser is stored, and resolution happens on lookup.**
+  //
+  // This used to store `rhs.stripPrefix("\"").stripSuffix("\"")` behind a
+  // `rhs.startsWith("\"")` guard meaning "this is a string literal". But
+  // `"/api" + RESOURCE` also starts with a quote: it passed the guard, lost
+  // its opening quote to stripPrefix, kept its closing one, and was stored as
+  // the VALUE `/api" + RESOURCE`. Every route under that constant then came
+  // out as a path containing a stray quote and a Java identifier -- a fabricated
+  // route, emitted as fact, which is exactly what T-9d and this pack's own
+  // known_limits forbid. Six of demo_project/records-service's twelve endpoints landed that way.
+  //
+  // Keeping the initialiser raw also fixes the other half: a constant defined in
+  // terms of another (`ITEM = ITEMS + "/{id}"`) now
+  // resolves, where before it was `__unresolved__` however simple the chain.
   case class Const(owner: String, name: String, value: String)
   val declared: List[Const] = cpg.assignment.l.flatMap { a =>
     val lhs = a.target.code
-    val rhs = a.source.code
-    if (rhs.startsWith("\"")) {
+    val rhs = a.source.code.trim
+    // Anything mentioning a string literal is a candidate route fragment. A
+    // numeric or object initialiser is not, and is left out rather than stored
+    // and later refused.
+    if (rhs.contains("\"")) {
       val owner = a.method.typeDecl.name.headOption.getOrElse("")
-      Some(Const(owner, lhs.split("\\.").last.replaceAll("[^A-Za-z0-9_]", ""),
-                 rhs.stripPrefix("\"").stripSuffix("\"")))
+      Some(Const(owner, lhs.split("\\.").last.replaceAll("[^A-Za-z0-9_]", ""), rhs))
     } else None
   }
   val byOwner: Map[(String, String), String] =
     declared.map(c => (c.owner, c.name) -> c.value).toMap
-  // A simple name is only usable globally when it is UNAMBIGUOUS.
-  val globalConstants: Map[String, String] =
-    declared.groupBy(_.name).collect {
-      case (n, cs) if cs.map(_.value).distinct.size == 1 => n -> cs.head.value
-    }
+  // A simple name is only usable globally when it is UNAMBIGUOUS -- but
+  // "unambiguous" is a fact about what the constants MEAN, not about how they
+  // are spelled, and this used to compare the raw initialisers.
+  //
+  // demo_project/records-service declares the same names twice, once in the controller module
+  // and once in the Feign-client module:
+  //
+  //   RouteConstants.RECORD_ROOT  = "/api" + RESOURCE + "/protected"
+  //   InternalClients.PROTECTED_ROOT = RESOURCE_ROOT + "/protected"
+  //
+  // Two spellings of `/api/records/protected`. Compared as text they look like the
+  // TMS_STATUS collision this guard exists for, so all three protected routes
+  // came out `__unresolved__` -- a refusal that was right by its own rule and
+  // wrong about the code.
+  //
+  // Resolution happens at lookup instead, in `constantsNamed`: every candidate
+  // is resolved and the name is usable only if they agree on the ANSWER. Two
+  // constants that genuinely differ still refuse, which is the case that
+  // matters.
+  val constantsNamed: Map[String, List[String]] =
+    declared.groupBy(_.name).map { case (n, cs) => n -> cs.map(_.value).distinct }
 
   // Split on `sep`, but only outside string literals. Shared by the
   // concatenation resolver and the array-initialiser reader below.
@@ -154,10 +273,18 @@ import java.io.PrintWriter
     }
   }
 
-  def resolveSingle(rawExpr: String, owner: String = ""): String = {
+  // A whole string literal, as opposed to an expression that merely begins with
+  // one. Distinguishing the two is the entire bug described above.
+  def isLiteral(t: String): Boolean =
+    t.length >= 2 && t.startsWith("\"") && t.endsWith("\"")
+
+  def resolveSingle(rawExpr: String, owner: String = "", depth: Int = 0): String = {
     val expr = rawExpr.trim
-    if (expr.startsWith("\""))
-      expr.replaceAll("^\"|\"$", "")
+    // A constant chain longer than this is a cycle or a generated file; either
+    // way `__unresolved__` is the honest answer and a stack overflow is not.
+    if (depth > 8) UNRESOLVED
+    else if (isLiteral(expr) && splitOutside(expr, '+').length == 1)
+      expr.substring(1, expr.length - 1)
     else {
       // Concatenation: `CONSTANT + "/{id}"`. Every real @GetMapping("/{id}")
       // in this estate is written that way, so a resolver that handled only a
@@ -176,10 +303,20 @@ import java.io.PrintWriter
           val parts = t.split("\\.").map(_.replaceAll("[^A-Za-z0-9_]", "")).filter(_.nonEmpty)
           val simple = parts.lastOption.getOrElse("")
           val qualifier = if (parts.length > 1) parts(parts.length - 2) else owner
-          byOwner.get((qualifier, simple))
-            .orElse(byOwner.get((owner, simple)))
-            .orElse(globalConstants.get(simple))
-            .getOrElse(UNRESOLVED)
+          // Resolved recursively: what the table holds is the initialiser, and
+          // an initialiser can itself be a concatenation of other constants.
+          def viaOwner: Option[String] =
+            byOwner.get((qualifier, simple)).orElse(byOwner.get((owner, simple)))
+              .map(raw => resolveSingle(raw, qualifier, depth + 1))
+          def viaName: Option[String] = {
+            val answers = constantsNamed.getOrElse(simple, Nil)
+              .map(raw => resolveSingle(raw, "", depth + 1)).distinct
+            // One answer, or none. Two different answers is the ambiguity the
+            // old text comparison was reaching for, and it still refuses.
+            if (answers.size == 1 && answers.head != UNRESOLVED) Some(answers.head)
+            else None
+          }
+          viaOwner.orElse(viaName).getOrElse(UNRESOLVED)
         }
       }
 
@@ -213,8 +350,15 @@ import java.io.PrintWriter
   // Constraints worth carrying: they are the test-data conditions a fixture has
   // to satisfy. Quoted verbatim rather than parsed -- a half-understood
   // constraint asserted as structure is worse than one reported honestly.
-  val constraintAnnotations =
-    Set("NotNull", "NotBlank", "NotEmpty", "Size", "Min", "Max", "Pattern", "Email", "Positive")
+  // The full JSR-380 set the typed vocabulary can honour, plus the two that are
+  // constraints with no numeric content. Narrower than this, `typedConstraints`
+  // handled cases the filter never admitted -- `@DecimalMin`, `@Digits` and
+  // `@Past` were coded for and unreachable.
+  val constraintAnnotations = Set(
+    "NotNull", "NotBlank", "NotEmpty", "Size", "Min", "Max", "DecimalMin",
+    "DecimalMax", "Pattern", "Email", "Positive", "PositiveOrZero", "Negative",
+    "NegativeOrZero", "Digits", "Past", "PastOrPresent", "Future",
+    "FutureOrPresent", "AssertTrue", "AssertFalse")
 
   // `@Valid`/`@Validated` are not constraints -- they are the switch that makes
   // the constraints on a DTO run at all. `pack.yaml` has declared them as the
@@ -309,7 +453,8 @@ import java.io.PrintWriter
   // was declared on it** -- never that it is open. Security enforced in a filter
   // chain or at a gateway is invisible to this pack, and the two claims are not
   // the same.
-  val securityAnnotations = Map(
+  val declaredSecurity = named("security")
+  val securityAnnotations = if (declaredSecurity.nonEmpty) declaredSecurity else Map(
     "PreAuthorize" -> "expression", "PostAuthorize" -> "expression",
     "Secured" -> "role", "RolesAllowed" -> "role", "DenyAll" -> "role",
     "PermitAll" -> "role"
@@ -351,7 +496,21 @@ import java.io.PrintWriter
       .getOrElse("")
   }
 
-  val endpoints = internal.flatMap { m =>
+  // **A `@FeignClient` interface is not an API surface.** Its `@GetMapping`s
+  // declare calls this service MAKES of another one. Counting them as endpoints
+  // put three of demo_project/records-service's fifteen "endpoints" on `UserClient` -- routes
+  // this service serves nowhere, which would then be modelled as behaviour it
+  // does not have and generated as test cases nobody can run.
+  def isOutboundClient(m: Method): Boolean = {
+    val markers = named("outbound_client").keys.toSet match {
+      case s if s.nonEmpty => s
+      case _ => Set("FeignClient")
+    }
+    m.typeDecl.headOption.toList.flatMap(_.annotation.l)
+      .exists(a => markers.contains(a.name))
+  }
+
+  val endpoints = internal.filterNot(isOutboundClient).flatMap { m =>
     m.annotation.l.flatMap { a =>
       verbs.get(a.name).map { verb =>
         val rawParam = routeArg(a)
@@ -390,15 +549,250 @@ import java.io.PrintWriter
   // `Method` and `MethodParameterIn`, which both have the accessor. The
   // annotations ARE there, as AST children; only the convenience step is
   // missing, so they are collected directly.
+  // ---- the `schema` role: what springdoc says about a type ---------------
+  //
+  // **71 `@Schema` annotations in one service, and not one of them read.** They
+  // carry the description a person wrote for a field, whether it is required,
+  // and its allowed values — the last of which is a test-design input, because
+  // an enum's values ARE its equivalence partitions. All of it was sitting in
+  // the source while `Class.description` was null on every node.
+  //
+  // Read through the annotation table's `schema` role, so a project that wraps
+  // springdoc in its own annotation declares that once rather than being
+  // invisible.
+  val schemaMarkers = named("schema").keys.toSet match {
+    case s if s.nonEmpty => s
+    case _ => Set("Schema", "ArraySchema", "Parameter")
+  }
+
+  def schemaArg(annotations: List[Annotation], key: String): String =
+    annotations.filter(a => schemaMarkers.contains(a.name))
+      .flatMap(a => argValue(a, key)).headOption
+      .map(_.replaceAll("^\"|\"$", "")).getOrElse("")
+
+  def requiredFlag(annotations: List[Annotation]): String = {
+    val raw = annotations.filter(a => schemaMarkers.contains(a.name))
+      .flatMap(a => argValue(a, "requiredMode").orElse(argValue(a, "required")))
+      .headOption.getOrElse("")
+    // `REQUIRED`/`NOT_REQUIRED` (springdoc 2) or `true`/`false` (springdoc 1).
+    // Anything else is left empty rather than read as false: "not stated" and
+    // "stated optional" are different facts about a payload.
+    if (raw.contains("REQUIRED") && !raw.contains("NOT_REQUIRED")) "true"
+    else if (raw.contains("NOT_REQUIRED") || raw.contains("false")) "false"
+    else if (raw.contains("true")) "true"
+    else ""
+  }
+
+  // **One `required`, from either source.** @Schema states it; a bean-validation
+  // annotation implies it. A field carrying only `@NotNull` used to report
+  // `required: ""` -- "not stated" -- when the code plainly states it, and a
+  // generated case would then treat the field as optional and never build the
+  // fixture that reaches the 400.
+  val impliesRequired = Set("NotNull", "NotBlank", "NotEmpty")
+
+  def requiredValue(annotations: List[Annotation]): String = {
+    val declared = requiredFlag(annotations)
+    if (declared.nonEmpty) declared
+    else if (annotations.exists(a => impliesRequired.contains(a.name))) "true"
+    else ""
+  }
+
+  def allowedValues(annotations: List[Annotation]): List[String] =
+    annotations.filter(a => schemaMarkers.contains(a.name))
+      .flatMap(a => argValue(a, "allowableValues"))
+      .flatMap(v => arrayMembers(v).getOrElse(List(v)))
+      .map(_.replaceAll("^\"|\"$", "").trim).filter(_.nonEmpty).distinct
+
+  // ---- X-6b: validation as data, not as annotation text ----------------
+  //
+  // `constraints: ["@Size(max = 40)"]` is a string, and every consumer that
+  // wants the bound has to re-parse it -- two consumers parsing it slightly
+  // differently is a defect nobody can see. A boundary criterion needs the
+  // number 40, so the number is what gets emitted.
+  //
+  // The vocabulary is **closed**, like the ontology and the annotation roles: an
+  // annotation outside it stays in `constraints` and becomes no property, so it
+  // reads as unhandled rather than vanishing (X-5a).
+  //
+  // `@Size` is length on a String and cardinality on a collection, and calling
+  // both `max_length` would be a quiet lie about what a fixture has to build --
+  // so the target type decides which pair of properties it lands in.
+  def numArg(a: Annotation, keys: List[String]): Option[String] =
+    keys.flatMap(k => argValue(a, k)).headOption
+      .map(_.replaceAll("^\"|\"$", "").trim).filter(_.nonEmpty)
+
+  def isCollection(typeFullName: String): Boolean = {
+    val n = typeFullName
+    n.startsWith("java.util.") &&
+      List("List", "Set", "Collection", "Map", "Queue", "Deque")
+        .exists(c => n.contains("." + c)) || n.endsWith("[]")
+  }
+
+  /** `(property -> value)` pairs for one constraint annotation, or nothing. */
+  def typedConstraints(a: Annotation, typeFullName: String): List[(String, String)] = {
+    val collection = isCollection(typeFullName)
+    val sizeMin = if (collection) "expected_min_size" else "expected_min_length"
+    val sizeMax = if (collection) "expected_max_size" else "expected_max_length"
+    a.name match {
+      // `required` is deliberately NOT emitted here: `requiredFlag` already
+      // emits it from @Schema, and two `"required"` keys in one JSON object is
+      // a collision whose winner is whichever the parser reads last. It is
+      // folded into that single value below instead.
+      case "NotNull" => Nil
+      // Blank/Empty are stronger than NotNull: they also rule out "".
+      case "NotBlank" | "NotEmpty" => List(sizeMin -> "1")
+      case "Size" =>
+        numArg(a, List("min")).map(sizeMin -> _).toList ++
+          numArg(a, List("max")).map(sizeMax -> _).toList
+      case "Min" | "DecimalMin" =>
+        numArg(a, List("value")).map("expected_min" -> _).toList
+      case "Max" | "DecimalMax" =>
+        numArg(a, List("value")).map("expected_max" -> _).toList
+      case "Positive" => List("expected_exclusive_min" -> "0")
+      case "PositiveOrZero" => List("expected_min" -> "0")
+      case "Negative" => List("expected_exclusive_max" -> "0")
+      case "NegativeOrZero" => List("expected_max" -> "0")
+      case "Pattern" =>
+        numArg(a, List("regexp")).map("expected_pattern" -> _).toList
+      case "Email" => List("expected_format" -> "email")
+      case "Digits" =>
+        numArg(a, List("integer")).map("expected_integer_digits" -> _).toList ++
+          numArg(a, List("fraction")).map("expected_fraction_digits" -> _).toList
+      case "Past" | "PastOrPresent" => List("expected_temporal" -> "past")
+      case "Future" | "FutureOrPresent" => List("expected_temporal" -> "future")
+      case _ => Nil   // recognised as a constraint, not honoured as a property
+    }
+  }
+
+  // ---- The Enum specialisation, and why a field cares ------------------
+  //
+  // An enum is the one type whose value space is fully known from source: its
+  // constants ARE the equivalence partitions of every field of that type. Before
+  // this, `allowed_values` came only from `@Schema(allowableValues=...)`, so a
+  // field typed by an enum had **no** partitions unless somebody had written them
+  // out a second time by hand -- measured across a real service, zero fields
+  // carried any.
+  val enumConstants: Map[String, List[String]] = cpg.typeDecl.isExternal(false).l
+    .filter(t => t.code.contains("enum ") || t.inheritsFromTypeFullName.exists(
+      _ == "java.lang.Enum"))
+    .map { t =>
+      // A Java enum's constants are fields of the enum's own type -- **and so is
+      // an instance field that happens to be self-typed.** A real enum declared
+      // `private final MfaChallengeType legacyMfaChallengeType`, which the type
+      // test alone reported as a fourth constant, so a field of that type
+      // carried a partition the value space does not contain and a generated
+      // case would have offered it as input.
+      //
+      // javasrc2cpg gives an enum constant NO modifiers and an instance field
+      // `FINAL, PRIVATE`, so visibility separates them. Anything private or
+      // protected is not part of the closed set of values a caller can send.
+      val hidden = Set("PRIVATE", "PROTECTED")
+      val constants = t.member.l
+        .filter(m => m.typeFullName == t.fullName ||
+                     m.typeFullName.endsWith("." + t.name))
+        .filterNot(m => m.modifier.modifierType.l.exists(hidden.contains))
+        .name.l.distinct
+      t.fullName -> constants
+    }.filter(_._2.nonEmpty).toMap
+
+  val enumNames = enumConstants.keySet
+
+  // **A Java record puts its component annotations on the constructor
+  // parameter, not on the member.** Probed against `RecordDto`, whose four
+  // components each carry `@Schema` and two of which carry `@NotBlank`/`@Size`:
+  // every member reported `List()` and every constructor parameter reported the
+  // real set. So a record DTO -- increasingly the default shape for Spring
+  // payloads -- landed with **no** descriptions, no constraints and no
+  // required-ness whatever, and nothing said so.
+  //
+  // Read as a fallback rather than a special case: prefer what is on the member,
+  // fall back to the same-named constructor parameter. That covers a record and
+  // a POJO without either needing to be detected.
+  val ctorParamAnnotations: Map[(String, String), List[Annotation]] =
+    cpg.typeDecl.isExternal(false).l.flatMap { t =>
+      t.method.nameExact("<init>").l.flatMap(_.parameter.l)
+        .filterNot(_.name == "this")
+        .map(pp => (t.fullName, pp.name) -> pp.astChildren.collectAll[Annotation].l)
+    }.filter(_._2.nonEmpty).toMap
+
   val members = cpg.typeDecl.isExternal(false).flatMap { t =>
     t.member.map { mem =>
-      val constraints = mem.astChildren.collectAll[Annotation].l
+      val onMember = mem.astChildren.collectAll[Annotation].l
+      val own =
+        if (onMember.nonEmpty) onMember
+        else ctorParamAnnotations.getOrElse((t.fullName, mem.name), Nil)
+      val constraints = own
         .filter(a => constraintAnnotations.contains(a.name))
         .map(_.code).distinct
+      // Declared partitions first, the field's enum type second. A hand-written
+      // @Schema(allowableValues) is a person's statement and outranks an
+      // inference, even a sound one.
+      // **`typeFullName` erases the generic**: a `List<RecordDto>` field reports
+      // `java.util.List`, so the nested payload edge stopped at the collection
+      // and the element type -- the thing a fixture actually builds -- was
+      // unreachable. The member's `code` still carries `List<RecordDto>`, so the
+      // element type is read from there and reported separately rather than
+      // overwriting the declared type, which is genuinely `java.util.List`.
+      val elementType = {
+        val code = mem.code
+        val open = code.indexOf('<')
+        val close = code.lastIndexOf('>')
+        if (open >= 0 && close > open) {
+          val inner = code.substring(open + 1, close).split(",").last.trim
+          // A simple name here; landing resolves it the same way it resolves a
+          // response body, and omits it when the name is ambiguous.
+          if (inner.nonEmpty && !inner.contains("<") && inner.head.isUpper) inner else ""
+        } else ""
+      }
+      val declaredAllowed = allowedValues(own)
+      val allowed =
+        if (declaredAllowed.nonEmpty) declaredAllowed
+        else enumConstants.getOrElse(mem.typeFullName, Nil)
+      // **Overlapping bounds compose to the STRONGEST, because every constraint
+      // has to hold.** `@NotBlank @Size(min = 3)` means length >= 3; taking the
+      // first seen reported `expected_min_length: 1` from @NotBlank, which is
+      // weaker than the code, so a boundary case would offer a 1-character value
+      // as valid against a field that rejects it. Affirmatively wrong beats
+      // missing, and this was affirmatively wrong.
+      val minKeys = Set("expected_min_length", "expected_min_size", "expected_min",
+                        "expected_integer_digits", "expected_fraction_digits")
+      val typed = own.filter(a => constraintAnnotations.contains(a.name))
+        .flatMap(a => typedConstraints(a, mem.typeFullName))
+        .foldLeft(List.empty[(String, String)]) { case (acc, kv) =>
+          acc.find(_._1 == kv._1) match {
+            case None => acc :+ kv
+            case Some((k, existing)) =>
+              val pick = (scala.util.Try(existing.toDouble).toOption,
+                          scala.util.Try(kv._2.toDouble).toOption) match {
+                // A min bound: the larger is the stronger. A max bound: the
+                // smaller. Non-numeric (a pattern, a format) keeps the first.
+                case (Some(a), Some(b)) if minKeys.contains(k) => math.max(a, b)
+                case (Some(a), Some(b)) => math.min(a, b)
+                case _ => Double.NaN
+              }
+              if (pick.isNaN) acc
+              else acc.map { case (kk, vv) =>
+                if (kk == k) (kk, if (pick == pick.toLong.toDouble)
+                  pick.toLong.toString else pick.toString) else (kk, vv) }
+          }
+        }
+      val typedJson = typed.map { case (k, v) =>
+        val literal = if (v.matches("-?\\d+(\\.\\d+)?") || v == "true" || v == "false")
+          v else "\"" + esc(v) + "\""
+        s""""$k":$literal"""
+      }
       s"""{"type_name":"${esc(t.name)}","name":"${esc(mem.name)}",""" +
       s""""owner_full_name":"${esc(t.fullName)}",""" +
       s""""type_full_name":"${esc(mem.typeFullName)}",""" +
+      s""""element_type":"${esc(elementType)}",""" +
+      s""""type_is_enum":${enumNames.contains(mem.typeFullName)},""" +
+      s""""owner_is_enum":${enumNames.contains(t.fullName)},""" +
       s""""constraints":[${constraints.map(c => "\"" + esc(c) + "\"").mkString(",")}],""" +
+      (if (typedJson.nonEmpty) typedJson.mkString("", ",", ",") else "") +
+      s""""description":"${esc(schemaArg(own, "description"))}",""" +
+      s""""required":"${esc(requiredValue(own))}",""" +
+      s""""allowed_values":[${allowed.map(v => "\"" + esc(v) + "\"").mkString(",")}],""" +
+      s""""owner_description":"${esc(schemaArg(t.astChildren.collectAll[Annotation].l, "description"))}",""" +
       s""""anchor":${anchor(t.filename, mem.lineNumber)}}"""
     }
   }.l
@@ -407,7 +801,7 @@ import java.io.PrintWriter
   // `@ExceptionHandler(X.class)` + `@ResponseStatus(HttpStatus.BAD_REQUEST)`.
   //
   // Without this the pack can see that an endpoint declares a 400 and cannot see
-  // *why*. athena maps FOUR exceptions onto 400 and only one of them is bean
+  // *why*. The pilot estate maps FOUR exceptions onto 400 and only one of them is bean
   // validation, so labelling every declared 400 "payload invalid" would be
   // affirmatively wrong on the other three -- a fixture built from it sets up the
   // wrong precondition and never reaches the path.
@@ -419,8 +813,14 @@ import java.io.PrintWriter
   val httpStatusCodes = Map(
     "OK" -> 200, "CREATED" -> 201, "ACCEPTED" -> 202, "NO_CONTENT" -> 204,
     "ALREADY_REPORTED" -> 208, "BAD_REQUEST" -> 400, "UNAUTHORIZED" -> 401,
-    "FORBIDDEN" -> 403, "NOT_FOUND" -> 404, "CONFLICT" -> 409,
-    "UNPROCESSABLE_ENTITY" -> 422, "INTERNAL_SERVER_ERROR" -> 500
+    "PAYMENT_REQUIRED" -> 402, "FORBIDDEN" -> 403, "NOT_FOUND" -> 404,
+    "METHOD_NOT_ALLOWED" -> 405, "NOT_ACCEPTABLE" -> 406, "REQUEST_TIMEOUT" -> 408,
+    "CONFLICT" -> 409, "GONE" -> 410, "PRECONDITION_FAILED" -> 412,
+    "PAYLOAD_TOO_LARGE" -> 413, "UNSUPPORTED_MEDIA_TYPE" -> 415,
+    "UNPROCESSABLE_ENTITY" -> 422, "LOCKED" -> 423, "FAILED_DEPENDENCY" -> 424,
+    "PRECONDITION_REQUIRED" -> 428, "TOO_MANY_REQUESTS" -> 429,
+    "INTERNAL_SERVER_ERROR" -> 500, "NOT_IMPLEMENTED" -> 501,
+    "BAD_GATEWAY" -> 502, "SERVICE_UNAVAILABLE" -> 503, "GATEWAY_TIMEOUT" -> 504
   )
 
   def statusOf(a: Annotation): Option[Int] = {
@@ -430,9 +830,71 @@ import java.io.PrintWriter
     httpStatusCodes.get(simple).orElse(scala.util.Try(simple.toInt).toOption)
   }
 
+  // **A handler that BUILDS its response is as declarative as one that annotates
+  // it.** This required `@ResponseStatus` and found nothing in demo_project/records-service,
+  // which reported `exception_mappings=0` and therefore not a single rejection
+  // path — twelve transitions, all 2xx, for a service that plainly returns 400s:
+  //
+  //     @ExceptionHandler(RecordConflictException.class)
+  //     ... return ResponseEntity.badRequest().body(...)
+  //
+  // The status is in the construction. `response_constructors` already declares
+  // what each one means (`ResponseEntity.badRequest -> 400`), so the same table
+  // the behaviour pack uses answers it here. Annotation first: an explicit
+  // `@ResponseStatus` is the stronger statement where both are present.
+  val constructorStatus: Map[String, Int] =
+    (if (constructors.trim.isEmpty)
+       "ResponseEntity.ok:200,ResponseEntity.created:201,ResponseEntity.accepted:202," +
+       "ResponseEntity.noContent:204,ResponseEntity.badRequest:400," +
+       "ResponseEntity.notFound:404"
+     else constructors)
+      .split(",").toList.map(_.trim).filter(_.nonEmpty).flatMap { pair =>
+        pair.split(":").toList match {
+          case expr :: code :: Nil =>
+            scala.util.Try(code.trim.toInt).toOption.map(c => (expr.trim, c))
+          case _ => None
+        }
+      }.toMap
+
+  // **`ResponseEntity.status(...)` is the only form that can carry a body with a
+  // 4xx.** `notFound()` returns a HeadersBuilder, so any handler that wants to
+  // return an `ErrorDto` with its 404 *must* write `status(HttpStatus.NOT_FOUND)`
+  // -- which made the dominant real-world rejection idiom unreadable. The
+  // constructor table matches on a bare method name and has no way to express
+  // "whatever this call's argument resolves to", so the argument is read here.
+  //
+  // Measured on the demo corpus: four `@ExceptionHandler` methods, every one of
+  // this shape, and `exception_mappings` came back **0**. The same symptom the
+  // constructor table was added to fix, one idiom further along.
+  def statusArgumentOf(c: Call): Option[Int] = {
+    val args = c.argument.l.filterNot(_.argumentIndex == 0)
+    args.flatMap { a =>
+      val simple = a.code.split("\\.").last.replaceAll("[^A-Za-z0-9_]", "").trim
+      httpStatusCodes.get(simple).orElse(scala.util.Try(simple.toInt).toOption)
+    }.headOption
+  }
+
+  def constructedStatusIn(m: Method): Option[Int] = {
+    val calls = m.ast.isCall.l
+    // The named constructors first: `badRequest()` states its status outright,
+    // where `status(x)` needs x resolved and may not resolve at all.
+    val named = calls.flatMap { c =>
+      constructorStatus.collectFirst {
+        // Matched on methodFullName: javasrc2cpg strips the receiver from
+        // `code`, so `ResponseEntity.badRequest()` reads as `badRequest()`.
+        case (expr, status) if c.methodFullName.contains("." + expr + ":") => status
+      }
+    }.headOption
+    named.orElse(
+      calls.filter(c => c.methodFullName.contains(".status:") ||
+                        c.methodFullName.contains(".valueOf:"))
+        .flatMap(statusArgumentOf).headOption)
+  }
+
   val exceptionMappings = cpg.method.isExternal(false).l.flatMap { m =>
     val handled = m.annotation.name("ExceptionHandler").l
     val status = m.annotation.name("ResponseStatus").l.flatMap(statusOf).headOption
+      .orElse(if (handled.nonEmpty) constructedStatusIn(m) else None)
     val advice = m.typeDecl.name.headOption.getOrElse("")
     handled.flatMap { a =>
       val types = argPairs(a).map(_._2)
@@ -443,11 +905,101 @@ import java.io.PrintWriter
         types.map { t =>
           s"""{"exception_type":"${esc(t)}","status":$s,""" +
           s""""advice_type":"${esc(advice)}",""" +
+          // The handler itself, not just the class it lives in. `advice_type` is
+          // a simple name and joins to nothing, so `ExceptionMapping-[:HANDLED_BY]
+          // ->Method` -- catalogued, and named in EVIDENCE_LAYER as this label's
+          // reader -- could not be written. Five mappings landed connected to
+          // nothing on a real service while the catalogue said otherwise.
+          s""""handler_method_id":"${esc(m.fullName)}",""" +
+          // The handler's own return type is the rejection's body. Without it a
+          // scoped 400 carried `response_body: ""`, which landing documents as
+          // meaning NO body — so a generated case asserted an empty payload
+          // against a populated `ErrorDto`. An empty string is a
+          // claim here, not a gap.
+          s""""response_body":"${esc(responseBody(declaredReturnType(m)))}",""" +
           s""""anchor":${anchor(m.filename, m.lineNumber)}}"""
         }
       }
     }
   }.distinct
+
+  // ---- Layer 2d: what the application asks the database (X-8a) ---------
+  //
+  // Measured on a real twelve-endpoint service before this was written:
+  // `@Query`, `EntityManager`, `JdbcTemplate` and native SQL appeared in **zero**
+  // files, and 11 used Spring Data **derived methods**. So the derived name is
+  // the shape that matters and the rest are the tail.
+  //
+  // The entity comes from the method's RETURN TYPE, not from the repository's
+  // generic parameter: `inheritsFromTypeFullName` is erased to
+  // `org.springframework.data.jpa.repository.JpaRepository`, so
+  // `List<RecordEntity>` is where the entity actually survives.
+  //
+  // The entity->table mapping is emitted where the source states it and OMITTED
+  // where it does not. On that same service `@Entity`/`@Table`/`@Column` were in
+  // zero files — the entities lived in a dependency jar — so a table name here is
+  // frequently unknowable from code, and the database catalogue is what confirms
+  // it (X-8). Guessing one here would put a plausible wrong table in the graph.
+  val repositoryMarkers = Set("JpaRepository", "CrudRepository",
+                              "PagingAndSortingRepository", "Repository",
+                              "ReactiveCrudRepository", "MongoRepository")
+
+  // **The generic is erased in `typeFullName` and survives in `code`.** A
+  // repository method returns `java.util.List` as far as the type says, and
+  // `abstract List<RecordEntity> findByOwner(...)` as far as the source does —
+  // and the entity is the whole point of the row. The same erasure caught a
+  // payload field earlier: `List<RecordDto>` reported `java.util.List`, true and
+  // useless.
+  def entityFrom(m: Method): String = {
+    val code = m.code
+    val open = code.indexOf('<')
+    val close = code.indexOf('>')
+    val inner =
+      if (open >= 0 && close > open) code.substring(open + 1, close)
+      else {
+        // No generic: the return type IS the entity, e.g. `RecordEntity findOne(..)`.
+        val head = code.replaceAll("^(public|abstract|final|static|protected)\\s+", "")
+        head.split("\\s+").headOption.getOrElse("")
+      }
+    inner.split(",").last.trim.split("\\.").last.trim
+      .replaceAll("[^A-Za-z0-9_$]", "")
+  }
+
+  val entities = cpg.typeDecl.isExternal(false).l.filter(t =>
+    t.annotation.name("Entity").nonEmpty).map { t =>
+      val table = t.annotation.name("Table").l.flatMap(a => argValue(a, "name"))
+        .headOption.map(_.replaceAll("^\"|\"$", "")).getOrElse("")
+      val columns = t.member.l.map { m =>
+        val declared = m.astChildren.collectAll[Annotation].l
+          .filter(_.name == "Column").flatMap(a => argValue(a, "name"))
+          .headOption.map(_.replaceAll("^\"|\"$", "")).getOrElse("")
+        s"""{"field":"${esc(m.name)}","column":"${esc(declared)}"}"""
+      }
+      // `table` empty means the source does not say. That is a fact, and the
+      // catalogue is what settles it — never a naming-strategy guess written
+      // here as though it were recovered.
+      s"""{"entity":"${esc(t.name)}","full_name":"${esc(t.fullName)}",""" +
+      s""""table":"${esc(table)}","columns":[${columns.mkString(",")}],""" +
+      s""""anchor":${anchor(t.filename, t.lineNumber)}}"""
+    }
+
+  val repositoryQueries = cpg.typeDecl.isExternal(false).l.filter(t =>
+    t.inheritsFromTypeFullName.exists(p =>
+      repositoryMarkers.contains(p.split("\\.").last))).flatMap { t =>
+      t.method.l.filterNot(_.name.startsWith("<")).map { m =>
+        val q = m.annotation.name("Query").l
+        val statement = q.flatMap(a => argValue(a, "value")
+          .orElse(argPairs(a).find(_._1 == "").map(_._2)))
+          .headOption.map(_.replaceAll("^\"|\"$", "")).getOrElse("")
+        val native = q.flatMap(a => argValue(a, "nativeQuery")).headOption
+          .exists(_.contains("true"))
+        s"""{"repository":"${esc(t.name)}","method":"${esc(m.name)}",""" +
+        s""""entity":"${esc(entityFrom(m))}",""" +
+        s""""statement":"${esc(statement)}","native":$native,""" +
+        s""""method_id":"${esc(m.fullName)}",""" +
+        s""""anchor":${anchor(m.filename, m.lineNumber)}}"""
+      }
+    }
 
   // ---- X-5: partial-parse detection -----------------------------------
   // A file that produced no type declaration usually means the frontend failed
@@ -473,8 +1025,14 @@ import java.io.PrintWriter
   "endpoints": [${endpoints.mkString(",")}],
   "members": [${members.mkString(",")}],
   "exception_mappings": [${exceptionMappings.mkString(",")}],
+  "entities": [${entities.mkString(",")}],
+  "repository_queries": [${repositoryQueries.mkString(",")}],
   "checks": [],
   "outcomes": [],
+  "filtered": {"methods_declared": ${allMethods.size},
+    "accessors_dropped": $droppedAccessors,
+    "boilerplate_dropped": $droppedBoilerplate,
+    "reason": "inert accessors and generated boilerplate: no entry point, no guard, no throw, nothing a criterion can reference. Fields are untouched. Pass --param dropNoise=no to keep them"},
   "parse_errors": [${unparsed.map(f => "\"" + esc(f) + "\"").mkString(",")}],
   "partial": ${unparsed.nonEmpty}
 }"""
@@ -483,5 +1041,9 @@ import java.io.PrintWriter
   println(s"wrote $out")
   println(s"  methods=${methods.size} calls=${calls.size} endpoints=${endpoints.size} members=${members.size}")
   println(s"  exception_mappings=${exceptionMappings.size}")
+  println(s"  entities=${entities.size} repository_queries=${repositoryQueries.size}")
+  println(s"  noise dropped=${droppedMethods.size} of ${allMethods.size} " +
+          s"(${droppedAccessors} inert accessors, ${droppedBoilerplate} boilerplate) " +
+          s"— fields untouched")
   println(s"  unparsed=${unparsed.size}")
 }

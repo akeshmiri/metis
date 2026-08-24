@@ -67,12 +67,12 @@ repositories:
 # above: the secret comes from the environment, never from this file (PLT-005).
 connectors:
   application_code:
-    athena:
+    reporting:
       host: "localhost"
       port: 5432
-      dbname: "athena_mock"
-      user: "athena"
-      password_env: "METIS_ATHENA_PASSWORD"
+      dbname: "reporting_mock"
+      user: "reporting"
+      password_env: "METIS_REPORTING_PASSWORD"
 
 # Transport (Phase 6). 'stdio' is what every Claude Code session so far has
 # used -- no OAuth2 needed, sufficient for local single-user dogfooding.

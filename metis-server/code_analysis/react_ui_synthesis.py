@@ -10,7 +10,7 @@ returns "no event handlers recovered", which is true and useless.
 
 **What was being thrown away.** The pack recovers 66 `ui_states` across 9 real
 pages, each `setStatus`-style variable taking exactly `loading`, `ready` and
-`error`. Nothing read them. The six athena UI models were hand-derived
+`error`. Nothing read them. The six the pilot estate UI models were hand-derived
 off-pipeline into two states -- `PageLoaded` and `Ready` -- so **every error
 state and every loading state was discarded**, and the error path, the thing most
 worth testing, was not in the graph at all.

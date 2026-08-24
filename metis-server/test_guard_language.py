@@ -41,7 +41,7 @@ def test_the_presence_idiom_becomes_a_sentence_about_the_resource():
 
 
 def test_the_noun_comes_from_the_path_never_from_the_guards_variable():
-    """`t` is the variable at 42 endpoints — one shared helper in athena-common.
+    """`t` is the variable at 42 endpoints — one shared helper in records-common.
 
     Naming the noun from it would call every resource in the estate `t`, which is
     the same mistake `unfolding.resource_of` exists to prevent for state ids.

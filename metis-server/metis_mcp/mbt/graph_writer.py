@@ -166,7 +166,7 @@ def plan_persist(model: Model, result: GenerationResult, cases: list[TestCase],
     #   the ID     landing namespaces every element as `{model_id}::{id}`, so a
     #              bare `tid` matches nothing either.
     #
-    # Found by re-landing the real Athena estate: every CONTAINS and COVERS edge
+    # Found by re-landing the real Example estate: every CONTAINS and COVERS edge
     # for all thirteen models came back `unmatched`, which is only visible
     # because `persist` now reads its counts from the database.
     transition_label = transition_label_for(surface or "api")

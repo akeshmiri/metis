@@ -119,7 +119,7 @@ def dq_024(model: Model, confirmed: list[ConfirmedMatch]) -> dict:
       1. the transitions are hand-authored, so the same person wrote both sides
          (REQ-DQ-001's original obligation);
       2. the criteria are **code-derived**, so the intent side was written FROM
-         the behaviour it is measuring (S-19). This is the athena case: specs
+         the behaviour it is measuring (S-19). This is the the pilot estate case: specs
          marked IMPLEMENTED, whose own plan says they document what was built.
          Counting those as validation reports a system agreeing with itself.
 

@@ -17,7 +17,7 @@
     },
     {
       "name": "metis-mcp",
-      "description": "The Métis MCP server: seven read-only tools over the behaviour graph — list workflows, route a request to one, read a model, validate it for well-formedness, report its coverage ledger, check where a run got to, and explain why the surface cannot decide anything. Read-only by construction (N-8): approval, landing and publication go through the gated CLI, because a decision needs evidence a chat session cannot present. Install alongside the metis plugin to give its skills a live graph to work against.",
+      "description": "The Métis MCP server: twelve read-only tools over the behaviour graph and the knowledge in it — list workflows, route a request to one, read a model, validate it for well-formedness, report its coverage ledger, check where a run got to, explain why the surface cannot decide anything, and search or read the entities, requirements and specifications behind it. Read-only by construction (N-8): approval, landing and publication go through the gated CLI, because a decision needs evidence a chat session cannot present. Install alongside the metis plugin to give its skills a live graph to work against.",
       "author": {
         "name": "Métis"
       },

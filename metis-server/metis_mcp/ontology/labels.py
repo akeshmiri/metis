@@ -1,14 +1,16 @@
 """
 The ontology (application spec §8.2, §8.3).
 
-Fifty-two labels in six layers: a **control-flow** model (State, Transition and
+Sixty-one labels in eight layers: a **control-flow** model (State, Transition and
 friends), the **evidence** layer it is derived from (Endpoint, Parameter, Class,
 Field, Method, DeclaredOutcome, Check, ExceptionMapping, Route), a small
 **business** layer (BusinessArea, BusinessEntity) giving the nouns a criterion
-uses a definition of their own, the **intake anchors** (JiraItem and its five
-siblings) recording which artefact in the world a requirement came from, and the
-**documents** (SpecDocument, EntityDocument) that are rendered into the graph
-rather than into files beside it.
+uses a definition of their own, the **Web structure** (UiElement and its ten
+specialisations) and **data** (Datasource, Database, Schema, DbObject, Column)
+layers holding what a test acts on and what it must set up, the **intake
+anchors** (JiraItem and its five siblings) recording which artefact in the world
+a requirement came from, and the **documents** (SpecDocument, EntityDocument)
+that are rendered into the graph rather than into files beside it.
 
 **This module is the single source for two of the four governance places** the
 spec's D-2 rule names: the structural validator reads it directly, and the Cypher
@@ -19,7 +21,7 @@ The remaining two -- the catalogue in §8.2/§8.3 of the specification, and this
 docstring -- are human-readable and are checked against this module by
 test_ontology.py.
 
-Why fifty-two, and why that number should worry you: see D-1 and the note in
+Why sixty-one, and why that number should worry you: see D-1 and the note in
 `test_ontology`. A label is included only when something writes it AND something
 reads it -- the second half is the one that is easy to skip, and a writer alone
 is how an ontology accretes. §8.7 lists the deliberately-excluded labels with
@@ -38,6 +40,14 @@ BASELINE_EXEMPT = {"Episode"}
 
 # Lifecycle values (spec §8.6). Generation reads only `Approved` (D-10).
 LIFECYCLE_STATES = ("Quarantine", "Approved", "Disputed", "Rejected", "Deprecated")
+
+# The states in which a human still owes a decision. `Approved`, `Rejected` and
+# `Deprecated` are settled; `Quarantine` has never been looked at and `Disputed`
+# has been looked at and contested. Both still want a person.
+#
+# This is the definition `NeedReview` is kept in step with -- see its LabelSpec.
+NEEDS_REVIEW_STATES = ("Quarantine", "Disputed")
+NEED_REVIEW = "NeedReview"
 
 # Acceptance-criterion provenance (spec S-19). Defined here, in the ontology,
 # rather than beside the matching logic that reads it: a grade the graph cannot
@@ -134,6 +144,36 @@ class LabelSpec:
 
 LABELS: dict[str, LabelSpec] = {
     spec.name: spec for spec in (
+        # ------------------------------------------------------------------
+        # The review marker. Carried ALONGSIDE a node's real label.
+        # ------------------------------------------------------------------
+        #
+        # **The fifty-sixth label, and D-2 makes that a reviewed change.** It is
+        # here because of one question the property cannot answer: `MATCH
+        # (n:NeedReview)` is "everything a human still owes a decision on",
+        # across every label at once. `lifecycle_state` is indexed on 54 labels,
+        # so per-label lookup was never the problem; there is simply no way to
+        # ask it of all of them without scanning every node in the graph.
+        #
+        # **`lifecycle_state` stays authoritative and this is never consulted to
+        # decide anything.** It is a marker maintained FROM that property, added
+        # by `landing.land` when a node arrives in a NEEDS_REVIEW_STATES state
+        # and removed when a decision settles it. Two representations of one
+        # fact is this codebase's most common defect, so the two are written by
+        # one place and `test_ontology` asserts they cannot disagree.
+        #
+        # D-1's writer and reader: written by `model_sources.landing.land` and
+        # `mbt.finding_writer.load`; read by `review queue` and the review UI's
+        # queue screen, which is the cross-label question that motivated it.
+        #
+        # It carries no properties of its own. The node's real label carries
+        # them, and a marker that accreted properties would become a second
+        # place to look for a fact.
+        LabelSpec(
+            NEED_REVIEW,
+            "Marker: a human still owes a decision on this node "
+            "(lifecycle_state is Quarantine or Disputed)",
+        ),
         LabelSpec(
             "Episode", "Immutable record of one ingested unit; everything derived points here",
             required=("t_recorded", "source_connector", "job_id"),
@@ -385,7 +425,7 @@ LABELS: dict[str, LabelSpec] = {
             enums={"surface": ("ui", "api")},
             indexed=("component", "journey", "surface", "version", "commit_sha"),
             # Was `ModelVersion`, which named Métis's bookkeeping rather than the
-            # thing in the world: `athena-metric-api v1` at a commit IS a
+            # thing in the world: `records-api v1` at a commit IS a
             # deployable component, and everything downstream — which version a
             # test ran against, what an incident touched — wants to say
             # "component", not "model version".
@@ -393,7 +433,7 @@ LABELS: dict[str, LabelSpec] = {
             # **Identity is (component, commit), and `component` carries the
             # stable half.** A node per commit is what D-6 needs (elements are
             # shared across versions where unchanged), but without the stable key
-            # you could not ask "every version of athena-metric-api" — the estate
+            # you could not ask "every version of records-api" — the estate
             # would read as 13 components today and 26 after the next commit.
         ),
         LabelSpec(
@@ -668,17 +708,58 @@ LABELS: dict[str, LabelSpec] = {
             "Class", "One declared type: a controller, a service, or a payload schema",
             indexed=("package",),
             # **Deliberately doubles as the payload schema.** A DTO *is* a class;
-            # reaching `MetricDto` as a parameter's type and reaching it as
-            # `MetricController`'s neighbour must arrive at one node, or the
+            # reaching `RecordDto` as a parameter's type and reaching it as
+            # `RecordController`'s neighbour must arrive at one node, or the
             # graph says two different things about one type.
         ),
         LabelSpec(
-            "Field", "One field of a type, with the constraints declared on it",
-            indexed=("type_name",),
-            # The `constraints` array is GD-3's variants: what a fixture must
-            # violate to reach a validation rejection. Held here rather than on
-            # the Transition so the same constraint is one node however many
-            # transitions require it.
+            "Enum", "A declared type whose instances are a closed set of named "
+                    "constants — its `constants` ARE its equivalence partitions",
+            specialises="Class",
+            indexed=("package",),
+            # **Written instead of `:Class`, like every other specialisation.**
+            # Queries over types must use `label_expression("Class")`; a
+            # hardcoded `:Class` silently skips every enum.
+            #
+            # The fifty-seventh label, and D-2 makes that a reviewed change.
+            # It earns its own label because an enum is the one type whose value
+            # space is fully known from the source. A `String` field needs a
+            # boundary analysis; a field of this type has exactly N partitions
+            # and they are enumerable — which is a different kind of test-design
+            # input, not a variation on the same one.
+        ),
+        # ------------------------------------------------------------------
+        # What the application asks the database (X-19a).
+        # ------------------------------------------------------------------
+        LabelSpec(
+            "Query", "One thing the application asks a database, with the "
+                     "statement it sends",
+            required=("query", "form"),
+            may_be_empty=("query",),
+            indexed=("dialect", "form", "confidence"),
+            enums={"form": ("derived", "native", "jpql", "opaque"),
+                   "confidence": ("catalogue-confirmed",
+                                  "naming-strategy-proposed", "unresolved")},
+            # **Written as its dialect**, never as `:Query` — see the
+            # specialisations below. `query` may be empty on an opaque one: the
+            # statement is genuinely unknown, and "" is the honest form of that
+            # where a guessed SQL string would look runnable and be wrong.
+        ),
+        # A dialect per label, so `MATCH (q:Oracle)` reads as it should. They
+        # specialise `Query` so `label_expression("Query")` answers the
+        # estate-wide question — twice in one week a hardcoded parent label
+        # matched nothing here and both times it cost a real edge, and a service
+        # that talks to two databases is the normal case rather than the odd one.
+        LabelSpec("Postgres", "A query sent to PostgreSQL", specialises="Query"),
+        LabelSpec("Oracle", "A query sent to Oracle", specialises="Query"),
+        LabelSpec("MySql", "A query sent to MySQL", specialises="Query"),
+        LabelSpec(
+            "JpaQuery", "A repository call whose statement could not be "
+                        "recovered — carried raw, for a person to complete",
+            specialises="Query",
+            # The tier that exists so nothing is guessed. A derived name Métis
+            # cannot parse, or JPQL whose entity the catalogue has not confirmed,
+            # lands here with its reason rather than as invented SQL.
         ),
         LabelSpec(
             "Method", "One method, from Layer 1's structural pass",
@@ -702,7 +783,7 @@ LABELS: dict[str, LabelSpec] = {
             required=("exception_type", "status"),
             indexed=("exception_type", "status"),
             # What makes "which exception becomes a 400" evidence rather than
-            # inference: athena maps four distinct exceptions onto 400 and only
+            # inference: the pilot estate maps four distinct exceptions onto 400 and only
             # one of them is bean validation.
         ),
         LabelSpec(
@@ -746,6 +827,12 @@ ALLOWED_RELATIONSHIPS: tuple[RelationshipSpec, ...] = (
                      "A rule rendered in this document"),
     RelationshipSpec("EntityDocument", "CITES", "AcceptanceCriterion",
                      "A criterion that touches this entity"),
+    # **Catalogued, written by nothing.** D-1 asks for a named writer AND a
+    # named reader; this has neither. It stays because the UIF a Jira intake
+    # produces carries `issuelinks` and `intake_landing` is where they would
+    # land — but until something writes it, a query for "what does this issue
+    # link to" returns nothing and cannot tell that from "it links to nothing".
+    # Named here so the gap is stated rather than discovered.
     RelationshipSpec("JiraItem", "LINKS_TO", "JiraItem",
                      "A real Jira issue link — provenance, not traceability"),
     # ---- the intent spine ----
@@ -858,6 +945,11 @@ ALLOWED_RELATIONSHIPS: tuple[RelationshipSpec, ...] = (
     RelationshipSpec("BusinessEntity", "STORED_IN", "Table",
                      "Where this business noun is persisted"),
 
+    # `ON_EVENT` and `RENDERS` below are the UI surface's own joins, and nothing
+    # writes either: `engine.extract` runs the two JVM packs whatever a profile's
+    # surface says, so react-ui and js-ui have never produced a fact. Both packs
+    # now declare `status: unwired` in their manifests. Wiring pack selection by
+    # surface is what gives these writers.
     RelationshipSpec("Action", "ON_EVENT", "Event",
                      "The interaction that invokes this action"),
     RelationshipSpec("Navigation", "NAVIGATES_TO", "Page",
@@ -890,10 +982,29 @@ ALLOWED_RELATIONSHIPS: tuple[RelationshipSpec, ...] = (
     RelationshipSpec("Parameter", "OF_TYPE", "Class",
                      "The payload schema — the same node as the declared type"),
     RelationshipSpec("Endpoint", "RETURNS", "Class", "The declared response body type"),
-    RelationshipSpec("Class", "HAS_FIELD", "Field", "Its declared fields and constraints"),
+    # **The nested payload.** Without this a DTO field whose type is another DTO
+    # was a dead end: `MfaServiceRequest.answers` named `AnswerDto` in a string
+    # property and reached it through nothing, so the payload a test case has to
+    # construct was only ever one level deep. Followed as far as the declared
+    # types go, stopping on a type already on the path and on any type this
+    # repository does not declare (REQ-CGA-010 — no stub for a JDK type).
+    RelationshipSpec("Class", "OF_TYPE", "Class",
+                     "A field of this type is itself a declared type — the "
+                     "nested payload. Which field is on `f_<name>_type`"),
     RelationshipSpec("Class", "DECLARES_METHOD", "Method", "Its methods"),
     RelationshipSpec("Endpoint", "HANDLED_BY", "Method", "The handler behind the route"),
     RelationshipSpec("Method", "CALLS", "Method", "A resolved call edge (Layer 1)"),
+    # X-19a. `ISSUES` is the path a transition reaches a table by:
+    # ApiCall -> Endpoint -> HANDLED_BY -> Method -> CALLS* -> Method -> ISSUES.
+    RelationshipSpec("Method", "ISSUES", "Query",
+                     "A query this method sends to a database"),
+    # Every table a query touches, so a join names both rather than one.
+    RelationshipSpec("Query", "QUERIES", "Table",
+                     "A table this query reads or writes"),
+    RelationshipSpec("Query", "QUERIES", "View", "A view this query reads"),
+    RelationshipSpec("Query", "USES", "Column",
+                     "A column this query names — a test-design input, because "
+                     "it is what a fixture has to populate"),
     RelationshipSpec("Endpoint", "DECLARES", "DeclaredOutcome",
                      "A result this entry point can produce"),
     RelationshipSpec("DeclaredOutcome", "GUARDED_BY", "Check",
@@ -917,10 +1028,23 @@ ALLOWED_RELATIONSHIPS: tuple[RelationshipSpec, ...] = (
                      "The exception→status mapping behind a derived rejection"),
     RelationshipSpec("Transition", "EXERCISES", "Parameter",
                      "An input this transition sends (replaces inputs_json)"),
-    RelationshipSpec("Transition", "REQUIRES", "Field",
-                     "A field constraint a case must satisfy or violate (GD-3)"),
+    # Was `-> Field` until X-6d flattened a field onto its type. The claim is
+    # weaker and honest: the TYPE whose constraints a case must satisfy or
+    # violate, with which field carrying which constraint on `f_<name>_*`.
+    RelationshipSpec("Transition", "REQUIRES", "Class",
+                     "A payload type whose field constraints a case must "
+                     "satisfy or violate (GD-3)"),
     RelationshipSpec("Transition", "EXPECTS", "Class",
                      "The response body a case should assert"),
+    # **The weaker form of the same claim, and it is labelled as one.** A guard
+    # whose outcome could not be recovered is referenced by no DeclaredOutcome and
+    # no Transition, so it landed connected to nothing — both checks recovered
+    # from a real service were of that shape. Attached to the endpoint whose
+    # handler it was found in, this says "a condition was recovered here", never
+    # "this condition selects that outcome".
+    RelationshipSpec("Endpoint", "CONSTRAINED_BY", "Check",
+                     "A condition recovered in this endpoint's handler that no "
+                     "outcome references"),
     RelationshipSpec("Transition", "CONSTRAINED_BY", "Check",
                      "The recovered condition behind this transition's guard"),
 )
@@ -930,6 +1054,13 @@ RELATIONSHIP_TYPES = tuple(dict.fromkeys(r.rel_type for r in ALLOWED_RELATIONSHI
 # Spec §8.7 — excluded, each with the trigger that would bring it back. Kept in
 # code so the staging plan is checkable, not just prose.
 STAGED_OUT: dict[str, str] = {
+    # A field was its own node until X-6d: 68 of them on a real twelve-endpoint
+    # service, saying what four properties say, and never queried individually.
+    # What a test-designer asks is "what values does this type accept", which is
+    # one question about one node — so a scalar field is now `f_<name>_*` on its
+    # type and a complex one is a `Class-[:OF_TYPE]->Class` edge.
+    "Field": "a field needs an identity of its own — a per-field review state, "
+             "or an edge that must point at one field rather than at its type",
     # Declared with neither a writer nor a reader -- `test_ontology` already
     # named it "the standing example of what this test exists to prevent", and
     # it stayed declared anyway. Property-level history needs a temporal design

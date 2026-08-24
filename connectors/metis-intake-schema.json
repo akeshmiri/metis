@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "metis-intake-schema/1",
+  "title": "Métis intake declaration",
+  "description": "Every kind of thing Métis reads, what it produces, and what it may not do. This exists because the seven manifests beside it became fiction: they declare an `athena_internal_read` protocol against entity types the current ontology does not have, and nothing has ever loaded them. A directory of plausible configuration implies a capability, and finding out by running it is worse than being told. So this one is LOADED and CHECKED — `test_intakes.py` reads it against the registered sources, the intake anchors and the ontology, and a declaration that drifts from the code fails. THE RULE IT EXISTS TO ENFORCE (X-7a): Métis never executes anything against the System Under Test. It reads from intake sources and writes to its own graph. It does not call the API it models, drive the UI it models, or run a query against the database it models. `executes_against_sut` is a constant false so the prohibition is something a schema rejects rather than a paragraph somebody remembers.",
+  "type": "object",
+  "required": [
+    "intake_version",
+    "intakes"
+  ],
+  "properties": {
+    "intake_version": {
+      "const": "metis.intakes/1"
+    },
+    "intakes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/intake"
+      }
+    }
+  },
+  "$defs": {
+    "intake": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "reads",
+        "access",
+        "produces",
+        "lands",
+        "status",
+        "executes_against_sut"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "How a run names it. Where a model source of the same name exists, the two must match — checked."
+        },
+        "reads": {
+          "type": "string",
+          "description": "What artefact in the world this consumes."
+        },
+        "access": {
+          "enum": [
+            "local_files",
+            "read_only_connection",
+            "authored_file",
+            "uif_document"
+          ],
+          "description": "How it gets there, and every value is read-only by construction. `local_files` is a checkout on disk. `read_only_connection` opens a connection to an intake source — a database catalogue, an issue tracker — and issues no statement that changes it. `authored_file` is a checked-in description a person maintains. `uif_document` is a Unified Intake Format document produced elsewhere."
+        },
+        "executes_against_sut": {
+          "const": false,
+          "description": "X-7a. Constant, so stating otherwise is a schema error rather than a judgement call."
+        },
+        "produces": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          },
+          "description": "The contract or shape it emits, e.g. `metis.cpg-extract/1`."
+        },
+        "lands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The ontology labels it writes. Checked against the catalogue — an undeclared or staged-out label fails."
+        },
+        "status": {
+          "enum": [
+            "working",
+            "partial",
+            "declared"
+          ],
+          "description": "`working`: a reader exists and a test exercises it. `partial`: a reader exists and something material is missing, named in `limits`. `declared`: no reader. The capability does not exist and this says so, which is the whole reason the field is here."
+        },
+        "reader": {
+          "type": "string",
+          "description": "The module that performs the read. Required unless `declared`; checked to exist."
+        },
+        "limits": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "What it does NOT recover, stated rather than discovered."
+        },
+        "anchor": {
+          "type": "string",
+          "description": "The intake anchor label a UIF from this source lands, where one applies."
+        },
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The CLI command that invokes this intake, as argv words — [\"data\", \"catalogue\"]. Declared because a reader that exists and nothing calls is a capability nobody can use: `data_landing`, `db_catalogue` and the scaffold renderer were all built, tested and unreachable, and no field here recorded it. `test_intakes.py` checks every declared command against the parser."
+        },
+        "lands_from": {
+          "type": "array",
+          "description": "What in the SOURCE produces each label. `lands` says a database intake writes `Column`; this says a row of `information_schema.columns` is what produces one. Taken from v1's `entity_type_mapping`, which carried a `source_shape` for every entity it wrote — v2 kept the labels and dropped the shapes, and the shape is the half a reader needs to know whether their source will produce anything. Optional: absent is better than an invented shape.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "source_shape",
+              "label"
+            ],
+            "properties": {
+              "source_shape": {
+                "type": "string",
+                "description": "The thing in the source, named as a reader of that source would name it."
+              },
+              "label": {
+                "type": "string",
+                "description": "The ontology label it produces. Must appear in this intake's `lands`."
+              }
+            }
+          }
+        },
+        "temporal": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "t_recorded_source"
+          ],
+          "description": "Where `Episode.t_recorded` comes from for this intake, and what goes wrong when it is taken from the obvious place. Every `Episode` REQUIRES `t_recorded` and nothing recorded where it came from — `data_landing` defaults it to `datetime.now()`, so a re-ingest of six-month-old code produces a fact dated today and nothing says so. v1 declared this per connector; recording it is the precondition for fixing it.",
+          "properties": {
+            "t_recorded_source": {
+              "type": "string",
+              "description": "What timestamp anchors a fact from this intake."
+            },
+            "known_pitfalls": {
+              "type": "string",
+              "description": "How that timestamp misleads. v1's example, still true: rebased or squashed history loses individual commit dates."
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "working",
+                  "partial"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "reader"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "partial"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "limits"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

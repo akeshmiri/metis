@@ -25,6 +25,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from code_analysis import annotations as _annotations
 from metis_mcp.mbt.dimensions import CROSS_CUTTING, DimensionClass
 
 CONFIG_VERSION = "metis.framework-config/1"
@@ -59,8 +60,31 @@ class FrameworkSpec:
     surface: str
     entry_point_markers: tuple[str, ...]
     outcome_markers: tuple[str, ...]
+    # Space/`+`-separated pack names. **Display-only until now** — `engine`
+    # hardcoded the two JVM packs and ran them whatever the profile's surface
+    # said, so a `surface: ui` journey built a CPG and ran jvm-structural
+    # against it. `packs` parses this into the list to run.
     pack: str = ""
     notes: str = ""
+
+    @property
+    def packs(self) -> tuple[str, ...]:
+        return tuple(p for p in self.pack.replace("+", " ").split() if p)
+    # How this framework CONSTRUCTS an observable outcome, as
+    # `expression -> status`. `outcome_markers` already names these expressions;
+    # this says what each one means, which is what a pack needs to turn a return
+    # statement into a transition.
+    #
+    # **Framework knowledge, so it ships here.** `jvm-behaviour` used to carry
+    # its own list matching INTERNAL methods named ok/created/conflicted — one
+    # estate's response helpers. Against a codebase using Spring's own
+    # `ResponseEntity.ok(...)` nothing matched, no construction was recovered,
+    # and synthesis produced an empty model while reporting eleven findings.
+    # Correct, and useless.
+    response_constructors: tuple[tuple[str, int], ...] = ()
+    # `annotation name -> AnnotationSpec`, the framework's own. A project adds
+    # its custom ones through its profile and wins on conflict.
+    annotations: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.surface not in SURFACES:
@@ -149,6 +173,11 @@ def load(data: dict) -> FrameworkConfig:
             surface=entry.get("surface", API),
             entry_point_markers=tuple(entry.get("entry_point_markers", ())),
             outcome_markers=tuple(entry.get("outcome_markers", ())),
+            response_constructors=tuple(
+                (str(k), int(v))
+                for k, v in (entry.get("response_constructors", {}) or {}).items()),
+            annotations=_annotations.load(entry.get("annotations"),
+                                          where=f"framework {entry.get('name')!r}"),
             pack=entry.get("pack", ""), notes=entry.get("notes", ""))
         key = (spec.name, spec.surface)
         if key in seen:
@@ -199,8 +228,83 @@ DEFAULT_CONFIG: dict = {
                 "ResponseEntity.created", "ResponseEntity.badRequest",
                 "ResponseEntity.notFound", "ApiResponse",
             ],
-            "notes": "Verified against athena-git: 149 methods, 6 endpoints, "
-                     "22 outcomes recovered.",
+            # What the packs used to carry as hardcoded tables. Declared here so
+            # a project can extend the same vocabulary with its own annotations
+            # rather than being invisible to the extractor.
+            "annotations": {
+                "GetMapping": {"role": "entry_point", "verb": "GET"},
+                "PostMapping": {"role": "entry_point", "verb": "POST"},
+                "PutMapping": {"role": "entry_point", "verb": "PUT"},
+                "DeleteMapping": {"role": "entry_point", "verb": "DELETE"},
+                "PatchMapping": {"role": "entry_point", "verb": "PATCH"},
+                "RequestMapping": {"role": "route_prefix"},
+                "ResponseStatus": {"role": "outcome_status"},
+                "ExceptionHandler": {"role": "exception_mapping"},
+                "ControllerAdvice": {"role": "exception_mapping"},
+                "RestControllerAdvice": {"role": "exception_mapping"},
+                "PreAuthorize": {"role": "security", "scheme": "expression"},
+                "PostAuthorize": {"role": "security", "scheme": "expression"},
+                "Secured": {"role": "security", "scheme": "role"},
+                "RolesAllowed": {"role": "security", "scheme": "role"},
+                "DenyAll": {"role": "security", "scheme": "role"},
+                "PermitAll": {"role": "security", "scheme": "role"},
+                "Valid": {"role": "validation"},
+                "Validated": {"role": "validation"},
+                "NotNull": {"role": "validation"},
+                "NotBlank": {"role": "validation"},
+                "NotEmpty": {"role": "validation"},
+                "Size": {"role": "validation"},
+                "Min": {"role": "validation"},
+                "Max": {"role": "validation"},
+                "Pattern": {"role": "validation"},
+                "Positive": {"role": "validation"},
+                "Email": {"role": "validation"},
+                # springdoc / swagger-annotations. 71 @Schema in one service and
+                # not one of them read before this.
+                "Schema": {"role": "schema"},
+                "Parameter": {"role": "schema"},
+                "ArraySchema": {"role": "schema"},
+                "Operation": {"role": "outcome_status"},
+                "ApiResponse": {"role": "outcome_status"},
+                "ApiResponses": {"role": "outcome_status"},
+                "FeignClient": {"role": "outbound_client"},
+            },
+            "response_constructors": {
+                "ResponseEntity.ok": 200,
+                "ResponseEntity.created": 201,
+                "ResponseEntity.accepted": 202,
+                "ResponseEntity.noContent": 204,
+                "ResponseEntity.badRequest": 400,
+                "ResponseEntity.notFound": 404,
+            },
+            "notes": "Verified against demo_project/records-service "
+                     "(javasrc2cpg, Joern 4.0.604): 7 endpoints, 7 outcomes, "
+                     "5 exception mappings, 0 unparsed. Asserted by "
+                     "test_extraction.py, so the claim is re-checkable rather "
+                     "than recorded.",
+        },
+        {
+            "name": "react",
+            "language": "javascript",
+            "surface": UI,
+            "pack": "react-ui",
+            # A React application has no `addEventListener`: handlers are JSX
+            # props, and jssrc2cpg keeps JSX as raw code text, so those bindings
+            # are NOT structurally recoverable and are not guessed at. What IS
+            # present is the router config, the API call sites, and the status
+            # setters -- which is what M-5 needs.
+            "entry_point_markers": ["createBrowserRouter"],
+            "outcome_markers": ["setStatus"],
+            "notes": "Verified against demo_project/records-ui (jssrc2cpg, "
+                     "Joern 4.0.604): 4 routes -- exactly the createBrowserRouter "
+                     "config, with no import specifier, regex literal or "
+                     "defaultProps value among them -- 2 resolved API calls, 1 "
+                     "reported unresolved (an interpolated path), and 7 ui_states "
+                     "from set<Name>Status calls including both branches of a "
+                     "ternary. This framework went undeclared until the demo "
+                     "existed, because no available React application had a "
+                     "recoverable status-setter convention and WebExtractedSource "
+                     "requires ui_states.",
         },
         {
             "name": "dom-events",
@@ -212,8 +316,8 @@ DEFAULT_CONFIG: dict = {
                 "classList.add", "classList.remove", "classList.toggle",
                 "setAttribute", "hidden", "pushState", "replaceState",
             ],
-            "notes": "Verified against atlas-site (jssrc2cpg, Joern 4.0.604): "
-                     "199 methods, 11 handlers, 8 outcomes, 0 API calls. Handler "
+            "notes": "Verified against demo_project/records-page (jssrc2cpg, "
+                     "Joern 4.0.604): 3 triggers, 3 outcomes, 1 API call. Handler "
                      "bodies resolve through inline closures and named references; "
                      "anything else is reported unresolved rather than attributed "
                      "to the enclosing module.",

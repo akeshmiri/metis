@@ -393,7 +393,7 @@ def triage_api_only(findings: list["Divergence"], model: Model,
     **These are different findings and merging them buries the real one.** An
     endpoint with no inbound `INVOKES` is API-only by definition, but an estate
     that ships feign clients and CLIs consumes many endpoints machine-to-machine
-    on purpose. On the athena estate 83 of 86 API-only endpoints turned out to be
+    on purpose. On the the pilot estate estate 83 of 86 API-only endpoints turned out to be
     declared by a feign client -- so the three that are not are the finding, and
     reporting all 86 with equal weight would have hidden them.
 
@@ -414,12 +414,15 @@ def triage_api_only(findings: list["Divergence"], model: Model,
         # on both `""` and `/<service>` -- so a consumer may declare EITHER form,
         # and the model may carry either. Both directions must be tried.
         #
-        # Trying only the stripping direction reported `MetricController.getById`
+        # Trying only the stripping direction reported `RecordController.getById`
         # and `.save` as having no consumer at all, when `MetricFeignClient`
         # declares `GET /metric/{id}` and `POST /metric` outright. Three false
         # findings, caught by checking the feign interface rather than trusting
         # the lookup.
-        service = re.sub(r"^athena-|-api$", "", model.id)
+        # `<journey>-<surface>` (M-1). Only the surface comes off — the old
+        # form also stripped a company prefix, which silently renamed the journey of
+        # every model belonging to anyone else.
+        service = re.sub(r"-api$", "", model.id)
         candidates = [path,
                       re.sub(r"^/[a-z]+", "", path, count=1) or "/",
                       f"/{service}{path}".rstrip("/") or f"/{service}",

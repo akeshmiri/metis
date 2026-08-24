@@ -1,0 +1,503 @@
+{
+  "id": "records-api",
+  "states": [
+    {
+      "id": "ArchiveArchiveSerialised202",
+      "name": "ArchiveArchiveSerialised202",
+      "surface": "api",
+      "is_initial": false,
+      "lifecycle_state": "Quarantine",
+      "page": "",
+      "condition": "",
+      "name_tier": "code_convention"
+    },
+    {
+      "id": "Record",
+      "name": "Record",
+      "surface": "api",
+      "is_initial": true,
+      "lifecycle_state": "Quarantine",
+      "page": "",
+      "condition": "",
+      "name_tier": "code_convention"
+    },
+    {
+      "id": "RecordCreateCreated201",
+      "name": "RecordCreateCreated201",
+      "surface": "api",
+      "is_initial": false,
+      "lifecycle_state": "Quarantine",
+      "page": "",
+      "condition": "",
+      "name_tier": "code_convention"
+    },
+    {
+      "id": "RecordOneOk200",
+      "name": "RecordOneOk200",
+      "surface": "api",
+      "is_initial": false,
+      "lifecycle_state": "Quarantine",
+      "page": "",
+      "condition": "",
+      "name_tier": "code_convention"
+    },
+    {
+      "id": "RecordListSerialised200",
+      "name": "RecordListSerialised200",
+      "surface": "api",
+      "is_initial": false,
+      "lifecycle_state": "Quarantine",
+      "page": "",
+      "condition": "",
+      "name_tier": "code_convention"
+    },
+    {
+      "id": "RecordRemoveNoContent204",
+      "name": "RecordRemoveNoContent204",
+      "surface": "api",
+      "is_initial": false,
+      "lifecycle_state": "Quarantine",
+      "page": "",
+      "condition": "",
+      "name_tier": "code_convention"
+    },
+    {
+      "id": "RecordReplaceOk200",
+      "name": "RecordReplaceOk200",
+      "surface": "api",
+      "is_initial": false,
+      "lifecycle_state": "Quarantine",
+      "page": "",
+      "condition": "",
+      "name_tier": "code_convention"
+    },
+    {
+      "id": "ScopedSummaryOk200",
+      "name": "ScopedSummaryOk200",
+      "surface": "api",
+      "is_initial": false,
+      "lifecycle_state": "Quarantine",
+      "page": "",
+      "condition": "",
+      "name_tier": "code_convention"
+    },
+    {
+      "id": "Summary",
+      "name": "Summary",
+      "surface": "api",
+      "is_initial": true,
+      "lifecycle_state": "Quarantine",
+      "page": "",
+      "condition": "",
+      "name_tier": "code_convention"
+    },
+    {
+      "id": "ScopedSummaryRejected422",
+      "name": "ScopedSummaryRejected422",
+      "surface": "api",
+      "is_initial": false,
+      "lifecycle_state": "Quarantine",
+      "page": "",
+      "condition": "",
+      "name_tier": "code_convention"
+    }
+  ],
+  "transitions": [
+    {
+      "id": "com.example.records.ArchiveController.archive:void(java.lang.String)::POST->ArchiveArchiveSerialised202",
+      "source": "Record",
+      "trigger": "POST /record/{id}/archive",
+      "target": "ArchiveArchiveSerialised202",
+      "guard": "",
+      "implementation_status": "implemented",
+      "lifecycle_state": "Quarantine",
+      "inputs": [
+        {
+          "name": "id",
+          "location": "path",
+          "type_name": "java.lang.String",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": [],
+      "guard_anchor": "",
+      "outcome_status": 202,
+      "source_state_unresolved": false,
+      "outcome_source": "constructed",
+      "guard_claim": "",
+      "data_requirements": [],
+      "response_body": "",
+      "media_types": [],
+      "name_tier": "code_convention",
+      "guard_wording": "always",
+      "guard_tier": "code_convention",
+      "evidence": [
+        [
+          "Endpoint",
+          "ep:ef3e706fdb752508"
+        ],
+        [
+          "Parameter",
+          "prm:4a6f8da034e532fb"
+        ],
+        [
+          "DeclaredOutcome",
+          "out:16ba68c44a575341"
+        ]
+      ]
+    },
+    {
+      "id": "com.example.records.RecordController.create:org.springframework.http.ResponseEntity(com.example.records.dto.RecordDto)::POST->RecordCreateCreated201",
+      "source": "Record",
+      "trigger": "POST /record",
+      "target": "RecordCreateCreated201",
+      "guard": "",
+      "implementation_status": "implemented",
+      "lifecycle_state": "Quarantine",
+      "inputs": [
+        {
+          "name": "body",
+          "location": "body",
+          "type_name": "com.example.records.dto.RecordDto",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": [
+        {
+          "scheme": "role",
+          "expression": "@DemoSecured({ \"records:write\" })",
+          "roles": [
+            "records:write"
+          ]
+        }
+      ],
+      "guard_anchor": "",
+      "outcome_status": 201,
+      "source_state_unresolved": false,
+      "outcome_source": "constructed",
+      "guard_claim": "",
+      "data_requirements": [],
+      "response_body": "RecordDto",
+      "media_types": [],
+      "name_tier": "code_convention",
+      "guard_wording": "always",
+      "guard_tier": "code_convention",
+      "evidence": [
+        [
+          "Endpoint",
+          "ep:98616d9d64c96e72"
+        ],
+        [
+          "Parameter",
+          "prm:e12518f7c741ef9c"
+        ],
+        [
+          "Class",
+          "cls:0fbe7e585d9e1a14"
+        ],
+        [
+          "DeclaredOutcome",
+          "out:2206dd2c0ddb2480"
+        ]
+      ]
+    },
+    {
+      "id": "com.example.records.RecordController.one:org.springframework.http.ResponseEntity(java.lang.String)::GET->RecordOneOk200",
+      "source": "Record",
+      "trigger": "GET /record/{id}",
+      "target": "RecordOneOk200",
+      "guard": "",
+      "implementation_status": "implemented",
+      "lifecycle_state": "Quarantine",
+      "inputs": [
+        {
+          "name": "id",
+          "location": "path",
+          "type_name": "java.lang.String",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": [],
+      "guard_anchor": "",
+      "outcome_status": 200,
+      "source_state_unresolved": false,
+      "outcome_source": "constructed",
+      "guard_claim": "",
+      "data_requirements": [],
+      "response_body": "RecordDto",
+      "media_types": [],
+      "name_tier": "code_convention",
+      "guard_wording": "always",
+      "guard_tier": "code_convention",
+      "evidence": [
+        [
+          "Endpoint",
+          "ep:85ced15130190dd5"
+        ],
+        [
+          "Parameter",
+          "prm:7b62d98ebc77a262"
+        ],
+        [
+          "Class",
+          "cls:0fbe7e585d9e1a14"
+        ],
+        [
+          "DeclaredOutcome",
+          "out:d93680cca629cb87"
+        ]
+      ]
+    },
+    {
+      "id": "com.example.records.RecordController.list:com.example.records.dto.RecordDto[](java.lang.String)::GET->RecordListSerialised200",
+      "source": "Record",
+      "trigger": "GET /record",
+      "target": "RecordListSerialised200",
+      "guard": "",
+      "implementation_status": "implemented",
+      "lifecycle_state": "Quarantine",
+      "inputs": [
+        {
+          "name": "owner",
+          "location": "query",
+          "type_name": "java.lang.String",
+          "required": false,
+          "constraints": []
+        }
+      ],
+      "security": [],
+      "guard_anchor": "",
+      "outcome_status": 200,
+      "source_state_unresolved": false,
+      "outcome_source": "constructed",
+      "guard_claim": "",
+      "data_requirements": [],
+      "response_body": "RecordDto[]",
+      "media_types": [],
+      "name_tier": "code_convention",
+      "guard_wording": "always",
+      "guard_tier": "code_convention",
+      "evidence": [
+        [
+          "Endpoint",
+          "ep:d000e6e8fc2114ec"
+        ],
+        [
+          "Parameter",
+          "prm:e2650a6b973ce3a8"
+        ],
+        [
+          "Class",
+          "cls:0fbe7e585d9e1a14"
+        ],
+        [
+          "DeclaredOutcome",
+          "out:7c7ee89ed611c477"
+        ]
+      ]
+    },
+    {
+      "id": "com.example.records.RecordController.remove:org.springframework.http.ResponseEntity(java.lang.String)::DELETE->RecordRemoveNoContent204",
+      "source": "Record",
+      "trigger": "DELETE /record/{id}",
+      "target": "RecordRemoveNoContent204",
+      "guard": "",
+      "implementation_status": "implemented",
+      "lifecycle_state": "Quarantine",
+      "inputs": [
+        {
+          "name": "id",
+          "location": "path",
+          "type_name": "java.lang.String",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": [
+        {
+          "scheme": "role",
+          "expression": "@DemoSecured({ \"records:write\", \"records:admin\" })",
+          "roles": [
+            "records:write",
+            "records:admin"
+          ]
+        }
+      ],
+      "guard_anchor": "",
+      "outcome_status": 204,
+      "source_state_unresolved": false,
+      "outcome_source": "constructed",
+      "guard_claim": "",
+      "data_requirements": [],
+      "response_body": "",
+      "media_types": [],
+      "name_tier": "code_convention",
+      "guard_wording": "always",
+      "guard_tier": "code_convention",
+      "evidence": [
+        [
+          "Endpoint",
+          "ep:827be8e104efb31b"
+        ],
+        [
+          "Parameter",
+          "prm:3e42a3b2af951884"
+        ],
+        [
+          "DeclaredOutcome",
+          "out:e4e19ccad6ade4e7"
+        ]
+      ]
+    },
+    {
+      "id": "com.example.records.RecordController.replace:org.springframework.http.ResponseEntity(java.lang.String,com.example.records.dto.RecordDto)::PUT->RecordReplaceOk200",
+      "source": "Record",
+      "trigger": "PUT /record/{id}",
+      "target": "RecordReplaceOk200",
+      "guard": "",
+      "implementation_status": "implemented",
+      "lifecycle_state": "Quarantine",
+      "inputs": [
+        {
+          "name": "id",
+          "location": "path",
+          "type_name": "java.lang.String",
+          "required": true,
+          "constraints": []
+        },
+        {
+          "name": "body",
+          "location": "body",
+          "type_name": "com.example.records.dto.RecordDto",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": [],
+      "guard_anchor": "",
+      "outcome_status": 200,
+      "source_state_unresolved": false,
+      "outcome_source": "constructed",
+      "guard_claim": "",
+      "data_requirements": [],
+      "response_body": "RecordDto",
+      "media_types": [],
+      "name_tier": "code_convention",
+      "guard_wording": "always",
+      "guard_tier": "code_convention",
+      "evidence": [
+        [
+          "Endpoint",
+          "ep:1acbd59efb2ceabd"
+        ],
+        [
+          "Parameter",
+          "prm:4a8eadcb41523d4d"
+        ],
+        [
+          "Parameter",
+          "prm:bfd0b749dad2f8c4"
+        ],
+        [
+          "Class",
+          "cls:0fbe7e585d9e1a14"
+        ],
+        [
+          "DeclaredOutcome",
+          "out:4c1650a75ed46b7a"
+        ]
+      ]
+    },
+    {
+      "id": "com.example.records.ScopedController.summary:org.springframework.http.ResponseEntity(java.lang.String)::GET->ScopedSummaryOk200",
+      "source": "Summary",
+      "trigger": "GET /summary/{id}",
+      "target": "ScopedSummaryOk200",
+      "guard": "SummaryUnavailableException is thrown",
+      "implementation_status": "implemented",
+      "lifecycle_state": "Quarantine",
+      "inputs": [
+        {
+          "name": "id",
+          "location": "path",
+          "type_name": "java.lang.String",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": [],
+      "guard_anchor": "",
+      "outcome_status": 200,
+      "source_state_unresolved": false,
+      "outcome_source": "constructed",
+      "guard_claim": "",
+      "data_requirements": [],
+      "response_body": "String",
+      "media_types": [],
+      "name_tier": "code_convention",
+      "guard_wording": "SummaryUnavailableException is thrown",
+      "guard_tier": "verbatim",
+      "evidence": [
+        [
+          "Endpoint",
+          "ep:58c06a4ae7f0c034"
+        ],
+        [
+          "Parameter",
+          "prm:92dfa905ddebc43f"
+        ],
+        [
+          "DeclaredOutcome",
+          "out:9ff074d2cae15df4"
+        ]
+      ]
+    },
+    {
+      "id": "com.example.records.ScopedController.summary:org.springframework.http.ResponseEntity(java.lang.String)::GET->ScopedSummaryRejected422",
+      "source": "Summary",
+      "trigger": "GET /summary/{id}",
+      "target": "ScopedSummaryRejected422",
+      "guard": "NOT (SummaryUnavailableException is thrown)",
+      "implementation_status": "implemented",
+      "lifecycle_state": "Quarantine",
+      "inputs": [
+        {
+          "name": "id",
+          "location": "path",
+          "type_name": "java.lang.String",
+          "required": true,
+          "constraints": []
+        }
+      ],
+      "security": [],
+      "guard_anchor": "",
+      "outcome_status": 422,
+      "source_state_unresolved": false,
+      "outcome_source": "declared",
+      "guard_claim": "advice-scope",
+      "data_requirements": [],
+      "response_body": "ErrorDto",
+      "media_types": [],
+      "name_tier": "code_convention",
+      "guard_wording": "NOT (SummaryUnavailableException is thrown)",
+      "guard_tier": "verbatim",
+      "evidence": [
+        [
+          "Endpoint",
+          "ep:58c06a4ae7f0c034"
+        ],
+        [
+          "Parameter",
+          "prm:92dfa905ddebc43f"
+        ],
+        [
+          "ExceptionMapping",
+          "exm:a145009267c4ba1f"
+        ]
+      ]
+    }
+  ]
+}

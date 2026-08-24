@@ -30,17 +30,21 @@ be worse than one that visibly demands configuration:
    interpreter and a `cwd`. Both are absolute because a client launches the
    server from its own working directory.
 
-3. For the graph-backed tools, set `METIS_NEO4J_PASSWORD` in the server's
-   environment (never as an argument — PLT-005). `METIS_NEO4J_URI` and
-   `METIS_NEO4J_USER` default to `bolt://localhost:7687` and `neo4j`. There is
-   no config file; the v1 `~/.metis/config.json` requirement is gone.
+3. For the graph-backed tools, the connection resolves in this order:
+   explicit arguments, then `METIS_NEO4J_URI` / `_USER` / `_PASSWORD`, then a
+   JSON config file — `METIS_CONFIG_PATH` if set, otherwise
+   `.metis/config.json` then `~/.metis/config.json`. First found wins; there is
+   no merge. A password is never an argument (PLT-005): in a config file, name
+   the variable with `graph.neo4j.password_env` and keep the secret in the
+   environment. A literal `graph.neo4j.password` is read too, but only from a
+   file the owner alone can read, and the run says so on stderr.
 
 4. Restart your client and confirm the tools are listed. `list_workflows` is
    the cheapest check: it reads the workflow registry and needs no graph.
 
 ## The tools
 
-Seven, all read-only:
+Twelve, all read-only:
 
 | Tool | Answers | Needs a graph |
 |---|---|---|
@@ -51,6 +55,25 @@ Seven, all read-only:
 | `validate_model` | Well-formedness, split into blocking / unverifiable / advisory | yes |
 | `coverage` | The coverage ledger, with the version and commit it refers to (P-16) | yes |
 | `run_status` | Where a workflow run got to and what it is waiting for | no |
+| `search_knowledge` | Entities, requirements and criteria matching a term, grouped by which matched | yes |
+| `list_entities` | Every business noun Métis knows, optionally within one area | yes |
+| `get_entity` | One entity: what it is, what acting on it changes, and the criteria that touch it | yes |
+| `get_requirement` | One requirement, its criteria, and the artefact it came from | yes |
+| `get_spec` | The stored stakeholder specification for one journey | yes |
+
+## Transport
+
+`stdio` by default, which is what a local client launches. Set
+`METIS_MCP_TRANSPORT` to `streamable-http` or `sse` for a networked server, with
+`METIS_HTTP_HOST` (default `127.0.0.1`) and `METIS_HTTP_PORT` (default `8090`).
+An unrecognised value halts rather than falling back to stdio — a container that
+"starts fine" and is unreachable is the failure that behaviour causes.
+
+Read-only is not the same as safe to expose. These tools cannot approve or
+publish, but they will read out every requirement, criterion and specification
+in the graph to whoever reaches them, and there is no authentication here. A
+non-loopback bind is warned about; publish the port on loopback unless something
+authenticating sits in front.
 
 ## Read-only, structurally
 

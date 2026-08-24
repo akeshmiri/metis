@@ -1,0 +1,38 @@
+# Query pack: JVM behaviour extraction (application spec §5.2-§5.4).
+#
+# The pack's job is to emit code_analysis.contract's shape. Everything
+# downstream consumes the contract, never Joern's raw output -- so an engine
+# upgrade touches this pack and nothing else (spec X-3).
+name: jvm-behaviour
+version: 0.1.0
+contract: metis.cpg-extract/1
+
+engine:
+  name: joern
+  # X-3: pinned, not a range, and pinned PER PACK. This file did not exist, so
+  # `engine.preflight` compared the installed version against jvm-structural's
+  # pin and applied it to every pack -- a pack could have been verified against
+  # a different build and nothing would have said so.
+  version: "4.0.604"
+  frontends: [javasrc2cpg]
+
+layers: [4]
+
+status: working
+verified_against:
+  repo: demo_project/records-service
+  result: "7 outcomes — {200: 4, 201: 1, 202: 1, 204: 1}. The 201 comes from
+    ResponseEntity.status(HttpStatus.CREATED).body(...) and the 204 from
+    noContent().build(); both were reported as 200 until the whole return
+    expression was searched rather than only its outermost call."
+  asserted_by: test_extraction.py
+known_limits:
+  - "a guard is recovered from AST ENCLOSURE, not control dependence: the CDG is
+     not linked under javasrc2cpg, so `link` records `ast-enclosure` and a
+     break/continue escaping a block would be misread"
+  - "an outcome recovered from Spring's serialisation contract (a handler
+     returning a value rather than a ResponseEntity) is marked
+     `spring-serialisation`, never `constructed` -- it is a sound inference and
+     is labelled as one"
+  - "a @FeignClient interface is excluded: its mappings declare calls this
+     service MAKES, not endpoints it serves"

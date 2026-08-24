@@ -1,6 +1,6 @@
 [project]
 name = "metis-mcp-server"
-version = "0.1.0"
+version = "1.0.0"
 description = "Métis MCP server — specification and requirements knowledge graph"
 requires-python = ">=3.10"
 license = "MIT"
@@ -27,7 +27,12 @@ metis-mcp-server = "metis_mcp.server:main"
 [project.optional-dependencies]
 test = [
     "pytest>=8.0",
+    "PyYAML",          # pack.yaml manifests are validated, not text-scanned
 ]
+# **Joern and a JDK are also required and are not installable from here.**
+# `test_extraction.py` builds real CPGs from `demo_project/` and runs the shipped
+# query packs, which is the only behavioural test those packs have. A missing
+# engine fails rather than skips; `metis doctor` reports it.
 
 # `packages = ["metis_mcp"]` was a literal list, so the wheel shipped four
 # top-level modules and none of the twelve subpackages -- an editable install

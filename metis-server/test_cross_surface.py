@@ -409,7 +409,7 @@ def test_unconfirmed_links_do_not_supply_inherited_guards():
 
 
 def test_m5c_resolves_an_apparent_ambiguity_in_the_ui_model():
-    """The real case, from athena-spec: `GET /spec/{id}` returns 200 or 204, so
+    """The real case, from records-spec: `GET /spec/{id}` returns 200 or 204, so
     the UI transition lands in Ready or Empty. The UI carries no guard by design
     (M-5c), so read alone it is ambiguous; read with the link it is determined."""
     from metis_mcp.mbt.validation import validate
@@ -454,7 +454,7 @@ def test_the_finding_says_when_no_invokes_guards_were_supplied():
 def test_an_api_only_endpoint_with_a_feign_consumer_is_not_the_finding():
     api = _api_model()
     found = divergences(_ui_model(), api, _links())
-    triaged = triage_api_only(found, api, {"/auth/login": "athena-boot-core-feign"})
+    triaged = triage_api_only(found, api, {"/auth/login": "records-client"})
     assert len(triaged) == 1
     assert triaged[0].outcome == CONSUMED_ELSEWHERE
     assert not triaged[0].needs_attention

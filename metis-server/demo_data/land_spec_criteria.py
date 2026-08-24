@@ -9,7 +9,7 @@ says recovery is re-ingestion rather than migration, and that only works if ever
 ingestion path is committed.
 
 **What it does and does not claim.** It writes `AcceptanceCriterion` nodes with
-`provenance: code_derived` -- the weakest grade -- because athena's specs are
+`provenance: code_derived` -- the weakest grade -- because the pilot estate's specs are
 retro-documentation: their own `plan.md` says they document what was built, and
 several criteria carry a `Code reference:` line. A criterion written from the
 code and used to check that code can only report agreement (§4.1), so it lands as

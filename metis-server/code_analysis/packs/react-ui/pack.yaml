@@ -1,0 +1,49 @@
+# Query pack: React UI behaviour extraction (application spec §5.2, M-2, M-5).
+name: react-ui
+version: 0.2.0
+contract: metis.cpg-extract/1
+
+engine:
+  name: joern
+  version: "4.0.604"
+  frontends: [jssrc2cpg]
+
+layers: [4]
+
+status: working
+verified_against:
+  # Both directions, because a recogniser is only as good as its refusals.
+  positive:
+    repo: demo_project/records-ui
+    result: "routes=4 — /, /records, /records/:id, /summary/:id. Exactly the
+      createBrowserRouter config, with no import specifier, defaultProps value or
+      regex literal among them. ui_states=7 from set<Name>Status calls, including
+      both branches of a ternary."
+  negative:
+    result: "SummaryPage.jsx calls .replace(/\\s+/g) and .replace(/[^a-z0-9-]/gi).
+      A regex literal starts with / exactly like a path does; neither appears in
+      routes. RecordDetailPage's interpolated path is reported unresolved rather
+      than resolved to its first fragment."
+  asserted_by: test_extraction.py
+known_limits:
+  - "a route is recovered from a `path` KEY in a router config, which jssrc2cpg
+     lowers to `_tmp_4.path = \"/about\"`. `<Route path=...>` written only as
+     JSX is NOT recoverable and is not guessed at (T-9d): such a project gets
+     zero routes, which is the honest answer"
+  - "a JS regex literal reaches the filter looking like a path (/\\s+/g) and is
+     excluded by shape. In one real application every one of 33 apparent
+     navigation calls was a String.replace(/regex/g)"
+  - "an interpolated path is reported, not resolved. jssrc2cpg lowers a template
+     literal to <operator>.formatString, whose literal fragments are the pieces
+     around the interpolation — reading the first one reported /record/ for a
+     call that reaches /record/{id}"
+  - "JSX handler bindings are not structurally recoverable and are not guessed"
+  - "component TYPES come from an authored file (model_sources.web_structure)"
+
+# Declared as a framework in framework_config since the demo corpus exists.
+# What blocked it was specific rather than cautious: `WebExtractedSource` needs
+# `ui_states` to build a model, and no available React application had a
+# recoverable status-setter convention — every one reported ui_states=0, so
+# synthesis correctly refused. `demo_project/records-ui` has them, and the
+# setter pattern is now `set<Name>Status` rather than a list naming two screens
+# from the codebase this pack was first written against.

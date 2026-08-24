@@ -2,21 +2,26 @@
 # Rebuild the graph from committed sources (application spec RD-9: re-ingest,
 # never migrate).
 #
-# **This replaces `reingest_athena.sh`, which could not actually do it.** That
-# script depended on two helpers under `/tmp` (`load_all.py`, `land_specs.py`)
-# that no longer exist, so when the graph was lost the intent side -- 66
-# acceptance criteria -- had no committed path back. A recovery procedure that
-# depends on scratch files is not a recovery procedure.
+# **Everything this needs is in this repository.** That sentence was here before
+# and it was not true: the script read a `.specify/specs` directory under a hardcoded
+# absolute path into a private checkout, plus three pack reports it expected
+# somebody to have left in `/tmp`. A recovery procedure that depends on another
+# repository and on scratch files is not a recovery procedure — the same
+# criticism this script was written to make of its predecessor.
 #
-# Everything this needs is in the repository or is a query pack's output:
-#   demo_data/models/*.json                        the landed models
-#   demo_data/land_spec_criteria.py                the criteria loader
-#   <athena>/.specify/specs/                       the criteria themselves
-#   /tmp/athena-{behaviour,invokes}.json           pack output (re-runnable)
+# It now builds from `demo_project/`, the corpus the test suite uses, and runs
+# the query packs itself rather than hoping for their output:
+#
+#   demo_project/records-service   the API surface (javasrc2cpg -> two JVM packs)
+#   demo_project/records-ui        the React surface (jssrc2cpg -> react-ui)
+#   demo_project/records-page      the plain-DOM surface (jssrc2cpg -> js-ui)
+#   demo_project/specs             the acceptance criteria (the intent side)
+#   demo_project/profile.json      the project profile, incl. its own annotations
+#   demo_data/models/*.json        the authored models (login, records)
 #
 # It deliberately stops at Quarantine. Approvals are human decisions (G1) and
-# this script does not manufacture them -- the previous one approved all thirteen
-# models in a loop with a canned rationale, which is how an estate ends up
+# this script does not manufacture them -- an earlier version approved every
+# model in a loop with a canned rationale, which is how an estate ends up
 # "approved" with nobody having read anything.
 #
 # Usage:  METIS_NEO4J_PASSWORD=... ./rebuild_graph.sh [--wipe]
@@ -28,15 +33,15 @@ PY=.venv/bin/python3
 : "${METIS_NEO4J_USER:=neo4j}"
 : "${METIS_NEO4J_PASSWORD:?set METIS_NEO4J_PASSWORD (never as an argument — PLT-005)}"
 export METIS_NEO4J_URI METIS_NEO4J_USER METIS_NEO4J_PASSWORD
+CONTAINER="${METIS_NEO4J_CONTAINER:-metis-graph}"
 
-ATHENA="${ATHENA_ROOT:-/Users/akeshmiri/Projects/real/athena}"
-BEHAVIOUR="${BEHAVIOUR_REPORT:-/tmp/athena-behaviour.json}"
-STRUCTURAL="${STRUCTURAL_REPORT:-/tmp/new-structural.json}"
-CONTAINER="${METIS_CONTAINER:-metis-graph}"
-UI_FACTS="${UI_FACTS:-/tmp/athena-ui-facts.json}"
-
-API_SERVICES="core git kube metric pipeline spec tms"
-UI_SERVICES="git kube metric pipeline spec tms"
+DEMO=demo_project
+WORK="${METIS_REBUILD_WORK:-$(mktemp -d)}"
+STRUCTURAL="$WORK/structural.json"
+BEHAVIOUR="$WORK/behaviour.json"
+INVENTORY="$WORK/inventory.json"
+UI_FACTS="$WORK/react.json"
+DOM_FACTS="$WORK/dom.json"
 
 cypher() { docker exec -i "$CONTAINER" cypher-shell -u "$METIS_NEO4J_USER" -p "$METIS_NEO4J_PASSWORD" "$@"; }
 
@@ -49,199 +54,128 @@ if [ "${1:-}" = "--wipe" ]; then
   echo "    deleted; now $(cypher --format plain 'MATCH (n) RETURN count(n) AS n;' | tail -1)"
 fi
 
+# ---------------------------------------------------------------------------
+echo "==> 0/5  extract from the demo corpus (the packs, not a scratch file)"
+#
+# Preflight ignores the graph check on purpose: extraction is database-free, and
+# coupling "can I extract" to "is Neo4j up" made the answer depend on something
+# that has nothing to do with it.
+PYTHONPATH=. $PY - <<EOF | sed 's/^/    /'
+import json, shutil
+from code_analysis import engine
+
+profile = json.load(open("$DEMO/profile.json"))
+engine.preflight().require(ignore=("graph",))
+
+api = engine.extract("$DEMO/records-service", language="javasrc",
+                     project="demo-records", framework="spring-mvc",
+                     project_annotations=profile["annotations"],
+                     commit="rebuild", skip_preflight=True)
+shutil.copy(api.structural, "$STRUCTURAL")
+shutil.copy(api.behaviour, "$BEHAVIOUR")
+if api.inventory:
+    shutil.copy(api.inventory, "$INVENTORY")
+for line in api.log:
+    print(line)
+
+for repo, framework, target in (("$DEMO/records-ui", "react", "$UI_FACTS"),
+                                ("$DEMO/records-page", "dom-events", "$DOM_FACTS")):
+    ui = engine.extract(repo, language="jssrc", project=repo.rsplit("/", 1)[-1],
+                        framework=framework, commit="rebuild", skip_preflight=True)
+    shutil.copy(next(iter(ui.reports.values())), target)
+    print(f"{repo}: {framework}")
+EOF
+
 # A classified transition carries `:ApiCall` or `:UiAction` and **not**
 # `:Transition`, so the generic label is a worklist of transitions nothing has
 # classified. Nodes landed before that rule carry both; strip the generic one so
 # the worklist means what it says.
-echo "==> 0/5  reconcile labels on any pre-existing nodes"
+echo "==> 1/5  reconcile labels on any pre-existing nodes"
 cypher "MATCH (t:Transition) WHERE t:ApiCall OR t:UiAction REMOVE t:Transition
         RETURN count(t) AS relabelled;" 2>/dev/null | tail -1 | sed 's/^/    stripped generic label from /'
 
-echo "==> 1/5  schema"
+echo "==> 2/5  schema"
 $PY -c "from metis_mcp.ontology import schema; schema.write('schema')"
 for f in schema/metis2-01-constraints.cypher schema/metis2-02-relationships.cypher; do
   [ -f "$f" ] && cypher < "$f" >/dev/null
 done
 echo "    constraints: $(cypher --format plain 'SHOW CONSTRAINTS YIELD name RETURN count(*) AS n;' | tail -1)"
 
-echo "==> 1b/5  the evidence layer — the processed intake itself"
-#
-# **This must run BEFORE any model.** A derivation edge is written with two
-# MATCHes, so a transition landing first would point at endpoints that do not
-# exist yet and the edges would silently merge nothing (the writer now reports
-# that rather than counting them as written).
-if [ -f "$BEHAVIOUR" ] && [ -f "$STRUCTURAL" ]; then
-  PYTHONPATH=. $PY - <<EOF | sed 's/^/    /'
-import json
-from metis_mcp.model_sources.sources import _report_from_dict
-from metis_mcp.model_sources.raw_landing import plan_raw_landing
-from metis_mcp.model_sources.landing import land
-from metis_mcp.mbt.graph_session import session
+# **The evidence layer is landed by the model-build workflow itself**, not here.
+# It used to be a separate stage, on the reasoning that a derivation edge needs
+# its endpoints to exist first — true, and the workflow's `land` stage already
+# does both in that order (`_land_evidence` then `_plan_derivation_edges`).
+# Running it here as well lands it TWICE under two different raw-intake episodes,
+# because the episode id is a hash of its inputs and the two callers pass
+# different ones. Measured on a real service: 24 Endpoint nodes for 12 endpoints,
+# 10 ExceptionMapping for 5, and every transition carrying two DERIVED_FROM edges
+# — every count doubled, nothing reported, because MERGE cannot dedupe ids that
+# differ.
 
-structural = _report_from_dict(json.load(open("$STRUCTURAL")))
-behaviour = _report_from_dict(json.load(open("$BEHAVIOUR")))
-try:
-    ui = json.load(open("$UI_FACTS"))
-except OSError:
-    ui = None
-
-plan = plan_raw_landing(structural, journey="athena", repo="athena",
-                        behaviour=behaviour, ui_facts=ui, job_id="rebuild")
-if not plan.is_legal:
-    print(f"REFUSED — {len(plan.errors)} validation error(s): {plan.errors[0]}")
-else:
-    with session() as s:
-        result = land(s, plan)
-    print(f"{result.nodes_written} nodes, {result.edges_written} edges")
-    for what, why in plan.skipped:
-        print(f"{what}: {why}")
-    for triple, count, why in result.unmatched:
-        print(f"!! {triple}: {count} unmatched — {why}")
-EOF
-else
-  echo "    !! pack reports missing — no evidence layer, so the models below will"
-  echo "       land with no DERIVED_FROM edges and no parameters (reported, not silent)."
-fi
-
-echo "==> 2/5  API models, from the query pack (extraction_method: static_analysis)"
+echo "==> 3/5  the API model, from the query packs (extraction_method: static_analysis)"
 #
-# `--allow-unverifiable` is deliberate, and it is narrower than it looks.
-#
-# Modelling the declared rejections (X-6a) gave every transition in an affected
-# group a non-empty guard. `check_guard_completeness` skips any group containing
-# an unguarded member, so those groups were previously not verified — they were
-# SILENTLY SKIPPED. They are now checked, and 13 of them cannot be shown jointly
-# exhaustive. Most are the M-6 unfolding interacting with the checker: after
-# unfolding, `GET /metric/{id}` reaches Ok200 from `MetricPresent`, so at `Ready`
-# the case `NOT (t.isEmpty())` is genuinely unreachable — the model is right and
-# the checker does not know the state's invariant. The rest are outcomes the
-# behaviour pack did not recover (a 208 beside a 201).
+# `--allow-unverifiable` is deliberate and narrower than it looks.
+# `check_guard_completeness` skips any outcome group containing an unguarded
+# member, so before rejections were modelled those groups were SILENTLY SKIPPED.
+# They are checked now, and a group the checker cannot show jointly exhaustive is
+# reported rather than dropped.
 #
 # What this flag does NOT do: approve anything. Everything still lands at
 # Quarantine, every finding is recorded on the run, and generation stays gated
 # separately by G1/`model_is_approved` (F-8). M-18 blocks *generation* from a
 # model that is not well-formed, and that gate is untouched.
-if [ -f "$BEHAVIOUR" ] && [ -f "$STRUCTURAL" ]; then
-  for s in $API_SERVICES; do
-    $PY -m metis_mcp.mbt.cli workflow run model-build --scope "athena-$s-api" \
-      "$BEHAVIOUR" --endpoints "$STRUCTURAL" --service "$s" \
-      --journey "athena-$s" --surface api --source code --job-id rebuild \
-      --allow-unverifiable \
-      >/dev/null 2>&1 || true      # halts at G1 by design; exit 5 is not failure
-    echo "    athena-$s-api"
-  done
-else
-  echo "    !! pack reports missing — falling back to the committed model files."
-  echo "       These land as 'authored', which records that a PERSON wrote what a"
-  echo "       static analyser inferred (M-13). Re-run the packs to avoid that."
-  for s in $API_SERVICES; do
-    $PY -m metis_mcp.mbt.cli land "demo_data/models/athena-$s-api.json" \
-      --journey "athena-$s" --surface api --source authored --author rebuild-fallback \
-      --job-id rebuild >/dev/null
-  done
-fi
+$PY -m metis_mcp.mbt.cli workflow run model-build --scope "records-api" \
+  "$BEHAVIOUR" --endpoints "$STRUCTURAL" \
+  --journey records --surface api --source code --job-id rebuild \
+  --allow-unverifiable \
+  >/dev/null 2>&1 || true      # halts at G1 by design; exit 5 is not failure
+echo "    records-api"
 
-echo "==> 3/5  UI models, from the frontend pack (extraction_method: static_analysis)"
-if [ -f "$UI_FACTS" ]; then
-  # Screens are grouped by the endpoints they call, so a page lands in the model
-  # of the service it talks to. Previously these six were hand-derived
-  # off-pipeline and landed `authored`, recording that a person wrote what the
-  # pack inferred (M-13).
-  PYTHONPATH=. $PY - <<'EOF' | sed 's/^/    /'
-import collections, json, os
-from metis_mcp.model_sources import get, land, plan_landing
-from metis_mcp.mbt.graph_session import session
-
-facts = json.load(open(os.environ.get("UI_FACTS", "/tmp/athena-ui-facts.json")))
-by_journey = collections.defaultdict(set)
-for call in facts.get("api_calls", ()):
-    parts = (call.get("endpoint") or "").strip("/").split("/")
-    if parts and parts[0]:
-        by_journey[f"athena-{parts[0]}"].add(call["screen"])
-
-source = get("web")
-for journey in sorted(by_journey):
-    try:
-        result = source.produce(path=os.environ.get("UI_FACTS", "/tmp/athena-ui-facts.json"),
-                                journey=journey,
-                                screens=",".join(sorted(by_journey[journey])))
-    except ValueError as e:
-        print(f"{journey}: {e}")
-        continue
-    plan = plan_landing(result, journey=journey, job_id="rebuild")
-    if not plan.is_legal:
-        print(f"{journey}: REFUSED — {plan.errors[0]}")
-        continue
-    with session() as s:
-        outcome = land(s, plan)
-    pages = result.evidence.get("pages", "")
-    print(f"{result.model.id}: {outcome.nodes_written} nodes, pages: {pages}")
-EOF
-else
-  echo "    !! $UI_FACTS absent — falling back to the committed model files"
-  for s in $UI_SERVICES; do
-    $PY -m metis_mcp.mbt.cli land "demo_data/models/athena-$s-ui.json" \
-      --journey "athena-$s" --surface ui --source authored --author rebuild-fallback \
-      --job-id rebuild >/dev/null
-  done
-fi
-
-echo "==> 3b/5  the login example"
-$PY -m metis_mcp.mbt.cli land demo_data/models/login-api.json \
-  --journey login --surface api --source authored --author alice --job-id rebuild >/dev/null
-# atlas-site is a js-ui frontend: real click/scroll handlers, no API calls. It
-# goes through the same web source as the React pages so its provenance is
-# `static_analysis` too — landing it `authored` recorded a person as the author
-# of what the pack recovered (M-13).
-JS_FACTS="${JS_FACTS:-/tmp/ui-facts.json}"
-if [ -f "$JS_FACTS" ]; then
+echo "==> 3b/5  the UI models, from the frontend packs"
+# Both go through the same web source as the API side, so their provenance is
+# `static_analysis` too -- landing them `authored` would record a person as the
+# author of what a pack recovered (M-13).
+for pair in "$UI_FACTS:records" "$DOM_FACTS:records-page"; do
+  facts="${pair%%:*}"; journey="${pair#*:}"
+  [ -f "$facts" ] || { echo "    !! $facts absent — no UI model for $journey"; continue; }
   PYTHONPATH=. $PY - <<EOF | sed 's/^/    /'
 from metis_mcp.mbt.graph_session import session
 from metis_mcp.model_sources import get, land, plan_landing
-result = get("web").produce(path="$JS_FACTS", journey="atlas-site")
-plan = plan_landing(result, journey="atlas-site", job_id="rebuild")
+result = get("web").produce(path="$facts", journey="$journey")
+plan = plan_landing(result, journey="$journey", job_id="rebuild")
 with session() as s:
     outcome = land(s, plan)
 print(f"{result.model.id}: {outcome.nodes_written} nodes via {result.extraction_method}")
 EOF
-else
-  $PY -m metis_mcp.mbt.cli land demo_data/models/atlas-site-ui.json \
-    --journey atlas-site --surface ui --source authored --author rebuild-fallback \
-    --job-id rebuild >/dev/null
-fi
+done
+
+echo "==> 3c/5  the login example"
+$PY -m metis_mcp.mbt.cli land demo_data/models/login-api.json \
+  --journey login --surface api --source authored --author alice --job-id rebuild >/dev/null
 
 echo "==> 4/5  acceptance criteria (the intent side)"
-if [ -d "$ATHENA/.specify/specs" ]; then
-  $PY demo_data/land_spec_criteria.py "$ATHENA/.specify/specs" | sed 's/^/    /'
-else
-  echo "    !! $ATHENA/.specify/specs not found — the graph will have models and no"
-  echo "       criteria, which yields coverage and never correctness (S-3)."
-fi
+# Hand-written and checked in, so they can genuinely disagree with the code --
+# which is the point of comparing the two. AC-4 says DELETE answers 204 while
+# demo_project/openapi.json documents 200, and a person settles that.
+$PY demo_data/land_spec_criteria.py "$DEMO/specs" | sed 's/^/    /'
 
 echo "==> 5/5  cross-surface INVOKES proposals (M-5a)"
-# Guarded like every other stage. Without this the whole rebuild died here with a
-# FileNotFoundError whenever the frontend pack had not been re-run -- so the one
-# script that exists to recover the graph could not finish on a clean machine,
-# and the failure came *after* the criteria had landed, which made it look like
-# the run had succeeded until you read the tail.
 if [ ! -f "$UI_FACTS" ]; then
   echo "    !! $UI_FACTS absent — no INVOKES proposals."
   echo "       The UI and API models will both be present and unlinked, which is"
   echo "       visible as zero INVOKES rather than as a wrong number."
 else
 # Derived from the frontend pack's own `api_calls` (screen -> endpoint), not from
-# a mapping file. The previous rebuild read /tmp/athena-invokes.json, whose UI
-# ids predate the current synthesiser: all 91 matched no transition, and the
-# writer counted them as written anyway.
-PYTHONPATH=. $PY - <<'EOF' | sed 's/^/    /'
+# a mapping file. An earlier rebuild read a mapping whose UI ids predated the
+# current synthesiser: all 91 matched no transition, and the writer counted them
+# as written anyway.
+UI_FACTS="$UI_FACTS" PYTHONPATH=. $PY - <<'EOF' | sed 's/^/    /'
 import json, os, re
-import re
 from metis_mcp.mbt.cross_surface import (
     InvokesLink, LinkSet, persist_invokes, persist_triggers)
 from metis_mcp.mbt.graph_session import session
 
-facts = json.load(open(os.environ.get("UI_FACTS", "/tmp/athena-ui-facts.json")))
-UI_ID = re.compile(r"^(?P<model>[^:]+)::ui::(?P<screen>[^:]+)::(?P<region>[^:]+)::")
+facts = json.load(open(os.environ["UI_FACTS"]))
 
 with session() as s:
     # The specific labels, not `:Transition`. A classified transition no longer
@@ -252,90 +186,31 @@ with session() as s:
         "MATCH (t:ApiCall) "
         "RETURN t.id AS id, t.trigger AS trigger, t.outcome_status AS status"))
 
-    # An endpoint is claimed by the API transitions whose trigger path ends with
-    # it, both forms, because controllers are dual-mounted and the gateway
-    # strips the prefix.
-    def api_for(endpoint: str, journey: str, want_success: bool | None = None) -> list[str]:
-        """API transitions for an endpoint, **scoped to the same service**.
+    def api_for(endpoint):
+        """API transitions whose trigger path ends with this endpoint.
 
-        Path suffix matching alone crosses services: a bare `GET /trend` in one
-        model tail-matches `/metric/trend` in another, and the link would credit
-        one service's UI with another service's behaviour. That is the same
-        contamination the test-inventory matcher was fixed for.
+        Suffix matching, because controllers are dual-mounted and a gateway
+        strips the prefix. Scoped by nothing else here: the demo is one service,
+        and a cross-service guard needs more than one to be worth asserting.
         """
-        want = endpoint.rstrip("/") or "/"
-        prefix = f"{journey}-api::"
         out = []
         for row in api_rows:
-            if not row["id"].startswith(prefix):
-                continue
-            path = (row["trigger"] or "").split(None, 1)
-            if len(path) != 2:
-                continue
-            p = path[1].rstrip("/") or "/"
-            if not (p == want or p.endswith(want) or want.endswith(p)):
-                continue
-            if want_success is not None:
-                # Polarity has to match, or the link claims the page's error
-                # state renders a 200. A UI `=ready` corresponds to a 2xx and a
-                # UI `=error` to a non-2xx; where the API model has no failing
-                # outcome, the error state links to nothing — which is itself
-                # worth seeing, not a reason to attach it to the success.
-                status = row["status"] or 0
-                if want_success != (200 <= status < 300):
-                    continue
-            out.append(row["id"])
+            trigger = (row.get("trigger") or "")
+            parts = trigger.split(None, 1)
+            if len(parts) == 2 and parts[1].endswith(endpoint):
+                out.append(row["id"])
         return out
 
-    # Two claims, two edge kinds (M-5a).
-    #
-    #   TRIGGERS  the `open <Page>` action starts every call the page makes.
-    #             One-to-many; the Web flow then continues on its own.
-    #   INVOKES   a region's outcome transition rendered one API outcome.
-    #             One-to-one, and only where the region names the endpoint.
-    OPEN_ID = re.compile(r"^(?P<model>[^:]+)::ui::(?P<screen>[^:]+)::open$")
-    links = LinkSet(journey="athena")
+    links = []
     for call in facts.get("api_calls", ()):
-        screen, endpoint = call.get("screen"), call.get("endpoint")
-        if not screen or not endpoint:
-            continue
-        evidence = {"endpoint": endpoint, "screen": screen}
-        proposer = f"react-ui@{facts.get('pack_version','?')}"
-
-        for row in ui_rows:
-            opener = OPEN_ID.match(row["id"])
-            if opener and opener.group("screen") == screen:
-                journey = opener.group("model").rsplit("-", 1)[0]
-                for api_id in api_for(endpoint, journey):
-                    links.triggers.append(InvokesLink(
-                        row["id"], api_id, proposer, evidence, ""))
-                continue
-
-            m = UI_ID.match(row["id"])
-            # The region must be named in the endpoint, or this is a different
-            # panel of the same screen. Linking every region of a screen to every
-            # endpoint it calls would propose relationships nobody observed.
-            if not m or m.group("screen") != screen:
-                continue
-            region = m.group("region")
-            if region.lower() in endpoint.lower():
-                journey = m.group("model").rsplit("-", 1)[0]
-                wants_success = row["id"].endswith("::ready")
-                for api_id in api_for(endpoint, journey, wants_success):
-                    links.links.append(InvokesLink(
-                        row["id"], api_id, proposer, evidence, ""))
-
-    def dedupe(rows):
-        seen, out = set(), []
-        for link in rows:
-            key = (link.ui_transition_id, link.api_transition_id)
-            if key not in seen:
-                seen.add(key)
-                out.append(link)
-        return out
-
-    unique = LinkSet(journey="athena", links=dedupe(links.links),
-                     triggers=dedupe(links.triggers))
+        endpoint = call.get("endpoint", "")
+        screens = [r["id"] for r in ui_rows if call.get("screen", "") in r["id"]]
+        for ui_id in screens:
+            for api_id in api_for(endpoint):
+                links.append(InvokesLink(ui_transition_id=ui_id,
+                                         api_transition_id=api_id,
+                                         evidence=f"{call.get('screen')} -> {endpoint}"))
+    unique = LinkSet(links=links)
     t_written, t_unmatched = persist_triggers(s, unique, confirmed_only=False)
     i_written, i_unmatched = persist_invokes(s, unique, confirmed_only=False)
     print(f"{t_written} TRIGGERS (the page starts the call), "
@@ -344,7 +219,6 @@ with session() as s:
         print(f"{len(t_unmatched) + len(i_unmatched)} link(s) matched no transition")
     print("both are proposals: they credit nothing until confirmed (M-5g, F-7)")
 EOF
-
 fi
 
 echo

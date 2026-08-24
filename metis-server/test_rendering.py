@@ -403,9 +403,9 @@ def test_an_input_is_rendered_as_a_condition_never_a_value():
     from metis_mcp.rendering.test_case import input_condition
 
     text = input_condition({"name": "metricDto", "location": "body",
-                            "type_name": "org.catools.athena.model.metrics.MetricDto",
+                            "type_name": "org.example.records.dto.RecordDto",
                             "required": True, "constraints": []})
-    assert text == "body.metricDto is a required MetricDto"
+    assert text == "body.metricDto is a required RecordDto"
     # Nothing that looks like a value.
     assert "=" not in text and "{" not in text
 

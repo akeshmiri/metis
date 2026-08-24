@@ -63,7 +63,7 @@ def _parse_guard(expression: str):
 # The interval machinery below decides guards of the shape `<var> <op> <number>`.
 # Real recovered guards are mostly not that shape -- `t.isEmpty()` versus
 # `NOT (t.isEmpty())` -- and were therefore reported `unverifiable`: 135 of 223
-# such findings on the athena estate alone.
+# such findings on the the pilot estate estate alone.
 #
 # Those are decidable, and decidable *without interpretation*: two guards whose
 # conjuncts are identical except that exactly one appears negated in one and
@@ -578,7 +578,14 @@ def corroborate_transition(session, transition_id: str, implementing_method_id: 
     automatically wins, because a precedence rule would decide a question only a
     person can.
 
-    **Unwired.** Nothing calls this, and the evidence layer it reads (`Method`
+    **Wired into the `validate` stage** since the database intake gave the call
+    graph a reason to exist. It was unwired for a long time and that was the
+    reason `include_call_graph` defaulted to off — D-13 said "if nothing comes to
+    query the call graph, remove them rather than let the ontology accrete", and
+    this is the something that came.
+
+    The former note, kept because it is still the standing warning: the evidence
+    layer it reads (`Method`
     and its `CALLS` edges) only exists after `raw_landing` has run. Its Cypher
     is correct -- `MATCH (t:Transition|ApiCall|UiAction)` handles the
     specialisation -- but a caller must pass an id in the form landing wrote,

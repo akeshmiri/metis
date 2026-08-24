@@ -183,7 +183,7 @@ def export(model: Model, include_approved: bool = False,
                 # The tuple is kept beside it -- the exact recovered condition
                 # stays authoritative (T-5).
                 # State NAMES, never ids: a landed id carries its model
-                # namespace (`athena-metric-api::Ready`), which is storage
+                # namespace (`records-api::Ready`), which is storage
                 # bookkeeping and has no business meaning.
                 "rule": (
                     f"Given the system is "

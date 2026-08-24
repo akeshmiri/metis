@@ -172,9 +172,9 @@ def test_a_specification_with_no_evidence_is_left_for_a_person():
 
 def test_component_grouping_is_the_weaker_fallback():
     result = F.derive([{"id": "s1", "entities": []}], known_entities=set(),
-                      implementations={"s1": "athena-spec-api"})
+                      implementations={"s1": "records-spec-api"})
     assert result.features[0].basis == F.BY_COMPONENT
-    assert result.features[0].key == "athena-spec-api"
+    assert result.features[0].key == "records-spec-api"
 
 
 def test_derivation_is_deterministic():

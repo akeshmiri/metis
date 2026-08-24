@@ -53,6 +53,13 @@ class SourceResult:
     evidence: dict = field(default_factory=dict)
     skipped: list[tuple[str, str]] = field(default_factory=list)
     proposed_by: str = ""
+    # The already-parsed pack reports, by name (`structural`, `behaviour`).
+    #
+    # Carried so the workflow can land the EVIDENCE layer beside the model
+    # without re-reading and re-validating files the source has already read.
+    # `evidence` above holds provenance strings for the Episode; this holds the
+    # contract objects themselves, and a source with none simply has none.
+    reports: dict = field(default_factory=dict)
 
 
 class ModelSource:

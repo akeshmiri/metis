@@ -36,7 +36,7 @@ from code_analysis.dimension_recovery import (
 from metis_mcp.mbt.dimensions import BUSINESS, VALIDATION, prefix_guard, variation_scope
 
 A = Anchor("Controller.java", 42, "sha")
-DTO_A = Anchor("MetricDto.java", 12, "sha")
+DTO_A = Anchor("RecordDto.java", 12, "sha")
 ADVICE_A = Anchor("GlobalExceptionHandler.java", 81, "sha")
 
 
@@ -44,18 +44,18 @@ def _endpoint(validated: bool = True, body: bool = True) -> dict:
     params = []
     if body:
         params.append({"name": "metric", "location": "body",
-                       "type_name": "org.catools.athena.model.MetricDto",
+                       "type_name": "org.example.records.dto.RecordDto",
                        "required": True, "constraints": []})
-    return {"id": "MetricController.save::POST", "http_method": "POST",
+    return {"id": "RecordController.save::POST", "http_method": "POST",
             "path": "/metric", "parameters": params, "validated": validated,
             "anchor": {"file": A.file, "line": A.line, "commit": A.commit}}
 
 
 def _members(constrained: bool = True) -> list[MemberFact]:
     return [
-        MemberFact("MetricDto", "duration", "java.lang.Long", DTO_A,
+        MemberFact("RecordDto", "duration", "java.lang.Long", DTO_A,
                    constraints=("@NotNull(message = \"required\")",) if constrained else ()),
-        MemberFact("MetricDto", "project", "java.lang.String", DTO_A,
+        MemberFact("RecordDto", "project", "java.lang.String", DTO_A,
                    constraints=("@NotNull",) if constrained else ()),
         # A different DTO's constraints must never be borrowed.
         MemberFact("ProjectDto", "name", "java.lang.String", DTO_A,
@@ -146,7 +146,7 @@ def test_four_real_anchors_ride_with_the_dimension():
     assert len(recovery.anchors) == 4
     labels = [a.split("=", 1)[0] for a in recovery.anchors]
     assert labels == ["constraint", "valid", "exception-handler", "declared"]
-    assert "MetricDto.java:12" in recovery.anchors[0]
+    assert "RecordDto.java:12" in recovery.anchors[0]
     assert "GlobalExceptionHandler.java:81" in recovery.anchors[2]
 
 
@@ -207,7 +207,7 @@ def test_members_are_matched_on_the_simple_type_name():
     """A parameter carries the FQN and a member the simple name. Comparing them
     unnormalised finds nothing, which reads exactly like a DTO with no
     constraints -- silent, and wrong in the safe-looking direction."""
-    found = constrained_members("org.catools.athena.model.MetricDto", _members())
+    found = constrained_members("org.example.records.dto.RecordDto", _members())
     assert [m.name for m in found] == ["duration", "project"]
 
 
@@ -222,7 +222,7 @@ def _report(*mappings) -> ExtractionReport:
 def test_the_exception_map_resolves_agreeing_advices():
     """Two beans, same exception, same status: certain, and not a conflict.
 
-    athena's `ControllerErrorHandler` overrides Spring's base-class method while
+    The pilot estate's `ControllerErrorHandler` overrides Spring's base-class method while
     `GlobalExceptionHandler` annotates one. They disagree about the response
     BODY and agree about the status, so the status is usable.
     """
@@ -256,9 +256,9 @@ def test_the_endpoint_fact_carries_validated_and_the_member_fact_carries_constra
     """Both fields are new to the contract; a pack emitting them must round-trip."""
     endpoint = EndpointFact(
         id="e", http_method="POST", path="/metric", handler_method_id="h",
-        anchor=A, parameters=(ParameterFact("m", "body", "MetricDto"),), validated=True)
+        anchor=A, parameters=(ParameterFact("m", "body", "RecordDto"),), validated=True)
     assert endpoint.validated is True
-    assert MemberFact("MetricDto", "duration", "Long", DTO_A).constraints == ()
+    assert MemberFact("RecordDto", "duration", "Long", DTO_A).constraints == ()
 
 
 if __name__ == "__main__":

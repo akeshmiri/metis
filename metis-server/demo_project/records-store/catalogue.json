@@ -1,0 +1,60 @@
+{
+  "catalogue_version": "metis.db-catalogue/1",
+  "dialect": "postgresql",
+  "database": "records",
+
+  "_notes": [
+    "What a database catalogue reader returns, as a checked-in fixture.",
+    "",
+    "The suite must run with no driver installed and no database reachable, so",
+    "the readers are exercised against this and the live path is opt-in. It is",
+    "the same split the query packs use: a captured artefact for the fast tests,",
+    "and a real run to prove the artefact is not fiction.",
+    "",
+    "CONDITIONS. `record` confirms what RecordEntity states with @Table, and its",
+    "`owner_name` column confirms a @Column that differs from the field name.",
+    "`record_tag` REFUTES what TagEntity proposes: with no @Table, Spring's",
+    "naming strategy proposes `tag_entity`, and no such table exists. That",
+    "proposal must be reported unresolved with its basis named, and no edge",
+    "written. Rename this table to `tag_entity` and the refute case is gone.",
+    "",
+    "NO ROW DATA. A catalogue is structure — schemas, tables, columns, types,",
+    "nullability, keys. Métis reads no rows (X-7a)."
+  ],
+
+  "schemas": [
+    {
+      "name": "public",
+      "objects": [
+        {
+          "name": "record",
+          "kind": "Table",
+          "columns": [
+            {"name": "id", "data_type": "uuid", "nullable": false, "primary_key": true},
+            {"name": "title", "data_type": "varchar(120)", "nullable": false},
+            {"name": "owner_name", "data_type": "varchar(120)", "nullable": false},
+            {"name": "archived", "data_type": "boolean", "nullable": false}
+          ]
+        },
+        {
+          "name": "record_tag",
+          "kind": "Table",
+          "columns": [
+            {"name": "id", "data_type": "bigint", "nullable": false, "primary_key": true},
+            {"name": "record_id", "data_type": "uuid", "nullable": false,
+             "references": {"table": "record", "column": "id"}},
+            {"name": "tag", "data_type": "varchar(40)", "nullable": false}
+          ]
+        },
+        {
+          "name": "active_record",
+          "kind": "View",
+          "columns": [
+            {"name": "id", "data_type": "uuid", "nullable": false},
+            {"name": "title", "data_type": "varchar(120)", "nullable": false}
+          ]
+        }
+      ]
+    }
+  ]
+}
