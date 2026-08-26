@@ -25,3 +25,33 @@ does search understand meaning	lesson:08-finding-things
 will it invent a value it did not find	lesson:01-what-metis-does-not-do
 does anything land as approved	lesson:03-facts-and-evidence
 what if two facts arrive at different times	lesson:04-deferred-joins
+
+# --- Added to make the number mean something. Fifteen questions cannot tell a
+# real retrieval gain from noise: enabling semantic search moved top-1 by ONE,
+# while making a different question worse. These were written from the lessons'
+# own headings and prose before any search was run, same rule as above.
+#
+# Lesson 02 had no questions at all, so the one lesson describing the shape of
+# the model was measured by nothing.
+
+what is a state and what is a transition	lesson:02-the-shape-of-the-model
+why does matching Transition return nothing	lesson:02-the-shape-of-the-model
+a specialisation replaces its parent	lesson:02-the-shape-of-the-model
+why do ids have a double colon prefix	lesson:02-the-shape-of-the-model
+can I add a new label to the ontology	lesson:02-the-shape-of-the-model
+how many labels are in the ontology	lesson:02-the-shape-of-the-model
+does Metis run my tests for me	lesson:01-what-metis-does-not-do
+does it tell me whether my code is correct	lesson:01-what-metis-does-not-do
+can it publish to Jira on its own	lesson:01-what-metis-does-not-do
+why is everything sitting in Quarantine	lesson:03-facts-and-evidence
+what does it mean that evidence is anchored	lesson:03-facts-and-evidence
+what are the three outcomes of a join	lesson:04-deferred-joins
+why is a selector a property and not a node	lesson:04-deferred-joins
+what exactly does G2 require me to type	lesson:05-the-two-gates
+why can the proposer not approve their own work	lesson:05-the-two-gates
+what are the five steps from repo to tests	lesson:06-from-a-repository-to-test-cases
+what do I actually get at the end	lesson:06-from-a-repository-to-test-cases
+what does an empty valid_to mean	lesson:07-time-what-was-true-and-when
+how do I ask what was true in the past	lesson:07-time-what-was-true-and-when
+what are the three surfaces	lesson:08-finding-things
+what will ask refuse to answer	lesson:08-finding-things
