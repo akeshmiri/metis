@@ -1,17 +1,25 @@
-# Métis configuration -- mounted via the Helm chart as this deployment's
-# host-level config (METIS_HOME=/etc/metis/config, see values.yaml's
-# ingestion-worker component). A project-level .metis/config.yaml, if one
-# exists inside a specific checkout the worker operates on, would override
-# this -- first-found-wins, no merge (see config_manager.py).
+# Métis configuration -- rendered by the Helm chart into a Secret and mounted at
+# the path METIS_CONFIG_PATH names (see values.yaml and ../README.md).
+#
+# METIS_CONFIG_PATH, when set, is the ONLY candidate the server considers
+# (`metis_mcp/mbt/graph_session.py::config_paths`), which is the whole point of
+# the deployment contract: a pod must not fall back to whatever the node
+# happened to have. A project-level `.metis/config.*` inside a checkout the
+# worker operates on does NOT override this -- that override was removed
+# deliberately, and the `config_manager.py` this header used to cite went with
+# the v1 engine.
 
 zdr:
-  # Zero Data Retention status for the adopting organization. Fail-closed by
-  # default: while `confirmed` is false, any repository classified
-  # `confidential` below is blocked at the gate (CONST-051).
+  # Zero Data Retention status for the adopting organization.
   #
-  # Record the decision here once made -- see
-  # metis-const-053-confirmation-record.md for the procurement checklist and
-  # the fields to fill in.
+  # NOTHING READS THIS, AND THERE IS NO GATE. `CONST-051`..`CONST-053` are v1
+  # constitution rules, absent from the current specification and from every
+  # module in this build. An earlier version of this comment said a
+  # `confidential` repository is "blocked at the gate"; no such gate exists.
+  # Kept as the record of a policy decision -- not as a control that is running.
+  #
+  # Procurement checklist, historical:
+  # docs/historical/design-notes-v1/metis-const-053-confirmation-record.md
   confirmed: false
   confirmed_date: null
   confirmed_by: null
@@ -27,16 +35,22 @@ models:
 corpus:
   glob: "corpus/*.md"
 
-# Graph backend, transport, and connector connection settings. password_env
+# Graph connection, transport, and connector connection settings. password_env
 # values name the Secret keys templates/secrets.yaml actually creates
-# (ATHENA_DB_PASSWORD, NEO4J_PASSWORD) -- wired into every container via
-# envFrom/secretRef in _objects.tpl. uri/host below are placeholders the
-# real NEO4J_URI/ATHENA_DB_HOSTNAME env vars (values.yaml's default.env)
-# override at runtime (config_manager.py's get_neo4j_config()/
-# get_connector_config() apply that override) -- this file supplies the
-# fallback default, the deployment supplies the real per-environment value.
+# (METIS_SOURCE_DB_PASSWORD, NEO4J_PASSWORD) -- wired into every container via
+# envFrom/secretRef in _objects.tpl.
+#
+# The uri/host values below are what the deployment actually uses. They are NOT
+# overridden by NEO4J_URI or METIS_SOURCE_DB_HOSTNAME at runtime: the server
+# reads this rendered file through METIS_CONFIG_PATH (see ../README.md), and the
+# config_manager.py that once applied such an override went with the v1 engine.
+# Set the real per-environment value here, via values.yaml, not through an env
+# var that nothing reads.
+#
+# There is no `backend` key: the v1 LocalGraphStore/Neo4jGraphStore split is
+# gone and a key naming a choice that no longer exists reads as a supported
+# control.
 graph:
-  backend: neo4j
   neo4j:
     uri: "bolt://REPLACE-neo4j-service:7687"
     user: "neo4j"
@@ -55,17 +69,19 @@ security:
 
 connectors:
   application_code:
-    athena:
+    source_database:
       host: "localhost"
       port: 5432
-      dbname: "athena"
-      user: "athena"
-      password_env: "ATHENA_DB_PASSWORD"
+      dbname: "CHANGE_ME"
+      user: "CHANGE_ME"
+      password_env: "METIS_SOURCE_DB_PASSWORD"
 
-# Per-repository classification (CONST-051/052). Every repository Métis
-# ingests should have an explicit entry here -- anything NOT listed defaults
-# to `confidential` (fail-closed) and will be blocked, per CONST-052, not
-# silently treated as safe.
+# Per-repository classification. NOTHING READS THIS EITHER -- see the note under
+# `zdr` above. It is a declaration of intent, not an ingestion control.
+#
+# The intended rule was that every repository Métis ingests carries an explicit
+# entry, and that anything NOT listed defaults to `confidential` (fail-closed)
+# and is blocked rather than silently treated as safe. No code implements it.
 #
 # Given the ZDR decision above, most repositories should genuinely be
 # `public_internal` unless a specific one has a real contractual, regulatory,

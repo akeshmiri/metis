@@ -4,8 +4,10 @@ UIF → the graph (application spec §3.2 stage 2; D-1, D-8, S-4, TR-6).
 **The half that was missing.** Six extractors produce a Unified Intake Format
 document with every field traced to the response it came from. Nothing carried
 that into the graph: `metis_mcp/uif_intake.py` went with the v1 engine, and
-`intake_processor.py --land` has refused ever since -- correctly, because
-refusing is better than reporting a success that wrote nothing.
+the intake skill's `--land` refused ever since -- correctly, because refusing is
+better than reporting a success that wrote nothing. That skill's extractors have
+since been retired in favour of `code_analysis.tracker`, and this module is the
+landing half they never had.
 
 **Two provenance records, answering different questions.** This is the
 distinction that made the design confusing until it was written down:
@@ -49,13 +51,15 @@ from metis_mcp.mbt.model import QUARANTINE
 from metis_mcp.model_sources.landing import LandingPlan, PlannedEdge, PlannedNode
 from metis_mcp.ontology.validation import validate as validate_node
 from metis_mcp.ontology.validation import validate_relationship
+from metis_mcp.retrieval import search_text_for
 
 UIF_VERSION_PREFIX = "1."
 
 # `scope.source_system` -> (label, the id property that label requires).
-# Taken from what the extractors actually emit, not from what they are called:
-# `swagger_extractor.py` writes `source_system="swagger"` and the artefact is an
-# OpenAPI document, and Zephyr Scale's extractor writes `"scale"`.
+# Taken from what a producer actually emits, not from what the source is called:
+# the value for an OpenAPI document is `swagger`, and Zephyr Scale's is `scale`.
+# Both predate this module and renaming either would detach every existing item
+# from its anchor.
 ANCHORS: dict[str, tuple[str, str]] = {
     "jira": ("JiraItem", "jira_key"),
     "confluence": ("ConfluenceItem", "page_id"),
@@ -310,9 +314,14 @@ def plan_intake(document: dict, *, job_id: str = "manual",
             "name": requirement_id,
             "text": text,
             "statement": text,
+            "search_text": search_text_for(requirement_id, text),
             "ears_pattern": ears.pattern,
             "revision": 1,
             "lifecycle_state": QUARANTINE,
+            # Bi-temporal validity: `valid_from` is when this claim started
+            # being true, `valid_to` is "" while it still is. Invalidation
+            # sets `valid_to`; nothing is deleted (see landing.VALIDITY_FACTS).
+            "valid_from": recorded, "valid_to": "",
         }) and anchor_ok:
             add_edge(label, anchor_id, "REPRESENTS", "Requirement", requirement_id)
     elif text:
@@ -341,6 +350,7 @@ def plan_intake(document: dict, *, job_id: str = "manual",
             "source_episode_id": episode_id,
             "name": name,
             "description": description,
+            "search_text": search_text_for(name, description),
             "impact": list(entry.get("impact") or ()),
             "properties_json": json.dumps(entry.get("properties") or [],
                                           sort_keys=True),

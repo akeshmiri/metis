@@ -4,7 +4,7 @@
 
 *Generated from `metis_mcp/ontology/labels.py`.*
 
-61 labels, 116 relationships, 20 staged out.
+62 labels, 116 relationships, 20 staged out.
 
 The ontology is **closed**. Adding a label or a relationship is a reviewed change under D-2, not an edit — four places have to agree, and the Cypher schema is generated from `labels.py` so two of them cannot drift apart.
 
@@ -40,6 +40,7 @@ The ontology is **closed**. Adding a label or a relationship is a reviewed chang
 - `Intent`
 - `JiraItem`
 - `JpaQuery`
+- `Lesson`
 - `Menu`
 - `Method`
 - `MySql`

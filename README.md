@@ -61,15 +61,20 @@ docs/                            the spec, the guide, the academy, and history
 
 metis-server/                    the engine. Python, no framework.
 ├── metis_mcp/
-│   ├── ontology/                THE ontology: 61 labels + the relationship
+│   ├── ontology/                THE ontology: 62 labels + the relationship
 │   │                            catalogue. The Cypher schema is GENERATED from
 │   │                            labels.py, so the two cannot drift.
 │   ├── mbt/                     model-based testing: criteria, path generation,
-│   │                            coverage ledger, validation, rendering, the CLI
-│   ├── model_sources/           the four sources — authored, code, web,
-│   │                            ac-mined — plus knowledge.py (stage 1) and
-│   │                            landing.py (stage 2). Every source produces
-│   │                            candidates at Quarantine; none writes Approved.
+│   │                            coverage ledger, validation, rendering, the CLI,
+│   │                            and link_proposals.py — cross-surface INVOKES/
+│   │                            TRIGGERS derivation, pure so its join key is
+│   │                            assertable
+│   ├── model_sources/           the five registered sources — authored, code,
+│   │                            web, ac-mined, openapi — plus knowledge.py
+│   │                            (stage 1), landing.py (stage 2) and lessons.py
+│   │                            (the academy, landed as :Lesson). Every source
+│   │                            produces candidates at Quarantine; none writes
+│   │                            Approved.
 │   ├── workflow/                the five workflows, their stages and gates.
 │   │                            The one place that knows the order.
 │   ├── reconciliation/          AC ↔ transition matching, and the two gap
@@ -82,12 +87,17 @@ metis-server/                    the engine. Python, no framework.
 │   ├── publishing/              three-way drift detection, then G2
 │   ├── specgen/                 the stakeholder specification (§18)
 │   ├── overrides/               human edits as layered facts, never mutations
+│   ├── retrieval/ (retrieval.py)  keyword + semantic, fused by RANK not score —
+│   │                            no model is bundled and none is loaded by default
+│   ├── api/                     the HTTP surface: bearer auth against a digest
+│   │                            store, and a G2 confirmation bound to one run
 │   └── server.py                the MCP surface: nineteen read-only tools,
 │                                plus a gated write half (METIS_MCP_WRITE)
 ├── code_analysis/               Joern query packs → normalised contract →
 │                                synthesis. No engine type reaches the graph.
 ├── schema/                      GENERATED Cypher (Community only — C1)
-└── test_*.py                    69 files, 1,503 tests, no Neo4j required
+└── test_*.py                    76 test files, 1,671 tests, no Neo4j required.
+                                 Joern is needed for five of them (see CLAUDE.md)
 
 .mcp.json                        registers the MCP server for this repo — stdio,
                                  nineteen read-only tools, no absolute paths

@@ -1,0 +1,27 @@
+# Retrieval quality for the academy corpus.
+#
+# `question<TAB>expected_id`. The expected id is the node a person asking that
+# question should be shown FIRST — written from the content, before running the
+# search, which is the only order that makes the number mean anything.
+#
+# Run it:  metis retrieval-bench --questions docs/academy/retrieval-questions.tsv
+#
+# This file is the worked example. For a real corpus, write your own: the value
+# is entirely in somebody who knows the material deciding the right answers in
+# advance.
+
+when does Metis stop for a human	lesson:05-the-two-gates
+who is allowed to approve a model	lesson:05-the-two-gates
+can I bulk approve everything	lesson:05-the-two-gates
+what happens if I never review anything	lesson:05-the-two-gates
+how do I get from a repository to tests	lesson:06-from-a-repository-to-test-cases
+how many endpoints does the demo have	lesson:06-from-a-repository-to-test-cases
+why is the whole service re-extracted	lesson:06-from-a-repository-to-test-cases
+was this true last March	lesson:07-time-what-was-true-and-when
+difference between approved and valid	lesson:07-time-what-was-true-and-when
+what happens when I invalidate something	lesson:07-time-what-was-true-and-when
+which surface should I use	lesson:08-finding-things
+does search understand meaning	lesson:08-finding-things
+will it invent a value it did not find	lesson:01-what-metis-does-not-do
+does anything land as approved	lesson:03-facts-and-evidence
+what if two facts arrive at different times	lesson:04-deferred-joins

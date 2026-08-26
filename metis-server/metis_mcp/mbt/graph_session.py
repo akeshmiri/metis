@@ -11,10 +11,14 @@ a system nobody can reason about.
 
 **The config file, and what PLT-005 is actually protecting.** The rule is not
 "the password must come from `os.environ`" -- it is that the secret must not
-reach a process listing or shell history. `metis-server/.metis/config.yaml`
-records the shape this project already settled on: `password_env` NAMES an
-environment variable and the secret lives there, so a checked-in file carries
-none. That path is tried first and is the one to use.
+reach a process listing or shell history. `password_env` NAMES an environment
+variable and the secret lives there, so a checked-in file carries none. That is
+the shape to use.
+
+**One location.** `~/.metis/config.json`, or whatever `METIS_CONFIG_PATH` names.
+Configuration that resolved differently depending on the directory a command ran
+in made "which database did that write go to" unanswerable from the command
+alone.
 
 A literal `password` is read too, because `~/.metis/config.json` has one and
 refusing it outright would mean nothing can connect at all. It is taken only
@@ -34,8 +38,11 @@ configuration here I cannot read" is a different answer from "there is no
 configuration", and only the first tells you why you are being asked for a
 password you thought you had already set.
 
-`graph.backend` is ignored. The v1 LocalGraphStore/Neo4jGraphStore split went
-with the v1 engine; there is one path now.
+There is no `graph.backend`. The v1 LocalGraphStore/Neo4jGraphStore split went
+with the v1 engine and there is one path now, so the key has been removed from
+every shipped config rather than left to be read as a supported control --
+`test_independence.py::test_no_config_file_offers_a_setting_nothing_reads`
+keeps it out. An old config that still carries one is simply ignored.
 """
 from __future__ import annotations
 
@@ -61,27 +68,40 @@ CONFIG_PATH_ENV = "METIS_CONFIG_PATH"
 
 
 def config_paths() -> tuple[Path, ...]:
-    """Where a JSON config is looked for. First found wins; there is no merge.
+    """Where configuration is read from. **One place, or one override.**
+
+    `~/.metis/config.json` is the single default. The project-local
+    `.metis/config.json` used to be tried first, and a per-repository override of
+    a machine's connection is exactly the arrangement that makes "which database
+    did that write go to" unanswerable from the command alone — the answer
+    depended on the directory the command was run in.
 
     `METIS_CONFIG_PATH` names a file and, when set, is the **only** candidate.
-    That is the deployment contract the Helm chart already writes
-    (`values.yaml`: `/etc/metis/config/config.json`, mounted from the secret),
-    and an explicit path that silently falls back to a home directory is how a
-    pod ends up talking to whatever the node happened to have.
-
-    Otherwise: project before host -- the resolution rule `.metis/config.yaml`'s
-    own header states -- so a repository can override the machine it is checked
-    out on.
+    That is the deployment contract the Helm chart writes (`values.yaml`:
+    `/etc/metis/config/config.json`, mounted from the secret), and an explicit
+    path that silently fell back to a home directory is how a pod ends up talking
+    to whatever the node happened to have.
     """
     named = os.environ.get(CONFIG_PATH_ENV, "").strip()
     if named:
         return (Path(named),)
-    return (Path(".metis/config.json"), Path.home() / ".metis/config.json")
+    return (Path.home() / ".metis/config.json",)
 
 
 def unreadable_config_paths() -> tuple[Path, ...]:
-    """Configuration this build can see and cannot parse."""
-    return (Path(".metis/config.yaml"), Path.home() / ".metis/config.yaml")
+    """Configuration this build can see and does not read.
+
+    Reported rather than skipped: "there is configuration here I am not reading"
+    is a different answer from "there is no configuration", and only the first
+    explains why a password is being asked for that somebody believes they set.
+
+    Both YAML forms are listed, and so is the project-local JSON that used to be
+    a candidate — a repository that still carries one would otherwise go quiet
+    on the day this changed.
+    """
+    return (Path(".metis/config.json"),
+            Path(".metis/config.yaml"),
+            Path.home() / ".metis/config.yaml")
 
 
 class GraphNotConfigured(Exception):
@@ -255,7 +275,22 @@ def session(uri: str | None = None, user: str | None = None):
     #
     # If the noise needs solving, solve it where it is displayed, not by asking
     # the server to stop reporting.
-    driver = GraphDatabase.driver(config.uri, auth=(config.user, config.password))
+    # **`UNRECOGNIZED` notifications are suppressed, and only those.**
+    #
+    # A query naming `valid_to` or `provenance` against a graph that has not
+    # landed anything carrying them makes the server emit "property key does not
+    # exist" — once per property, per query. Running the retrieval benchmark
+    # produced five such paragraphs per question, which buried the report the
+    # command exists to print.
+    #
+    # They are not findings: a read that spans six labels legitimately names
+    # properties only some of them carry, and that is what `coalesce` is for.
+    # Everything else is left on — a deprecation or a performance warning is
+    # something an operator should see, and blanket-disabling notifications to
+    # quiet one category is how those get lost.
+    driver = GraphDatabase.driver(
+        config.uri, auth=(config.user, config.password),
+        notifications_disabled_classifications=["UNRECOGNIZED"])
 
     try:
         with driver.session() as s:

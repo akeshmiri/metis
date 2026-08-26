@@ -1,7 +1,7 @@
 """
 The ontology (application spec §8.2, §8.3).
 
-Sixty-one labels in eight layers: a **control-flow** model (State, Transition and
+Sixty-two labels in eight layers: a **control-flow** model (State, Transition and
 friends), the **evidence** layer it is derived from (Endpoint, Parameter, Class,
 Field, Method, DeclaredOutcome, Check, ExceptionMapping, Route), a small
 **business** layer (BusinessArea, BusinessEntity) giving the nouns a criterion
@@ -21,7 +21,7 @@ The remaining two -- the catalogue in §8.2/§8.3 of the specification, and this
 docstring -- are human-readable and are checked against this module by
 test_ontology.py.
 
-Why sixty-one, and why that number should worry you: see D-1 and the note in
+Why sixty-two, and why that number should worry you: see D-1 and the note in
 `test_ontology`. A label is included only when something writes it AND something
 reads it -- the second half is the one that is easy to skip, and a writer alone
 is how an ontology accretes. §8.7 lists the deliberately-excluded labels with
@@ -40,6 +40,111 @@ BASELINE_EXEMPT = {"Episode"}
 
 # Lifecycle values (spec §8.6). Generation reads only `Approved` (D-10).
 LIFECYCLE_STATES = ("Quarantine", "Approved", "Disputed", "Rejected", "Deprecated")
+
+# ---- Bi-temporal validity -------------------------------------------------
+#
+# **A second axis, not a refinement of the first.** `lifecycle_state` answers
+# "has a human looked at this"; validity answers "was this ever true, and is it
+# still". They are independent: a criterion can be `Approved` and no longer
+# valid, and collapsing them loses both answers. A system whose entire job is
+# comparing what the code does NOW against what somebody said THEN could not
+# express "true until release 4.2" with either one alone.
+#
+# `valid_to` is required-but-may-be-empty rather than optional, which is what
+# `may_be_empty` exists for. "" is the honest representation of "still true";
+# ABSENT would be indistinguishable from "nobody recorded it", and that is the
+# conflation `Transition.guard_expression` already refuses.
+#
+# **Invalidation SETS `valid_to`. Nothing is deleted.** The superseded fact
+# staying answerable is the entire point -- "what did we believe in March" is a
+# question the graph should answer, not one it should have forgotten.
+#
+# `valid_to` is indexed because the overwhelmingly common read is "currently
+# valid", i.e. `valid_to = ""`, which is a filter over every node of the label
+# rather than a lookup of one.
+VALIDITY_REQUIRED = ("valid_from", "valid_to")
+VALIDITY_MAY_BE_EMPTY = ("valid_to",)
+
+# Applied where "true until" means something. Deliberately NOT in
+# `BASELINE_REQUIRED`: an `Episode` is already immutable and content-addressed,
+# and structural evidence (a `Method`, a `Class`) is a fact about a commit rather
+# than a claim that can stop being true.
+VALIDITY_LABELS = ("Intent", "Specification", "Requirement", "AcceptanceCriterion")
+
+# ---- Free text search -----------------------------------------------------
+#
+# Declared beside the catalogue rather than inside the query, because the index
+# and the query must name the same labels and the same properties. Two lists in
+# two files is precisely the drift this catalogue exists to prevent — the schema
+# is GENERATED from here for the same reason.
+#
+# Neo4j Community ships Lucene full-text indexes, so this costs no dependency and
+# replaces substring matching with real scoring, tokenisation and phrase support.
+# A property named for a label that does not carry it is simply not indexed, so
+# the lists do not have to be uniform.
+# ---- Semantic search ------------------------------------------------------
+#
+# **Neo4j does the vector search; Python only has to produce the vector.** That
+# split is deliberate and it is what keeps this affordable: the index, the
+# similarity function and the query are all database features, so the capability
+# costs no dependency at all. Only EMBEDDING needs a provider, and that stays
+# behind one pluggable seam that a default install never loads.
+#
+# `vector.dimensions` is fixed when the index is created and must match the model
+# that produced the vectors. A mismatch is not an error Neo4j can catch — it is
+# silently meaningless results, which is the same failure mode X-3 pins the Joern
+# version against. `retrieval.EmbeddingModel` records which model wrote a vector
+# so the mismatch is detectable rather than merely possible.
+# One index PER LABEL, unlike the full-text one. Neo4j accepts `(n:A|B|C)` for a
+# full-text index and rejects it for a vector index — measured, not assumed: the
+# multi-label form raised `Invalid input '|': expected ')'`. The loader queries
+# each and fuses the rankings, which rank fusion handles natively.
+VECTOR_INDEX_PREFIX = "metis_vector"
+
+
+def vector_index_for(label: str) -> str:
+    """The vector index name for one searchable label."""
+    import re
+    snake = re.sub(r"(?<!^)(?=[A-Z])", "_", label).lower()
+    return f"{VECTOR_INDEX_PREFIX}_{snake}"
+
+
+VECTOR_PROPERTY = "embedding"
+VECTOR_MODEL_PROPERTY = "embedding_model"
+# 1536 is OpenAI's text-embedding-3-small and a common default. Changing the
+# model means changing this AND rebuilding the index; the two cannot drift
+# silently because `retrieval` refuses a query whose model does not match what
+# the nodes were written with.
+VECTOR_DIMENSIONS = 1536
+VECTOR_SIMILARITY = "cosine"
+
+SEARCH_INDEX = "metis_search"
+
+# The ASCII-folded copy of whatever a label searches over, indexed beside the
+# original. Neo4j's `english` analyzer stems and does not fold; `standard-folding`
+# folds and does not stem. Measured: with `english`, searching `Metis` returned
+# NOTHING for a corpus about Métis; with `standard-folding`, `locks` stopped
+# matching `locking`. Indexing both forms gets both, because the analyzer applies
+# to every property in the index.
+#
+# Required on every searchable label, so a writer cannot quietly omit it and
+# leave its nodes findable only by somebody who types the accent.
+SEARCH_TEXT = "search_text"
+
+SEARCH_TARGETS = {
+    "BusinessEntity": ("name", "description", SEARCH_TEXT),
+    "Requirement": ("name", "text", "statement", SEARCH_TEXT),
+    "AcceptanceCriterion": ("name", "text", SEARCH_TEXT),
+    # The intent spine. Both carry the sentence somebody actually wrote, and
+    # leaving them out meant a search for a business phrase could find the
+    # criterion derived from a need and not the need itself — the half of §4.1
+    # that says what the system is FOR.
+    "Intent": ("name", "statement", SEARCH_TEXT),
+    "Specification": ("name", "statement", SEARCH_TEXT),
+    # The reader half of D-1's bar for `Lesson`. One entry, and the academy is
+    # searchable beside the product it teaches.
+    "Lesson": ("name", "text", SEARCH_TEXT),
+}
 
 # The states in which a human still owes a decision. `Approved`, `Rejected` and
 # `Deprecated` are settled; `Quarantine` has never been looked at and `Disputed`
@@ -231,9 +336,9 @@ LABELS: dict[str, LabelSpec] = {
             "ZephyrItem", "Evidence anchor for one Zephyr Scale item",
             required=("zephyr_key",),
             indexed=("zephyr_key", "item_type"),
-            # Zephyr Scale is one tool. The extractor is `scale_extractor.py`
-            # and the product is Zephyr Scale, so "Scale" and "Zephyr" are the
-            # same source and get one label, not two.
+            # Zephyr Scale is one tool. `source_system` is `scale` and the
+            # product is Zephyr Scale, so "Scale" and "Zephyr" are the same
+            # source and get one label, not two.
         ),
         LabelSpec(
             "DatasourceItem", "Evidence anchor for one analysed database schema",
@@ -290,19 +395,45 @@ LABELS: dict[str, LabelSpec] = {
             indexed=("content_hash", "lifecycle_state"),
             enums={"lifecycle_state": LIFECYCLE_STATES},
         ),
+        # **The one label that describes Métis rather than a system under test.**
+        #
+        # Added under D-2 with the argument written out in
+        # `docs/academy/PROPOSAL-landing-the-academy.md`, including the case
+        # against. D-1 requires a named writer and a named reader, and the reader
+        # is why this is worth a label at all: a lesson joins the full-text index
+        # alongside the five labels already in `SEARCH_TARGETS`, so `ask` answers
+        # questions about Métis as it answers questions about a product — and a
+        # lesson that reads badly through `ask` becomes a finding about the tools
+        # rather than about the writing.
+        #
+        # Writer: `model_sources.lessons`. Reader: `SEARCH_TARGETS`, and every
+        # surface that searches.
+        #
+        # No validity window (D-15): a lesson is a document about this system, not
+        # a claim about a product that stops being true. It carries a lifecycle
+        # state because it lands at Quarantine like everything else (S-4) — the
+        # academy is not exempt from the rule it teaches.
+        LabelSpec(
+            "Lesson", "One authored academy lesson about Métis itself",
+            required=("text", "ordinal", "path", SEARCH_TEXT),
+            indexed=("ordinal", "lifecycle_state"),
+            enums={"lifecycle_state": LIFECYCLE_STATES},
+        ),
         # ------------------------------------------------------------------
         # The intent spine (§4.1's comparison, made structural)
         # ------------------------------------------------------------------
         LabelSpec(
             "Intent", "One stated need, before anybody has specified how it behaves",
-            required=("statement",),
-            indexed=("lifecycle_state",),
+            required=("statement", SEARCH_TEXT) + VALIDITY_REQUIRED,
+            may_be_empty=VALIDITY_MAY_BE_EMPTY,
+            indexed=("lifecycle_state", "valid_to"),
             enums={"lifecycle_state": LIFECYCLE_STATES},
         ),
         LabelSpec(
             "Specification", "One specified behaviour — where intent and code meet",
-            required=("statement", "provenance"),
-            indexed=("provenance", "lifecycle_state"),
+            required=("statement", "provenance", SEARCH_TEXT) + VALIDITY_REQUIRED,
+            may_be_empty=VALIDITY_MAY_BE_EMPTY,
+            indexed=("provenance", "lifecycle_state", "valid_to"),
             # **One label, and the grade is what keeps the comparison alive.**
             # Intent reaches this node one way and the code reaches it another,
             # which is the point: §4.1 says a model extracted from code and used
@@ -326,13 +457,15 @@ LABELS: dict[str, LabelSpec] = {
         ),
         LabelSpec(
             "Requirement", "One requirement statement",
-            required=("ears_pattern", "revision"),
-            indexed=("ears_pattern", "lifecycle_state"),
+            required=("ears_pattern", "revision", SEARCH_TEXT) + VALIDITY_REQUIRED,
+            may_be_empty=VALIDITY_MAY_BE_EMPTY,
+            indexed=("ears_pattern", "lifecycle_state", "valid_to"),
         ),
         LabelSpec(
             "AcceptanceCriterion", "One atomic, testable condition",
-            required=("revision",),
-            indexed=("lifecycle_state", "provenance"),
+            required=("revision", SEARCH_TEXT) + VALIDITY_REQUIRED,
+            may_be_empty=VALIDITY_MAY_BE_EMPTY,
+            indexed=("lifecycle_state", "provenance", "valid_to"),
             # `provenance` is S-19's grade, and it is indexed because the
             # question it answers is a filter, not a lookup: "which criteria in
             # this scope are still code_derived" is what separates a coverage
@@ -640,7 +773,7 @@ LABELS: dict[str, LabelSpec] = {
         ),
         LabelSpec(
             "BusinessEntity", "One business noun: what it is, and what acting on it changes",
-            required=("description",),
+            required=("description", SEARCH_TEXT),
             indexed=("name",),
             # `properties_json` and `impact` are the "characteristics" half.
             #

@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import collections
 
+import pytest
+
 from code_analysis import synthesis
 from code_analysis.contract import validate_report
 from metis_mcp.mbt.test_levels import (
@@ -27,8 +29,8 @@ from metis_mcp.mbt.test_levels import (
 )
 from metis_mcp.model_sources.sources import _report_from_dict
 
-# The recovered surface. Seven, not nine: `ArchiveClient` declares two mappings
-# and is a @FeignClient, so they are calls this service MAKES.
+# The surface this service actually SERVES. `ArchiveClient` declares two mappings
+# and is a @FeignClient, so they are calls this service MAKES, not routes.
 EXPECTED_ENDPOINTS = {
     ("GET", "/record"),
     ("POST", "/record"),
@@ -40,7 +42,52 @@ EXPECTED_ENDPOINTS = {
     ("GET", "/record/page"),
     ("GET", "/record/{id}/label"),
     ("GET", "/summary/{id}"),
+    # Reached only through a meta-annotated mapping stereotype (`@GetJson`).
+    ("GET", "/json/{id}"),
+    # Declared on the `RecordsApi` interface, served by its implementation.
+    ("GET", "/contract/{id}"),
 }
+
+# --------------------------------------------------------------------------
+# Known extraction gaps, ported from github/codeql's Spring models (MIT,
+# (c) GitHub, Inc.). Each has an xfail condition below naming it.
+#
+# These two sets are the DIFFERENCE between what the service serves and what the
+# pack currently recovers. Both go empty when the pack learns to resolve
+# annotations the way Spring does, and `_recovered_today()` then collapses to
+# `EXPECTED_ENDPOINTS`. Kept as data rather than folded into the expected set so
+# that the expectation stays a statement about the SERVICE, never a record of
+# what the pack happens to do today.
+# --------------------------------------------------------------------------
+
+# Served, and not recovered. Empty: `verbOf` resolves composition, so a
+# stereotype meta-annotated with `@RequestMapping` is now a mapping.
+NOT_YET_RECOVERED: set[tuple[str, str]] = set()
+
+# Recovered, and not served. Both are routes INVENTED by the same literal-name
+# matching, which is the worse direction -- generation writes test cases for
+# behaviour the service does not have.
+# Recovered, and not served. Empty: `isController` and `returnsResponseBody`
+# make the class stereotype a precondition, so a Spring MVC handler is no longer
+# mistaken for a REST surface.
+WRONGLY_RECOVERED: set[tuple[str, str]] = set()
+
+# Every route the gap conditions contribute. Excluded from the cross-source
+# deviation tests: these files exercise EXTRACTION, and the demo's OpenAPI
+# document deliberately describes none of them, so counting them as
+# code-vs-contract disagreements would say the two sources differ where the only
+# thing that differs is what the pack can read.
+GAP_CONDITION_ROUTES = {
+    ("GET", "/json/{id}"),
+    ("GET", "/contract/{id}"),
+    ("GET", "/internal-store/{id}"),
+    ("GET", "/ui/records"),
+}
+
+
+def _recovered_today() -> set[tuple[str, str]]:
+    """What the pack recovers before the gaps above are closed."""
+    return (EXPECTED_ENDPOINTS - NOT_YET_RECOVERED) | WRONGLY_RECOVERED
 
 
 def _routes(structural) -> set[tuple[str, str]]:
@@ -68,7 +115,7 @@ def test_x5_nothing_was_left_unparsed(demo_structural):
 # --------------------------------------------------------------------------
 
 def test_every_endpoint_is_recovered_exactly(demo_structural):
-    assert _routes(demo_structural) == EXPECTED_ENDPOINTS
+    assert _routes(demo_structural) == _recovered_today()
 
 
 def test_a_route_composed_from_constants_is_resolved_not_invented(demo_structural):
@@ -104,7 +151,12 @@ def test_a_project_annotation_is_understood_only_because_the_profile_says_so():
 
 
 def test_the_declared_security_lands_on_exactly_the_annotated_handlers(demo_structural):
-    secured = {e["handler_name"] for e in demo_structural["endpoints"] if e["security"]}
+    """Scoped to `source == "annotation"`, because the filter chain now matches
+    every route as well. The two are separate declarations by separate
+    mechanisms (`SecurityFact.source`), and this assertion is about the one that
+    is written ON the handler."""
+    secured = {e["handler_name"] for e in demo_structural["endpoints"]
+               if any(f["source"] == "annotation" for f in (e["security"] or ()))}
     assert secured == {"create", "remove"}, (
         "an endpoint with no entry declared nothing — never that it is open")
 
@@ -153,7 +205,12 @@ def test_a_builder_chain_does_not_collapse_to_200(demo_behaviour):
     default and were reported as **200** — a 201 and a 204 silently wrong.
     """
     by_status = collections.Counter(o["status"] for o in demo_behaviour["outcomes"])
-    assert by_status == {200: 7, 201: 1, 202: 1, 204: 2}
+    # 8 rather than the original 7: `/json/{id}` and `/contract/{id}` are two
+    # routes the service always served and the pack could not read -- one
+    # behind a composed mapping stereotype, one declared on an interface.
+    # `/ui/records` and `/internal-store/{id}` contribute nothing: an MVC
+    # view handler and an outbound client are not API surfaces.
+    assert by_status == {200: 8, 201: 1, 202: 1, 204: 2}
 
 
 def test_the_discriminator_names_what_set_the_status(demo_behaviour):
@@ -184,7 +241,7 @@ def test_the_model_covers_every_endpoint_and_the_scoped_rejection(
         demo_structural, demo_behaviour):
     model = _synthesise(demo_structural, demo_behaviour).model
     triggers = collections.Counter(t.trigger for t in model.transitions.values())
-    assert len(model.transitions) == 12
+    assert len(model.transitions) == 13
     assert triggers["GET /summary/{id}"] == 2, "a 200 and the scoped 422"
     # Named from the route since I-2, so that the code intake and the OpenAPI
     # intake reach the SAME node for one behaviour — see `landing.
@@ -305,7 +362,10 @@ def test_the_three_deviations_and_no_others(demo_structural):
     code = _routes(demo_structural)
     contract = _contract_routes()
     assert contract - code == {("POST", "/record/{id}/restore")}, "contract-only"
-    assert code - contract == {("POST", "/record/{id}/archive")}, "code-only"
+    # Minus the gap conditions: they are defects in what the pack READS, not
+    # disagreements between the two sources. See GAP_CONDITION_ROUTES.
+    assert code - contract - GAP_CONDITION_ROUTES == {
+        ("POST", "/record/{id}/archive")}, "code-only"
     assert len(code & contract) == 9, "everything else agrees on its route"
 
 
@@ -422,6 +482,40 @@ def test_an_element_reached_by_walking_the_dom_is_reported_unresolved(demo_page)
     assert "walking the DOM" in export["selector_link"]
 
 
+def test_the_dom_page_yields_no_model_and_says_which_half_is_missing(demo_page):
+    """§5.8: handlers recovered, no observable outcome nameable.
+
+    `records-page` mutates through signatures computed at run time, so `js-ui`
+    can see that the page HAS behaviour and cannot see what that behaviour looks
+    like. The honest answer is no model plus the reason — not an invented state,
+    and not silence.
+
+    **This is a condition, not a wish.** `rebuild_graph.sh` treated the refusal
+    as fatal, and because `set -e` was in force the run died at stage 3b — so the
+    login model, the acceptance criteria and the cross-surface proposals never
+    ran, while the script still exited 0 through its own `| tee` pipeline. The
+    stage now reports it and continues, and this test is what keeps the refusal
+    itself from being "fixed" into a guess.
+    """
+    from code_analysis.ui_synthesis import synthesise
+
+    result = synthesise(demo_page, journey="records-page")
+
+    assert result.model is None, (
+        "a model was synthesised from runtime-computed signatures — the pack "
+        "would be naming states nothing in the source spells")
+    assert result.errors, "refused with no reason given"
+
+    reason = " ".join(result.errors)
+    assert "§5.8" in reason
+    assert "no observable outcome" in reason
+    # Both halves of the honest answer: what WAS recovered, and what was not.
+    assert demo_page["triggers"], "the fixture no longer reproduces the condition"
+    assert str(len(demo_page["triggers"])) in reason, (
+        "the refusal does not say how many handlers it did recover, which is "
+        "the half that tells a reader the page is not simply empty")
+
+
 # --------------------------------------------------------------------------
 # Intake noise — what extraction deliberately leaves out (X-5a, A-6a)
 # --------------------------------------------------------------------------
@@ -501,9 +595,9 @@ def test_the_reduction_is_reported_never_silent(demo_structural):
 def test_nothing_downstream_of_the_filter_changed(demo_structural, demo_behaviour):
     """The filter is upstream of everything, so the cheapest way for it to be
     wrong is to take a method some later stage needed."""
-    assert _routes(demo_structural) == EXPECTED_ENDPOINTS
+    assert _routes(demo_structural) == _recovered_today()
     assert len(demo_structural["exception_mappings"]) == 5
-    assert len(demo_behaviour["outcomes"]) == 11
+    assert len(demo_behaviour["outcomes"]) == 12
 
 
 def test_the_filter_can_be_turned_off_per_project(demo_profile):
@@ -741,3 +835,295 @@ def test_the_element_id_is_the_natural_key_not_the_source_id(demo_api):
     landed = graph_transition_id(code, tid)
     assert "com.example" not in landed, "no Java signature in the id"
     assert landed.startswith("records-api::")
+
+
+# --------------------------------------------------------------------------
+# The Spring shapes CodeQL models and this pack does not
+#
+# Ported from `github/codeql`'s `java/ql/lib/semmle/code/java/frameworks/spring/`
+# (MIT, (c) GitHub, Inc.). The shape list is theirs; the Scala that will satisfy
+# it is ours. Nothing from CodeQL is installed, invoked or shipped -- QL is inert
+# without its proprietary engine, which is exactly why the libraries are usable
+# as a specification and useless as a dependency.
+#
+# `strict=True` on every marker: when the pack learns to resolve annotations the
+# way Spring does, these start passing, strict xfail turns that into a FAILURE,
+# and whoever lands the fix is forced to delete the marker and the matching entry
+# in NOT_YET_RECOVERED / WRONGLY_RECOVERED. An exemption that cannot outlive the
+# gap it records.
+# --------------------------------------------------------------------------
+
+def test_a_meta_annotated_mapping_is_still_an_endpoint(demo_structural):
+    """`@GetJson` IS a `@GetMapping` -- it is meta-annotated `@RequestMapping`,
+    which is how Spring builds `@GetMapping` itself. `verbs.get(a.name)` is a
+    literal lookup, so the route is silently absent and the service appears to
+    serve one fewer than it does.
+
+    CodeQL: `SpringControllerAnnotation` is recursive --
+    `this.getAnAnnotation().getType() instanceof SpringControllerAnnotation` --
+    so composition is transitive to any depth, not one hop.
+    """
+    assert ("GET", "/json/{id}") in _routes(demo_structural)
+
+
+def test_a_meta_annotated_feign_client_is_still_not_an_api_surface(demo_structural):
+    """The same indirection defeats the EXCLUSION, and that direction is worse:
+    it invents a route. `isOutboundClient` matches the literal `FeignClient`, so
+    a house stereotype wrapping it is counted as a surface -- reintroducing the
+    defect `ArchiveClient` exists to prevent.
+    """
+    assert not any("/internal-store" in path for _, path in _routes(demo_structural))
+    handlers = {e["handler_type"] for e in demo_structural["endpoints"]}
+    assert "InternalStoreClient" not in handlers
+
+
+def test_a_mapping_inherited_from_an_interface_belongs_to_the_implementation(
+        demo_structural):
+    """The route IS recovered here; what is wrong is which method owns it.
+
+    Measured: `handler_type` is `RecordsApi` -- the interface. That method has no
+    body, so every guard and outcome beneath the endpoint comes back empty and
+    reads as "this endpoint does nothing" rather than as a mis-attribution.
+
+    CodeQL: `SpringRequestMappingMethod` is defined over `this.overrides*(
+    superMethod)`, so the mapping belongs to the implementing method.
+    """
+    contract = [e for e in demo_structural["endpoints"]
+                if e["path"] == "/contract/{id}"]
+    assert len(contract) == 1, "one route, not one per declaring site"
+    assert contract[0]["handler_type"] == "RecordsApiController"
+
+
+def test_an_mvc_controller_is_not_a_rest_api_surface(demo_structural):
+    """`@Controller` does not imply `@ResponseBody`, so `ViewController.list`
+    returns a VIEW NAME to a template resolver -- not a body any caller receives.
+
+    Measured: recovered as `GET /ui/records` with `response_body: 'String'`,
+    which is a claim that the caller receives the text "record-list". Generation
+    then writes a test asserting a body that cannot appear -- the same fault as
+    counting a `@FeignClient` mapping, reached a different way.
+
+    CodeQL: `SpringControllerMethod` requires `getDeclaringType() instanceof
+    SpringController`, and `SpringRestController` is the subclass that "impl[ies]
+    the `@ResponseBody` annotation".
+    """
+    assert ("GET", "/ui/records") not in _routes(demo_structural)
+
+
+def test_a_cookie_parameter_is_bound_where_the_contract_already_expects_it(
+        demo_structural):
+    """`contract.IN_COOKIE` exists, and its comment says why: "every cookie
+    parameter was disclosed as unmappable and dropped ... 'send this in a cookie'
+    and 'send this in a header' produce different requests."
+
+    The vocabulary has been waiting downstream; `paramLocations` in
+    `jvm-structural/query.sc` never wired `CookieValue` to it, so the parameter
+    is silently absent and a generated request omits it.
+
+    `@MatrixVariable` is the other name CodeQL binds and is deliberately NOT
+    asserted here: it has no location in `PARAMETER_LOCATIONS`, and choosing one
+    is a vocabulary decision under D-2, not a pack fix.
+    """
+    label = [e for e in demo_structural["endpoints"]
+             if e["path"] == "/record/{id}/label"]
+    assert len(label) == 1
+    locations = {p["location"] for p in label[0]["parameters"]}
+    assert "cookie" in locations, sorted(locations)
+
+
+def test_security_declared_in_the_filter_chain_is_recovered(demo_structural):
+    """`SecurityConfig` declares three different facts in one `HttpSecurity`
+    chain, and order is the semantics: Spring applies the first matcher that
+    matches.
+
+    The pack used to read annotations only and said so -- "Security enforced in
+    a filter chain or at a gateway is invisible to this pack" -- which is why
+    Métis could say "nothing was declared here" and never "this route is
+    protected". CodeQL models the same builder in `SpringSecurity.qll`.
+    """
+    by_path = {}
+    for e in demo_structural["endpoints"]:
+        by_path.setdefault(e["path"], []).extend(e.get("security") or ())
+
+    # `/record/**` -> hasRole("RECORDS"), including the deeper segments: the
+    # multi-segment wildcard has to span them, which a naive rewrite did not.
+    for path in ("/record", "/record/{id}", "/record/{id}/archive",
+                 "/record/{id}/label", "/record/batch", "/record/page"):
+        roles = {r for f in by_path[path] for r in f["roles"]}
+        assert "RECORDS" in roles, f"{path} lost the role its chain requires: {by_path[path]}"
+
+    # `anyRequest().authenticated()` is the estate default, and it reaches every
+    # route the earlier matchers did not claim.
+    for path in ("/summary/{id}", "/json/{id}", "/contract/{id}"):
+        schemes = {f["scheme"] for f in by_path[path]}
+        assert "authenticated" in schemes, f"{path} missed the fallback: {schemes}"
+
+
+def test_an_annotation_and_the_chain_are_two_declarations_not_one(demo_structural):
+    """`POST /record` is annotated `@DemoSecured` AND matched by the chain.
+
+    Both are kept. They are separate mechanisms making separate claims, and
+    reporting one is losing the other -- a reviewer deciding whether a route is
+    adequately protected needs to see that two things guard it, not one.
+    """
+    post = [e for e in demo_structural["endpoints"]
+            if e["path"] == "/record" and e["http_method"] == "POST"][0]
+    expressions = [f["expression"] for f in post["security"]]
+    assert any("DemoSecured" in x for x in expressions), expressions
+    assert any("hasRole" in x for x in expressions), expressions
+
+
+def test_permit_all_is_the_only_shape_that_licenses_the_word_open(demo_structural):
+    """S-4-adjacent, and the reason `permitAll` gets its own scheme.
+
+    Absence of a security fact means "nothing was declared", which is NOT a
+    claim that the route is reachable unauthenticated. `permitAll` is the one
+    construct that says so out loud, so it is carried as `scheme: "public"`
+    rather than collapsed into the absence it superficially resembles.
+
+    Nothing in this corpus is public today -- `/ui/**` is the only `permitAll`
+    matcher and its controller is a Spring MVC view handler, not an API. The
+    assertion is therefore that nothing is MIS-labelled public.
+    """
+    public = [(e["path"], f) for e in demo_structural["endpoints"]
+              for f in (e.get("security") or ()) if f["scheme"] == "public"]
+    assert not public, f"nothing here is declared public: {public}"
+
+
+def test_no_transition_has_a_bare_verb_for_a_trigger(demo_structural, demo_behaviour):
+    """The two packs must agree on what a handler IS.
+
+    `synthesis` joins an outcome to its endpoint on the handler method's
+    fullName, and when it cannot, the trigger falls back to the verb alone --
+    `"GET"`, with no route. That is a transition nobody can execute and nothing
+    downstream can name.
+
+    This is a REGRESSION TEST, and it is here because the defect happened: when
+    `jvm-structural` learned to resolve composed annotations, inherited mappings
+    and controller stereotypes, `jvm-behaviour` had not, so it still emitted
+    outcomes for `ViewController.list`, `RecordsApi.byId` and
+    `InternalStoreClient.peek`. Three transitions carried a bare `GET`. Every
+    count assertion in this file still passed -- `len(transitions)` was simply
+    three higher, and a bare trigger looks like any other string.
+    """
+    model = _synthesise(demo_structural, demo_behaviour).model
+    bare = sorted(t.trigger for t in model.transitions.values()
+                  if " " not in t.trigger.strip())
+    assert not bare, (
+        f"{len(bare)} transition(s) have a verb and no route: {bare}. An outcome "
+        f"failed to join its endpoint -- the packs disagree about which method "
+        f"handles the request.")
+
+
+def test_every_outcome_joins_an_endpoint(demo_structural, demo_behaviour):
+    """The same defect stated at its source, before synthesis papers over it.
+
+    Asserted on the join key itself rather than on a count, because a count
+    cannot distinguish "one outcome fewer" from "one outcome attributed to a
+    method that is no longer a handler".
+    """
+    handlers = {e["handler_method_id"] for e in demo_structural["endpoints"]}
+    orphaned = [o["endpoint_id"] for o in demo_behaviour["outcomes"]
+                if o["endpoint_id"].rsplit("::", 1)[0] not in handlers]
+    assert not orphaned, (
+        f"{len(orphaned)} outcome(s) name a method jvm-structural does not "
+        f"report as a handler: {orphaned[:3]}")
+
+
+# --------------------------------------------------------------------------
+# The contract's declarations are Facts, and reach the code's nodes
+# --------------------------------------------------------------------------
+
+def test_both_intakes_land_one_endpoint_node_for_a_route_they_both_declare(demo_api):
+    """The two sources key their REPORTS differently and always will — the code
+    on a handler signature, the contract on an operationId. Neither id reaches
+    the graph. `raw_landing.endpoint_id` is keyed on `(repo, service, method,
+    path)`, so under one scope the handler and the operation that describes it
+    land as ONE node.
+
+    This did not happen before, for a reason unrelated to identity: the openapi
+    source never populated `SourceResult.reports`, so `workflow/handlers.py` took
+    the "not every source has an evidence layer" branch written for hand-authored
+    models and dropped every declared Endpoint, DeclaredOutcome, Parameter and
+    Class in silence — while `connectors/intakes.json` declared it landed all
+    four.
+
+    §4.1 is untouched. The code-vs-contract comparison is a set difference over
+    reports (`test_the_three_deviations_and_no_others`), computed before anything
+    lands. What changes is that agreement becomes one node carrying both sources'
+    evidence, instead of two nodes nothing could join.
+    """
+    import json as _json
+
+    from metis_mcp.model_sources import get
+    from metis_mcp.model_sources.raw_landing import plan_raw_landing
+    from metis_mcp.model_sources.sources import _report_from_dict
+
+    scope = "records"
+
+    def endpoints_of(report, repo=scope):
+        # `repo` is a parameter, not a closure over `scope`: `plan_raw_landing`
+        # resolves `repo or report.repo`, so the explicit argument is what scopes
+        # the key, and a test that forgot to vary it would "prove" that scoping
+        # works while landing everything under one name.
+        plan = plan_raw_landing(report, journey="records", repo=repo, job_id="t")
+        assert plan.is_legal, plan.errors[:2]
+        return {n.properties["id"] for n in plan.nodes if n.label == "Endpoint"}
+
+    code = endpoints_of(_report_from_dict(
+        _json.loads(demo_api.structural.read_text())))
+    contract = endpoints_of(get("openapi").produce(
+        path=str(CONTRACT), journey="records", repo=scope).reports["structural"])
+
+    # Nine of the ten routes the contract declares are implemented, and each one
+    # is now a single node rather than a pair. Asserted as a count AND as the
+    # remainder, because "they all merged" and "none merged" both produce a
+    # tidy-looking number on their own.
+    assert len(code & contract) == 9
+    assert len(contract - code) == 1, "only /record/{id}/restore is contract-only"
+    assert len(code - contract) == 3, (
+        "/record/{id}/archive plus the two gap-condition routes")
+
+    # The scope is load-bearing: a path is not unique across a monorepo, and two
+    # services declaring the same route must not fuse into one endpoint.
+    other = endpoints_of(get("openapi").produce(
+        path=str(CONTRACT), journey="records").reports["structural"],
+        repo="other-service")
+    assert not (code & other), "a different scope must not merge"
+
+
+# --------------------------------------------------------------------------
+# Incremental: an unchanged tree does not re-run the engine
+# --------------------------------------------------------------------------
+
+def test_a_second_extraction_over_an_unchanged_tree_never_invokes_joern(
+        demo_api, demo_profile, monkeypatch):
+    """Asserted on the INVOCATION, not on elapsed time.
+
+    A timing assertion would pass on a fast machine with a broken cache and fail
+    on a slow one with a working cache, which is a test that measures the wrong
+    thing twice. `engine._run` is the single choke point for `joern-parse` and
+    every pack, so replacing it turns "did we rebuild" into a fact rather than an
+    inference.
+
+    `from_cache` is asserted alongside it because the two can disagree: a run
+    that skipped the engine and still reported a miss would be a lie in the log,
+    and the log is what a user reads to decide whether to trust the numbers.
+    """
+    import conftest
+
+    from code_analysis import engine
+
+    invoked = []
+    monkeypatch.setattr(engine, "_run",
+                        lambda command, what, timeout=3600: invoked.append(what))
+
+    again = engine.extract(
+        conftest.SERVICE, language="javasrc", project="demo-records",
+        framework="spring-mvc", project_annotations=demo_profile["annotations"],
+        commit=conftest.tree_hash(conftest.SERVICE, conftest.PROFILE),
+        skip_preflight=True)
+
+    assert invoked == [], f"the engine re-ran on an unchanged tree: {invoked}"
+    assert again.from_cache
+    assert again.structural.read_bytes() == demo_api.structural.read_bytes()

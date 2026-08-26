@@ -38,10 +38,6 @@ PROFILE_VERSION = "metis.project-profile/1"
 SURFACES = ("api", "ui")
 
 HOME_ENV = "METIS_HOME"
-# Where a profile written by an earlier build would be. Looked for so it can be
-# REPORTED rather than silently ignored: being asked to run `metis init` while a
-# profile sits in the repository is the confusing case.
-LEGACY_IN_REPO = ".metis/project.json"
 
 
 def metis_home() -> Path:
@@ -254,17 +250,8 @@ def load_for(repo: str | Path, project: str = "") -> ProjectProfile:
     for one fact is two answers that can disagree, and the one being ignored is
     exactly the one somebody just edited.
     """
-    stray = Path(repo) / LEGACY_IN_REPO
     name = project or project_name_for(repo)
-    try:
-        profile = load_project(name)
-    except ProfileMissing as e:
-        if stray.exists():
-            raise ProfileMissing(
-                f"{e}\n  Note: {stray} exists and is NOT read — profiles moved "
-                f"to {profiles_dir()}. Move it there as {name}.json, or re-run "
-                f"`metis init`.") from e
-        raise
+    profile = load_project(name)
     if stray.exists():
         # F-10: what was found and not used is named.
         profile.notes.append(

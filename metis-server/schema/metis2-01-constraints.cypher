@@ -23,8 +23,12 @@ CREATE CONSTRAINT acceptance_criterion_id_unique IF NOT EXISTS FOR (n:Acceptance
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT acceptance_criterion_source_episode_id_required IF NOT EXISTS FOR (n:AcceptanceCriterion) REQUIRE n.source_episode_id IS NOT NULL;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT acceptance_criterion_name_required IF NOT EXISTS FOR (n:AcceptanceCriterion) REQUIRE n.name IS NOT NULL;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT acceptance_criterion_revision_required IF NOT EXISTS FOR (n:AcceptanceCriterion) REQUIRE n.revision IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT acceptance_criterion_search_text_required IF NOT EXISTS FOR (n:AcceptanceCriterion) REQUIRE n.search_text IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT acceptance_criterion_valid_from_required IF NOT EXISTS FOR (n:AcceptanceCriterion) REQUIRE n.valid_from IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT acceptance_criterion_valid_to_required IF NOT EXISTS FOR (n:AcceptanceCriterion) REQUIRE n.valid_to IS NOT NULL;
 CREATE INDEX acceptance_criterion_lifecycle_state_lookup IF NOT EXISTS FOR (n:AcceptanceCriterion) ON (n.lifecycle_state);
 CREATE INDEX acceptance_criterion_provenance_lookup IF NOT EXISTS FOR (n:AcceptanceCriterion) ON (n.provenance);
+CREATE INDEX acceptance_criterion_valid_to_lookup IF NOT EXISTS FOR (n:AcceptanceCriterion) ON (n.valid_to);
 CREATE INDEX acceptance_criterion_source_episode_id_lookup IF NOT EXISTS FOR (n:AcceptanceCriterion) ON (n.source_episode_id);
 //   AcceptanceCriterion.provenance ∈ {code_derived, human_confirmed, independently_authored} — enforced by ontology.validation, not by Neo4j
 //   AcceptanceCriterion.lifecycle_state ∈ {Quarantine, Approved, Disputed, Rejected, Deprecated} — enforced by ontology.validation, not by Neo4j
@@ -62,6 +66,7 @@ CREATE CONSTRAINT business_entity_id_unique IF NOT EXISTS FOR (n:BusinessEntity)
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT business_entity_source_episode_id_required IF NOT EXISTS FOR (n:BusinessEntity) REQUIRE n.source_episode_id IS NOT NULL;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT business_entity_name_required IF NOT EXISTS FOR (n:BusinessEntity) REQUIRE n.name IS NOT NULL;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT business_entity_description_required IF NOT EXISTS FOR (n:BusinessEntity) REQUIRE n.description IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT business_entity_search_text_required IF NOT EXISTS FOR (n:BusinessEntity) REQUIRE n.search_text IS NOT NULL;
 CREATE INDEX business_entity_name_lookup IF NOT EXISTS FOR (n:BusinessEntity) ON (n.name);
 CREATE INDEX business_entity_lifecycle_state_lookup IF NOT EXISTS FOR (n:BusinessEntity) ON (n.lifecycle_state);
 CREATE INDEX business_entity_source_episode_id_lookup IF NOT EXISTS FOR (n:BusinessEntity) ON (n.source_episode_id);
@@ -287,7 +292,11 @@ CREATE CONSTRAINT intent_id_unique IF NOT EXISTS FOR (n:Intent) REQUIRE n.id IS 
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT intent_source_episode_id_required IF NOT EXISTS FOR (n:Intent) REQUIRE n.source_episode_id IS NOT NULL;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT intent_name_required IF NOT EXISTS FOR (n:Intent) REQUIRE n.name IS NOT NULL;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT intent_statement_required IF NOT EXISTS FOR (n:Intent) REQUIRE n.statement IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT intent_search_text_required IF NOT EXISTS FOR (n:Intent) REQUIRE n.search_text IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT intent_valid_from_required IF NOT EXISTS FOR (n:Intent) REQUIRE n.valid_from IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT intent_valid_to_required IF NOT EXISTS FOR (n:Intent) REQUIRE n.valid_to IS NOT NULL;
 CREATE INDEX intent_lifecycle_state_lookup IF NOT EXISTS FOR (n:Intent) ON (n.lifecycle_state);
+CREATE INDEX intent_valid_to_lookup IF NOT EXISTS FOR (n:Intent) ON (n.valid_to);
 CREATE INDEX intent_source_episode_id_lookup IF NOT EXISTS FOR (n:Intent) ON (n.source_episode_id);
 //   Intent.lifecycle_state ∈ {Quarantine, Approved, Disputed, Rejected, Deprecated} — enforced by ontology.validation, not by Neo4j
 
@@ -309,6 +318,19 @@ CREATE CONSTRAINT jpa_query_id_unique IF NOT EXISTS FOR (n:JpaQuery) REQUIRE n.i
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT jpa_query_form_required IF NOT EXISTS FOR (n:JpaQuery) REQUIRE n.form IS NOT NULL;
 CREATE INDEX jpa_query_lifecycle_state_lookup IF NOT EXISTS FOR (n:JpaQuery) ON (n.lifecycle_state);
 CREATE INDEX jpa_query_source_episode_id_lookup IF NOT EXISTS FOR (n:JpaQuery) ON (n.source_episode_id);
+
+// Lesson — One authored academy lesson about Métis itself
+CREATE CONSTRAINT lesson_id_unique IF NOT EXISTS FOR (n:Lesson) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT lesson_source_episode_id_required IF NOT EXISTS FOR (n:Lesson) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT lesson_name_required IF NOT EXISTS FOR (n:Lesson) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT lesson_text_required IF NOT EXISTS FOR (n:Lesson) REQUIRE n.text IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT lesson_ordinal_required IF NOT EXISTS FOR (n:Lesson) REQUIRE n.ordinal IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT lesson_path_required IF NOT EXISTS FOR (n:Lesson) REQUIRE n.path IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT lesson_search_text_required IF NOT EXISTS FOR (n:Lesson) REQUIRE n.search_text IS NOT NULL;
+CREATE INDEX lesson_ordinal_lookup IF NOT EXISTS FOR (n:Lesson) ON (n.ordinal);
+CREATE INDEX lesson_lifecycle_state_lookup IF NOT EXISTS FOR (n:Lesson) ON (n.lifecycle_state);
+CREATE INDEX lesson_source_episode_id_lookup IF NOT EXISTS FOR (n:Lesson) ON (n.source_episode_id);
+//   Lesson.lifecycle_state ∈ {Quarantine, Approved, Disputed, Rejected, Deprecated} — enforced by ontology.validation, not by Neo4j
 
 // Menu — A navigation or command grouping
 CREATE CONSTRAINT menu_id_unique IF NOT EXISTS FOR (n:Menu) REQUIRE n.id IS UNIQUE;
@@ -428,8 +450,12 @@ CREATE CONSTRAINT requirement_id_unique IF NOT EXISTS FOR (n:Requirement) REQUIR
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT requirement_name_required IF NOT EXISTS FOR (n:Requirement) REQUIRE n.name IS NOT NULL;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT requirement_ears_pattern_required IF NOT EXISTS FOR (n:Requirement) REQUIRE n.ears_pattern IS NOT NULL;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT requirement_revision_required IF NOT EXISTS FOR (n:Requirement) REQUIRE n.revision IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT requirement_search_text_required IF NOT EXISTS FOR (n:Requirement) REQUIRE n.search_text IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT requirement_valid_from_required IF NOT EXISTS FOR (n:Requirement) REQUIRE n.valid_from IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT requirement_valid_to_required IF NOT EXISTS FOR (n:Requirement) REQUIRE n.valid_to IS NOT NULL;
 CREATE INDEX requirement_ears_pattern_lookup IF NOT EXISTS FOR (n:Requirement) ON (n.ears_pattern);
 CREATE INDEX requirement_lifecycle_state_lookup IF NOT EXISTS FOR (n:Requirement) ON (n.lifecycle_state);
+CREATE INDEX requirement_valid_to_lookup IF NOT EXISTS FOR (n:Requirement) ON (n.valid_to);
 CREATE INDEX requirement_source_episode_id_lookup IF NOT EXISTS FOR (n:Requirement) ON (n.source_episode_id);
 
 // RestServer — A Component serving an API surface
@@ -505,8 +531,12 @@ CREATE CONSTRAINT specification_id_unique IF NOT EXISTS FOR (n:Specification) RE
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT specification_name_required IF NOT EXISTS FOR (n:Specification) REQUIRE n.name IS NOT NULL;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT specification_statement_required IF NOT EXISTS FOR (n:Specification) REQUIRE n.statement IS NOT NULL;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT specification_provenance_required IF NOT EXISTS FOR (n:Specification) REQUIRE n.provenance IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT specification_search_text_required IF NOT EXISTS FOR (n:Specification) REQUIRE n.search_text IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT specification_valid_from_required IF NOT EXISTS FOR (n:Specification) REQUIRE n.valid_from IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT specification_valid_to_required IF NOT EXISTS FOR (n:Specification) REQUIRE n.valid_to IS NOT NULL;
 CREATE INDEX specification_provenance_lookup IF NOT EXISTS FOR (n:Specification) ON (n.provenance);
 CREATE INDEX specification_lifecycle_state_lookup IF NOT EXISTS FOR (n:Specification) ON (n.lifecycle_state);
+CREATE INDEX specification_valid_to_lookup IF NOT EXISTS FOR (n:Specification) ON (n.valid_to);
 CREATE INDEX specification_source_episode_id_lookup IF NOT EXISTS FOR (n:Specification) ON (n.source_episode_id);
 //   Specification.provenance ∈ {code_derived, human_confirmed, independently_authored} — enforced by ontology.validation, not by Neo4j
 //   Specification.lifecycle_state ∈ {Quarantine, Approved, Disputed, Rejected, Deprecated} — enforced by ontology.validation, not by Neo4j
@@ -635,3 +665,64 @@ CREATE INDEX zephyr_item_zephyr_key_lookup IF NOT EXISTS FOR (n:ZephyrItem) ON (
 CREATE INDEX zephyr_item_item_type_lookup IF NOT EXISTS FOR (n:ZephyrItem) ON (n.item_type);
 CREATE INDEX zephyr_item_lifecycle_state_lookup IF NOT EXISTS FOR (n:ZephyrItem) ON (n.lifecycle_state);
 CREATE INDEX zephyr_item_source_episode_id_lookup IF NOT EXISTS FOR (n:ZephyrItem) ON (n.source_episode_id);
+
+// Free-text search (Lucene, Community edition). Replaces substring
+// matching: `CONTAINS` cannot rank, cannot tokenise, and cannot tell a
+// title match from a body match.
+CREATE FULLTEXT INDEX metis_search IF NOT EXISTS
+FOR (n:AcceptanceCriterion|BusinessEntity|Intent|Lesson|Requirement|Specification)
+ON EACH [n.description, n.name, n.search_text, n.statement, n.text]
+// The `english` analyzer, not the default `standard` one. Measured: with
+// the default, searching `lock` returned NOTHING for a criterion whose
+// text says "the account is locked" — standard tokenises and lowercases
+// but does not stem, so it beats CONTAINS on ranking and loses to it on
+// the word-form matching that is half the reason to want full text.
+OPTIONS {indexConfig: {`fulltext.analyzer`: 'english'}};
+
+// Semantic search. Inert until `embedding` is populated — an unembedded
+// node is absent from its index rather than wrong in it.
+//
+// One index PER LABEL: Neo4j accepts the multi-label form for a full-text
+// index and rejects it for a vector index.
+CREATE VECTOR INDEX metis_vector_acceptance_criterion IF NOT EXISTS
+FOR (n:AcceptanceCriterion)
+ON (n.embedding)
+OPTIONS {indexConfig: {
+  `vector.dimensions`: 1536,
+  `vector.similarity_function`: 'cosine'
+}};
+CREATE VECTOR INDEX metis_vector_business_entity IF NOT EXISTS
+FOR (n:BusinessEntity)
+ON (n.embedding)
+OPTIONS {indexConfig: {
+  `vector.dimensions`: 1536,
+  `vector.similarity_function`: 'cosine'
+}};
+CREATE VECTOR INDEX metis_vector_intent IF NOT EXISTS
+FOR (n:Intent)
+ON (n.embedding)
+OPTIONS {indexConfig: {
+  `vector.dimensions`: 1536,
+  `vector.similarity_function`: 'cosine'
+}};
+CREATE VECTOR INDEX metis_vector_lesson IF NOT EXISTS
+FOR (n:Lesson)
+ON (n.embedding)
+OPTIONS {indexConfig: {
+  `vector.dimensions`: 1536,
+  `vector.similarity_function`: 'cosine'
+}};
+CREATE VECTOR INDEX metis_vector_requirement IF NOT EXISTS
+FOR (n:Requirement)
+ON (n.embedding)
+OPTIONS {indexConfig: {
+  `vector.dimensions`: 1536,
+  `vector.similarity_function`: 'cosine'
+}};
+CREATE VECTOR INDEX metis_vector_specification IF NOT EXISTS
+FOR (n:Specification)
+ON (n.embedding)
+OPTIONS {indexConfig: {
+  `vector.dimensions`: 1536,
+  `vector.similarity_function`: 'cosine'
+}};

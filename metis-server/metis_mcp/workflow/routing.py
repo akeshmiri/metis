@@ -166,3 +166,49 @@ def render_router() -> str:
         "enforces.",
     ]
     return "\n".join(lines) + "\n"
+
+
+def write_router(target=None) -> list:
+    """Write the router surface, preserving its frontmatter.
+
+    **The gap this closes.** `render_router` produced the body and nothing wrote
+    it, so `test_the_checked_in_router_matches_the_workflow_registry` told a
+    reader to "regenerate it rather than editing it by hand" while offering no
+    way to regenerate it — leaving hand-editing as the only option the failure
+    message forbade. `agent_generator.write` skips this file deliberately
+    (it comes from the workflow registry, not from a skill), which is correct
+    and is why the writer belongs here instead.
+
+    The frontmatter is kept rather than regenerated: `name` and `description`
+    are what a client dispatches on, they are authored, and no part of them is
+    derived from the registry.
+    """
+    from pathlib import Path
+
+    from metis_mcp.agent_generator import AGENT_TARGETS
+
+    body = render_router().strip() + "\n"
+    targets = ([Path(target)] if target
+               else [directory / "metis.agent.md" for directory in AGENT_TARGETS])
+
+    # A target directory that carries no router is not an error: agents are
+    # published to more than one place and only the plugin surface ships the
+    # router. Writing to ALL of them and finding NONE is the error.
+    present = [path for path in targets if path.exists()]
+    if not present:
+        raise FileNotFoundError(
+            f"no router found at any of {[str(t) for t in targets]}. This "
+            f"rewrites the generated body of an existing router and does not "
+            f"invent its frontmatter.")
+
+    written = []
+    for path in present:
+        existing = path.read_text()
+        head, marker, _ = existing.partition(HEADER)
+        if not marker:
+            raise ValueError(
+                f"{path} carries no generated marker, so there is no boundary "
+                f"between its authored frontmatter and its generated body")
+        path.write_text(head + HEADER + "\n\n" + body)
+        written.append(path)
+    return written

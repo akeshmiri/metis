@@ -1,5 +1,5 @@
 """
-An issue tracker as an intake — Jira and Zephyr Scale (spec §5.2b, X-7a).
+A tracker or wiki as an intake — Jira, Zephyr Scale, Confluence (spec §5.2b, X-7a).
 
 **The half that was missing.** `intake_landing.ANCHORS` has mapped `jira ->
 JiraItem` and `scale -> ZephyrItem` since the evidence layer landed, and
@@ -46,6 +46,7 @@ UIF_VERSION = "1.0"
 # would silently detach every item from its `ZephyrItem` anchor.
 JIRA = "jira"
 ZEPHYR = "scale"
+CONFLUENCE = "confluence"
 
 
 class TrackerRefused(Exception):
@@ -58,7 +59,25 @@ class TrackerRefused(Exception):
 ENDPOINTS: dict[str, str] = {
     JIRA: "{base}/rest/api/3/issue/{key}",
     ZEPHYR: "{base}/v2/testcases/{key}",
+    # `expand` is part of the allowlisted path rather than a caller-supplied
+    # option: the body is the whole reason to read a page, and a request that
+    # omitted it would return a page with no content and look like an empty one.
+    CONFLUENCE: "{base}/rest/api/content/{key}?expand=body.storage,metadata.labels",
 }
+
+# Where a human goes to read the item. Built from the base URL that was actually
+# read, never from a template with a host in it -- the skill extractor this
+# replaces hardcoded `https://confluence.example.com/...`, so every page it
+# produced carried provenance pointing at a domain nobody owns.
+BROWSE: dict[str, str] = {
+    JIRA: "{base}/browse/{key}",
+    CONFLUENCE: "{base}/pages/viewpage.action?pageId={key}",
+}
+
+# Systems whose description arrives as markup. Confluence stores XHTML, and
+# landing that verbatim would put tag soup where the requirement text goes --
+# `ears_pattern` would never match it and every page would land as a Finding.
+MARKUP: frozenset = frozenset({CONFLUENCE})
 
 # What each tracker calls the fields this reads. Declared rather than inlined so
 # the mapping is inspectable, and so a deployment whose Jira renames a field can
@@ -69,6 +88,12 @@ FIELDS: dict[str, dict[str, str]] = {
     ZEPHYR: {"title": "name", "description": "objective",
              "item_type": "$static:TestCase", "status": "status",
              "labels": "labels"},
+    # Dotted paths, because Confluence nests the body three deep. `status` is
+    # the real `current`/`draft` the API returns rather than a static -- a page
+    # still in draft is exactly the thing a reviewer needs to see flagged.
+    CONFLUENCE: {"title": "title", "description": "body.storage.value",
+                 "item_type": "$static:Page", "status": "status",
+                 "labels": "metadata.labels.results"},
 }
 
 
@@ -164,6 +189,95 @@ def _named(value) -> str:
     return str(value or "")
 
 
+def _dig(payload, path: str):
+    """One dotted path into a nested response — `body.storage.value`.
+
+    Returns None the moment the path leaves a dict, rather than raising. A
+    Confluence read whose `expand` was dropped by a proxy has no `body`, and the
+    honest result there is an empty description that `conformance` will flag,
+    not a traceback three layers from the cause.
+    """
+    current = payload
+    for segment in path.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(segment)
+    return current
+
+
+# Tags whose end marks a line break in the rendered text. Matched on the local
+# name so Confluence's namespaced elements (`ac:layout-cell`) are treated like
+# their plain counterparts.
+_BLOCK: frozenset = frozenset({
+    "p", "div", "br", "li", "tr", "td", "th", "pre", "blockquote",
+    "h1", "h2", "h3", "h4", "h5", "h6",
+})
+
+# Macro *configuration*, not prose. `<ac:parameter ac:name="title">Note</...>`
+# holds the macro's settings, and letting it through drops the word "Note" into
+# the middle of a requirement as though somebody had written it there.
+_DROP: frozenset = frozenset({"ac:parameter", "ri:page", "ri:attachment"})
+
+
+def storage_text(markup: str) -> str:
+    """Confluence storage format (XHTML) as plain text.
+
+    **Nothing is reconstructed**, the same rule `_text` applies to Jira's ADF:
+    no bullet markers, no heading levels, no tables redrawn. Block elements
+    become line breaks and everything else becomes its text, because a rendering
+    that resembled the page without being it is worse than the plain text — a
+    reviewer would compare it to Confluence and trust the difference away.
+
+    Parsed rather than regexed. A `<[^>]+>` strip — which is what the extractor
+    this replaces used — corrupts any body containing a `>` inside an attribute,
+    and Confluence macros contain them routinely.
+    """
+    from html.parser import HTMLParser
+
+    class _Reader(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.parts: list[str] = []
+            self.skipping = 0
+
+        def handle_starttag(self, tag, attrs):
+            if tag in _DROP:
+                self.skipping += 1
+            elif tag.split(":")[-1] in _BLOCK:
+                self.parts.append("\n")
+
+        # Confluence writes `<br/>` and `<ac:image/>`; without this a self-closed
+        # `<br/>` produces no break at all, running two lines together.
+        def handle_startendtag(self, tag, attrs):
+            if tag.split(":")[-1] in _BLOCK:
+                self.parts.append("\n")
+
+        def handle_endtag(self, tag):
+            if tag in _DROP:
+                self.skipping = max(0, self.skipping - 1)
+            elif tag.split(":")[-1] in _BLOCK:
+                self.parts.append("\n")
+
+        def handle_data(self, data):
+            if not self.skipping:
+                self.parts.append(data)
+
+        # `<ac:plain-text-body><![CDATA[...]]></ac:plain-text-body>` is how a
+        # code block is stored. HTMLParser reports it as an unknown declaration,
+        # and ignoring it silently deletes the body of every code macro.
+        def unknown_decl(self, data):
+            if not self.skipping and data.startswith("CDATA["):
+                self.parts.append(data[len("CDATA["):])
+
+    reader = _Reader()
+    reader.feed(markup or "")
+    reader.close()
+
+    lines = [" ".join(line.split())
+             for line in "".join(reader.parts).splitlines()]
+    return "\n".join(line for line in lines if line).strip()
+
+
 def item_from_payload(system: str, key: str, payload: dict,
                       base_url: str = "") -> TrackerItem:
     """One tracker response object, normalised. Pure."""
@@ -180,19 +294,35 @@ def item_from_payload(system: str, key: str, payload: dict,
         name = names[which]
         if name.startswith("$static:"):
             return name.split(":", 1)[1]
-        return body.get(name)
+        return _dig(body, name)
 
+    description = _text(pick("description"))
+    if system in MARKUP:
+        description = storage_text(description)
+
+    # Through `_named` per element rather than `str()`: Jira's labels are plain
+    # strings and Confluence's are `{"name": ...}` objects, and stringifying one
+    # of those lands the repr of a dict as a label.
     labels = pick("labels") or ()
+    if not isinstance(labels, (list, tuple)):
+        labels = ()
+
+    # Resolved ONCE and used for both the identity and the URL. Confluence
+    # payloads carry `id` where Jira carries `key`, and using the raw parameter
+    # for the URL produced `...?pageId=` with nothing after it — a link that
+    # resolves to a search page, on every page fetched from a fixture.
+    resolved = str(payload.get("key") or payload.get("id") or key)
+    template = BROWSE.get(system, "")
     return TrackerItem(
         system=system,
-        key=str(payload.get("key") or key),
+        key=resolved,
         title=_text(pick("title")),
-        description=_text(pick("description")),
+        description=description,
         item_type=_named(pick("item_type")),
         status=_named(pick("status")),
-        labels=tuple(str(x) for x in labels if x),
-        source_url=(f"{base_url.rstrip('/')}/browse/{key}"
-                    if base_url and system == JIRA else ""),
+        labels=tuple(n for n in (_named(x) for x in labels) if n),
+        source_url=(template.format(base=base_url.rstrip("/"), key=resolved)
+                    if base_url and template else ""),
     )
 
 

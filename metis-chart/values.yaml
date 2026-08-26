@@ -8,30 +8,34 @@ default:
       value: "WARN"
     - name: METIS_LOG_LEVEL
       value: "WARN"
-    # Athena connectivity -- Métis reads FROM an existing Athena Postgres, per
-    # the athena_internal_read protocol (§3.3, §6 of the master spec). This is
+    # Source-database connectivity -- Métis reads a catalogue FROM an existing
+    # Postgres it does not own. Catalogue only: schemas, tables, columns,
+    # types, nullability and keys, never row data (X-7a). This is
     # NOT a new database deployment -- these are connection details to an
     # already-running instance.
     #
     # Defaults target a local Postgres so a fresh checkout works out of the box.
-    # For an in-cluster deployment, override ATHENA_DB_HOSTNAME with the real
+    # For an in-cluster deployment, override METIS_SOURCE_DB_HOSTNAME with the real
     # service DNS name -- `localhost` resolves to the pod itself, not a database.
-    # ATHENA_DB_USERNAME should be a read-only role scoped to the schema-catalog
+    # METIS_SOURCE_DB_USERNAME should be a read-only role scoped to the schema-catalog
     # objects Métis reads (CONST-052-adjacent least-privilege); do not reuse a
     # write-capable service account.
-    - name: ATHENA_DB_HOSTNAME
+    - name: METIS_SOURCE_DB_HOSTNAME
       value: "localhost"
-    - name: ATHENA_DB_PORT
+    - name: METIS_SOURCE_DB_PORT
       value: "5432"
-    - name: ATHENA_DB_DATABASE
-      value: "athena"
-    - name: ATHENA_DB_USERNAME
-      value: "athena"
+    - name: METIS_SOURCE_DB_DATABASE
+      value: "CHANGE_ME"
+    - name: METIS_SOURCE_DB_USERNAME
+      value: "CHANGE_ME"
     # LLM vendor call routing config (ZDR status, model names, classifications)
     # lives ENTIRELY in the mounted metis-config Secret below, not as
     # individual env vars here -- this is the "no configuration in code"
     # directive applied to the chart itself, not just the Python package.
-    # See metis_mcp/config_manager.py for the resolution logic that reads it.
+    # See metis_mcp/mbt/graph_session.py::config_paths for the resolution logic
+    # that reads it (METIS_CONFIG_PATH, when set, is the only candidate).
+    # Note that the ZDR status and repository classifications in that Secret are
+    # a policy record: nothing in this build reads them as a gate.
 
   envOverrides: []
 
@@ -59,10 +63,10 @@ default:
 # resolves to nil safely instead of erroring on a nil pointer, letting each
 # key's own `| default "REPLACE-AT-INSTALL-TIME"` actually take effect. Real
 # bug found the first time `helm lint` was ever run against this chart: with
-# no `secrets:` key at all, `.Values.secrets.athenaDbPassword` failed before
+# no `secrets:` key at all, `.Values.secrets.sourceDbPassword` failed before
 # the `default` pipeline stage ran, regardless of what it would default to.
 secrets: {}
-  # athenaDbPassword: ""
+  # sourceDbPassword: ""
   # neo4jPassword: ""
   # anthropicApiKey: ""
   # oauthClientSecret: ""
@@ -111,7 +115,7 @@ neo4j:
 
 # ---- Métis's own components ----
 # Grafana and the Postgres episode-log-that-no-longer-exists are deliberately
-# NOT components here -- guardrail/DQ metrics are new panels on Athena's
+# NOT components here -- guardrail/DQ metrics are new panels on an existing
 # existing Grafana (§12.4), and the episode log lives in the Neo4j database
 # above (single-database decision) -- both reuse infrastructure that already
 # exists rather than duplicating it.
@@ -136,8 +140,9 @@ components:
         value: "true"   # CONST-064 -- team/RBAC re-checked every request, not cached from issuance
       # Real bug found deploying this to a real cluster: this component had
       # no METIS_CONFIG_PATH/mountedSecrets at all, so it had no way to ever
-      # find config.json -- config_manager.py's ConfigNotFoundError halted
-      # the container on startup, every time, regardless of image content.
+      # find config.json and halted on startup, every time, regardless of image
+      # content. (The v1 config_manager.py that raised there is gone; the
+      # deployment contract it enforced is not.)
       - name: METIS_CONFIG_PATH
         value: "/etc/metis/config/config.json"
     resources:

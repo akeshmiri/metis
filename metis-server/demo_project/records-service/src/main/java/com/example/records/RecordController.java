@@ -8,6 +8,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -69,7 +70,8 @@ public class RecordController {
      * to this endpoint rather than landing connected to nothing.
      */
     @GetMapping("/{id}/label")
-    public String label(@PathVariable String id) {
+    public String label(@PathVariable String id,
+                        @CookieValue(name = "session", required = false) String session) {
         return RecordResponses.labelFor(service.get(id));
     }
 

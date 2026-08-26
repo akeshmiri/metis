@@ -21,6 +21,7 @@ import json
 import sys
 from pathlib import Path as FsPath
 
+from metis_mcp.guide import GuideRefused
 from metis_mcp.mbt.coverage import ComponentRef, build_ledger, format_report
 from metis_mcp.mbt.criteria import DEFAULT_CRITERION, criterion_names
 from metis_mcp.mbt.model import QUARANTINE, Model, State, Transition
@@ -1856,6 +1857,136 @@ def cmd_structure_check(args) -> int:
     return 1 if problems else 0
 
 
+def cmd_backfill_validity(args) -> int:
+    """Give pre-validity nodes a window (see landing.backfill_validity).
+
+    Run this BEFORE upgrading to a build whose reads require validity, or every
+    node written before validity existed drops out of every read — silently,
+    because the query still succeeds.
+    """
+    from metis_mcp.mbt.graph_session import session
+    from metis_mcp.model_sources.landing import backfill_validity
+
+    try:
+        with session() as s:
+            result = backfill_validity(s, valid_from=args.valid_from)
+    except ValueError as e:
+        print(f"REFUSED: {e}")
+        return 1
+
+    print(f"backfilled {result['written']} node(s) across "
+          f"{', '.join(result['labels'])}")
+    print(f"  valid_from = {args.valid_from}   valid_to = '' (still true)")
+    if result["still_missing"]:
+        print(f"  {result['still_missing']} node(s) still have no valid_from")
+        return 1
+    print("  every validity-carrying node now has a window")
+    return 0
+
+
+def cmd_retrieval_bench(args) -> int:
+    """Measure retrieval against questions whose answers were written first.
+
+    **Point it at a real corpus.** The academy question set ships as a worked
+    example, and the value is entirely in somebody who knows the material
+    deciding the right answers in advance — a set written after seeing what
+    search returns measures nothing.
+
+    Exits non-zero below `--min-top1`, so it can gate a change to the analyzer,
+    the index, or an embedding provider rather than being read and forgotten.
+    """
+    from metis_mcp.mbt.graph_loader import hybrid_search, search_knowledge
+    from metis_mcp.mbt.graph_session import session
+    from metis_mcp.retrieval import RetrievalRefused, load_questions, score
+
+    try:
+        questions = load_questions(args.questions)
+    except (OSError, RetrievalRefused) as e:
+        print(f"REFUSED: {args.questions}: {e}")
+        return 1
+
+    rankings: dict[str, list[str]] = {}
+    with session() as s:
+        for question in questions:
+            if args.hybrid:
+                # No provider is bundled, so this is keyword-only unless a
+                # deployment supplies one — reported rather than implied.
+                hits = hybrid_search(s, question, provider=None, limit=args.limit)
+                rankings[question] = [h.id for h in hits]
+            else:
+                rows = search_knowledge(s, question, limit=args.limit)
+                rankings[question] = [r["id"] for r in rows]
+
+    report = score(rankings, questions)
+    print(f"Retrieval over {len(questions)} question(s) "
+          f"({'hybrid' if args.hybrid else 'keyword'}):\n")
+    print(report.describe())
+
+    # Opt-in, because a measurement and a record of a measurement are different
+    # acts: a bench run in a loop while somebody tunes an analyzer should not
+    # leave a trail of findings behind it.
+    if getattr(args, "land", False) and report.misses:
+        from metis_mcp.mbt.finding_writer import (
+            findings_from_retrieval, load, plan_findings)
+
+        records = findings_from_retrieval(report, about_label=args.about_label)
+        with session() as s:
+            outcome = load(s, plan_findings(records))
+        print(f"\nlanded {len(records)} finding(s) at advisory severity: "
+              f"{outcome}")
+    elif getattr(args, "land", False):
+        print("\nnothing to land: no misses.")
+
+    if report.top1 < args.min_top1:
+        print(f"\nBELOW THRESHOLD: {report.top1} top-1, wanted at least "
+              f"{args.min_top1}")
+        return 1
+    return 0
+
+
+def cmd_lessons(args) -> int:
+    """The academy -> the graph (D-1's writer for `Lesson`).
+
+    `--check` reads and reports without a database, because the common failure is
+    a malformed directory rather than a landing problem, and finding that out
+    should not need Neo4j.
+    """
+    from metis_mcp.model_sources.landing import land
+    from metis_mcp.model_sources.lessons import (
+        LessonsRefused, plan_lessons, read_lessons,
+    )
+
+    try:
+        lessons = read_lessons(args.directory)
+    except (OSError, LessonsRefused) as e:
+        print(f"REFUSED: {args.directory}: {e}")
+        return 1
+
+    print(f"{len(lessons)} lesson(s) in {args.directory}:")
+    for lesson in lessons:
+        print(f"  {lesson['ordinal']:02d}  {lesson['title']}")
+
+    if args.check:
+        return 0
+
+    plan = plan_lessons(args.directory, job_id=args.job_id)
+    if not plan.is_legal:
+        print(f"REFUSED: {len(plan.errors)} error(s); nothing was written")
+        for error in plan.errors[:5]:
+            print(f"    {error}")
+        return 1
+
+    from metis_mcp.mbt.graph_session import session
+
+    with session() as s:
+        result = land(s, plan)
+    print(f"\nlanded: {result.nodes_written} node(s) at Quarantine (S-4), "
+          f"episode {plan.episode_id}")
+    if result.unmatched:
+        print(f"  {len(result.unmatched)} edge(s) matched nothing")
+    return 0
+
+
 def cmd_glossary_check(args) -> int:
     """Is every business noun defined, with its impact stated? Free: no graph."""
     from metis_mcp.model_sources.glossary import format_problems, load, validate
@@ -2182,6 +2313,18 @@ def cmd_page_object(args) -> int:
     return 0
 
 
+def tracker_systems() -> set:
+    """What the reader can actually fetch.
+
+    Read from `tracker.ENDPOINTS` rather than restated, so adding a source is
+    one edit: a hand-kept `choices` list is how `confluence` came to have an
+    anchor in `ANCHORS`, an extractor in a skill, and no way to run it.
+    """
+    from code_analysis import tracker
+
+    return set(tracker.ENDPOINTS)
+
+
 def _tracker_get(token_env: str, system: str):
     """A GET callable for the tracker reader, from the stdlib.
 
@@ -2267,7 +2410,7 @@ def cmd_intake_fetch(args) -> int:
 
     print(f"\n{len(written)} UIF document(s). Land them with:")
     for path in written:
-        print(f"  python3 -m metis_mcp.mbt.cli intake land {path}")
+        print(f"  metis intake land {path}")
     return 0
 
 
@@ -2811,15 +2954,15 @@ def main(argv: list[str] | None = None) -> int:
         "intake", help="land a UIF document (§3.2 stage 2)")
     intake_sub = intake_parser.add_subparsers(dest="intake_command", required=True)
     ifetch = intake_sub.add_parser(
-        "fetch", help="Jira / Zephyr Scale item -> UIF document")
+        "fetch", help="Jira / Zephyr Scale / Confluence item -> UIF document")
     ifetch.add_argument("--system", default="jira",
-                        choices=["jira", "scale"],
+                        choices=sorted(tracker_systems()),
                         help="scale is Zephyr Scale — the value `ANCHORS` "
                              "already keys ZephyrItem on")
     ifetch.add_argument("--key", action="append", default=[],
-                        help="an item key; repeatable")
+                        help="an item key, or a Confluence page id; repeatable")
     ifetch.add_argument("--base-url", dest="base_url", default="",
-                        help="the tracker's base URL")
+                        help="the tracker's or wiki's base URL")
     ifetch.add_argument("--token-env", dest="token_env", default="METIS_TRACKER_TOKEN",
                         help="NAME of the variable holding the token, never "
                              "the token itself (PLT-005)")
@@ -3215,6 +3358,39 @@ def main(argv: list[str] | None = None) -> int:
         add_graph_args(p)
         p.set_defaults(handler=wf_handler)
 
+    backfill_p = sub.add_parser(
+        "backfill-validity",
+        help="give pre-validity nodes a window, before reads start requiring one")
+    backfill_p.add_argument(
+        "--valid-from", dest="valid_from", required=True,
+        help="the instant these facts were believed from — a release date or "
+             "the commit they were extracted at, NOT now")
+    backfill_p.set_defaults(handler=cmd_backfill_validity)
+
+    bench_p = sub.add_parser(
+        "retrieval-bench",
+        help="measure search against questions whose answers are known")
+    bench_p.add_argument("--questions", default="../docs/academy/retrieval-questions.tsv")
+    bench_p.add_argument("--limit", type=int, default=20)
+    bench_p.add_argument("--hybrid", action="store_true",
+                         help="fuse keyword with semantic (needs a provider)")
+    bench_p.add_argument("--min-top1", dest="min_top1", type=int, default=0,
+                         help="exit non-zero below this, to gate a change")
+    bench_p.add_argument("--land", action="store_true",
+                         help="record each miss as an advisory Finding ABOUT the "
+                              "node that should have won (default: report only)")
+    bench_p.add_argument("--about-label", dest="about_label", default="Lesson",
+                         help="the label the expected ids belong to")
+    bench_p.set_defaults(handler=cmd_retrieval_bench)
+
+    lessons_p = sub.add_parser(
+        "lessons", help="land the authored academy (docs/academy/) as Lesson nodes")
+    lessons_p.add_argument("--directory", default="../docs/academy")
+    lessons_p.add_argument("--job-id", dest="job_id", default="manual")
+    lessons_p.add_argument("--check", action="store_true",
+                           help="read and report without a graph")
+    lessons_p.set_defaults(handler=cmd_lessons)
+
     status_wf = workflow_sub.add_parser("status", help="where a run got to")
     status_wf.add_argument("run_id")
     status_wf.set_defaults(handler=cmd_workflow_status)
@@ -3232,6 +3408,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     except GraphNotConfigured as e:
         print(f"NOT CONFIGURED: {e}")
+        return 3
+    except GuideRefused as e:
+        # Distinct from NOT CONFIGURED: nothing is misconfigured, the command
+        # simply needs a source checkout it does not have. A traceback here read
+        # as a broken install.
+        print(f"NOT AVAILABLE: {e}")
         return 3
 
 

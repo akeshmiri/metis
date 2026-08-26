@@ -48,7 +48,7 @@ app.kubernetes.io/name: {{ .name }}
 
 {{/*
 Merge default env vars with component-level overrides -- same override-by-name
-semantics as Athena's real chart (a component's own `env` entry with a matching
+semantics as a conventional orchestration chart (a component's own `env` entry with a matching
 `name` wins over the platform-wide default, rather than duplicating it).
 */}}
 {{- define "metis.envOverriden" -}}

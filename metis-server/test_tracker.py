@@ -219,3 +219,91 @@ def test_neither_conforming_keeps_the_original_precedence():
 
     document = {"metadata": {"title": "t", "description": "d"}}
     assert _requirement_text(document) == "d"
+
+
+# --------------------------------------------------------------------------
+# Confluence — the one source ported into this reader rather than superseded
+# --------------------------------------------------------------------------
+
+CONFLUENCE_PAGE = {
+    "id": "88021", "title": "Record locking", "status": "current",
+    "body": {"storage": {"value":
+        "<p>When a record is locked the service <strong>shall</strong> return "
+        "409.</p><ac:structured-macro ac:name='code'>"
+        "<ac:parameter ac:name='language'>json</ac:parameter>"
+        "<ac:plain-text-body><![CDATA[{\"status\": 409}]]></ac:plain-text-body>"
+        "</ac:structured-macro>"}},
+    "metadata": {"labels": {"results": [{"name": "records"}, {"name": "api"}]}},
+}
+BASE = "https://wiki.example.org"
+
+
+@pytest.fixture
+def page():
+    return T.item_from_payload("confluence", "88021", CONFLUENCE_PAGE, BASE)
+
+
+def test_a_confluence_page_is_normalised(page):
+    assert page.key == "88021"
+    assert page.title == "Record locking"
+    assert page.item_type == "Page"
+    # The real `current`/`draft`, not a static: a page still in draft is exactly
+    # what a reviewer needs flagged.
+    assert page.status == "current"
+
+
+def test_labels_come_from_nested_objects_not_their_repr(page):
+    """Jira's labels are plain strings and Confluence's are `{"name": ...}`.
+    Stringifying one of those lands the repr of a dict as a label."""
+    assert page.labels == ("records", "api")
+
+
+def test_storage_markup_is_flattened_to_text_and_nothing_is_reconstructed(page):
+    assert "<p>" not in page.description and "<strong>" not in page.description
+    assert "When a record is locked the service shall return 409." in page.description
+    # A code macro's CDATA body is content and is kept.
+    assert '{"status": 409}' in page.description
+    # Its `language` parameter is configuration, and letting it through drops
+    # the word `json` into the middle of a requirement.
+    assert "json" not in page.description
+
+
+def test_the_page_url_carries_the_page_id(page):
+    """**The bug this pins.** Confluence payloads carry `id` where Jira carries
+    `key`. The resolved key was used for identity and the raw parameter for the
+    URL, so every page fetched from a fixture got `...?pageId=` with nothing
+    after it — a link that silently resolves to a search page."""
+    assert page.source_url == f"{BASE}/pages/viewpage.action?pageId=88021"
+    assert page.source_url.endswith("88021")
+
+
+def test_a_page_that_claims_acceptance_criteria_does_not_emit_any():
+    """The extractor this replaces parsed an `Acceptance Criteria` heading into
+    `specifications.acceptance_criteria` — manufacturing precisely the
+    self-asserted criterion S-13 refuses to trust."""
+    payload = dict(CONFLUENCE_PAGE)
+    payload["body"] = {"storage": {"value":
+        "<p>The service shall lock a record.</p>"
+        "<h2>Acceptance Criteria</h2><ul><li>409 is returned</li></ul>"}}
+    uif = T.to_uif(T.item_from_payload("confluence", "88021", payload, BASE))
+    assert "acceptance_criteria" not in json.dumps(uif)
+    # Nor an invented priority, which the extractor hardcoded to "high".
+    assert "priority" not in json.dumps(uif)
+
+
+def test_a_confluence_read_is_get_only_and_cannot_traverse(page):
+    good = T.ENDPOINTS["confluence"].format(base=BASE, key="88021")
+    T.assert_read_only([good])
+    for bad in (f"{BASE}/rest/api/content/88021/child/page",
+                f"{BASE}/rest/api/content/88021?expand=body.storage&status=draft"):
+        with pytest.raises(T.TrackerRefused):
+            T.assert_read_only([bad])
+
+
+def test_a_page_with_no_body_is_empty_rather_than_a_traceback():
+    """A read whose `expand` was dropped by a proxy has no `body`. The honest
+    result is an empty description that `conformance` flags, not a traceback
+    three layers from the cause."""
+    item = T.item_from_payload("confluence", "1", {"id": "1", "title": "T"}, BASE)
+    assert item.description == ""
+    assert item.title == "T"

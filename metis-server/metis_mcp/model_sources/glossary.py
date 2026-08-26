@@ -33,6 +33,7 @@ from dataclasses import asdict, dataclass, field
 
 from metis_mcp.identity.keys import business_entity_key
 from pathlib import Path
+from metis_mcp.retrieval import search_text_for
 
 FILE_VERSION = "metis.glossary/1"
 
@@ -301,6 +302,7 @@ def plan_glossary(glossary: Glossary, episode_id: str = "",
         ok = add_node("BusinessEntity", {
             "id": entity.id, "source_episode_id": episode_id,
             "name": entity.name, "description": entity.description,
+            "search_text": search_text_for(entity.name, entity.description),
             # JSON text, not nodes — D-13. The reader renders them all; nothing
             # queries one. Promote if that changes.
             "properties_json": json.dumps([asdict(p) for p in entity.properties],

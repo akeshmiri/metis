@@ -58,6 +58,38 @@ is the reserved-for-examples namespace and the domain is deliberately dull.
 | `InternalAudit` | reached by no parameter, no response body and no nested field — it must be classified `internal` and **not landed** (X-6d). Delete it and the compaction test stops testing anything |
 | `src/test/java/` | real JUnit and Feign `@RequestLine`; one test asserts inline, one through a private helper, one asserts nothing, and one uses a bare literal path that must stay unresolved |
 
+#### Spring shapes ported from CodeQL's models
+
+Ported from `github/codeql`'s Spring models (MIT, © GitHub, Inc.) — the shape
+list is theirs, the Scala that will satisfy it is ours. Nothing from CodeQL is
+installed, invoked or shipped: QL is inert without its proprietary engine, which
+is exactly what makes the libraries usable as a specification and useless as a
+dependency.
+
+All six are **fixed**; every row's condition is a live assertion in
+`../test_extraction.py`. They were authored first as `xfail(strict=True)` and
+the markers came off one at a time as each fix landed — strict, so a fix could
+not quietly arrive without someone deleting the marker that said it had not.
+
+The fixes are `composedWith` / `verbOf` (annotation composition), `overridden` /
+`mappingAnnotations` (inherited mappings), `isController` /
+`returnsResponseBody` (class stereotype) and `chainSecurityFor` (the
+`HttpSecurity` filter chain), in **both** `jvm-structural` and
+`jvm-behaviour`. Both, because `synthesis` joins an outcome to its endpoint on
+the handler method's fullName: fixing one pack alone left three outcomes
+attached to methods the other no longer called handlers, and their transitions
+carried a bare `GET` with no route. `test_no_transition_has_a_bare_verb_for_a_trigger`
+and `test_every_outcome_joins_an_endpoint` exist because that happened.
+
+| File | Condition |
+|---|---|
+| ✅ `annotation/GetJson` + `JsonController` | a mapping stereotype meta-annotated `@RequestMapping` — the way Spring builds `@GetMapping` itself. `verbs.get(a.name)` is a literal lookup, so `GET /json/{id}` is **recovered as nothing**: silent under-extraction |
+| ✅ `annotation/InternalFeign` + `InternalStoreClient` | the same indirection aimed at the *exclusion*. `isOutboundClient` matches the literal `FeignClient`, so an outbound call is **invented as a surface** — the defect `ArchiveClient` exists to prevent, one meta-annotation away |
+| ✅ `RecordsApi` + `RecordsApiController` | the mapping is declared on the interface. The route IS recovered; `handler_type` is measured as `RecordsApi`, an abstract method with no body, so every guard and outcome beneath it comes back empty and reads as "does nothing" rather than as mis-attribution. CodeQL resolves this through `overrides*` |
+| ✅ `ViewController` | Spring MVC, not REST. `@Controller` does not imply `@ResponseBody`, so the String is a **view name**; measured as `GET /ui/records` with `response_body: 'String'`, a claim that the caller receives the text `record-list` |
+| ✅ `SecurityConfig` | Security declared in the `HttpSecurity` filter chain rather than on a handler. Three distinct facts — `/ui/**` deliberately public, `/record/**` role-protected, `anyRequest()` the estate default. `permitAll` is the only shape in this corpus that would license the word "open", and today none of it is visible |
+| ✅ `RecordController.label`'s `@CookieValue` | `contract.IN_COOKIE` already exists — it was added because cookie parameters "were disclosed as unmappable and dropped". The vocabulary waits downstream; `paramLocations` never wired `CookieValue` to it. (`@MatrixVariable` is deliberately not asserted: it has no location in `PARAMETER_LOCATIONS`, and choosing one is a D-2 decision) |
+
 ### `records-ui/` — the React surface (jssrc2cpg)
 
 | File | Condition |

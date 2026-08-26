@@ -39,6 +39,7 @@ from metis_mcp.ontology.labels import (                            # noqa: E402
     CODE_DERIVED,
     HUMAN_CONFIRMED,
 )
+from metis_mcp.retrieval import search_text_for                    # noqa: E402
 
 EPISODE_CONNECTOR = "spec-kit"
 
@@ -65,13 +66,25 @@ def plan(root: Path) -> tuple[dict, list[dict]]:
     rows: list[dict] = []
     for feature in features:
         for criterion in feature.criteria:
+            criterion_id = f"ac:{feature.name}:{criterion.id}"
             rows.append({
-                "id": f"ac:{feature.name}:{criterion.id}",
+                "id": criterion_id,
                 "source_episode_id": episode["id"],
                 "name": criterion.title or criterion.id,
                 "text": criterion.text,
+                # The folded copy `search` matches on. Required for every
+                # searchable label (labels.SEARCHABLE) -- without it this whole
+                # stage was REFUSED and the intent side of the demo graph was
+                # simply absent, which is worse than a criterion nobody can find.
+                "search_text": search_text_for(criterion_id, criterion.text),
                 "revision": 1,
                 "lifecycle_state": "Quarantine",
+                # Bi-temporal validity, exactly as `knowledge.plan_documentation`
+                # writes it: `valid_from` is when the claim started being true,
+                # `valid_to` is "" while it still is. Both are ON_CREATE facts
+                # (landing.VALIDITY_FACTS), so re-landing never rewrites them and
+                # never resurrects an invalidated criterion.
+                "valid_from": episode["t_recorded"], "valid_to": "",
                 # S-19. Retro-documentation cannot arrive as intent.
                 "provenance": CODE_DERIVED,
                 "is_behavioural": criterion.is_behavioural,

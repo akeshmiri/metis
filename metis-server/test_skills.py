@@ -123,7 +123,9 @@ def test_the_checked_in_router_matches_the_workflow_registry():
     body = render_router()
     assert body.strip() in on_disk.strip(), (
         "the checked-in router has drifted from the workflow registry — "
-        "regenerate it rather than editing it by hand")
+        "run metis_mcp.workflow.routing.write_router() rather than editing it "
+        "by hand. (This said 'regenerate it' and named nothing that could, "
+        "which left hand-editing as the only option the message forbade.)")
 
 
 def test_every_workflow_appears_in_the_router():

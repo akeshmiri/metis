@@ -19,10 +19,14 @@ wherever an absolute interpreter path is needed.
 uv run python -m pytest -q
 ```
 
-43 test files, no external dependency — **no Neo4j, no model calls, no config
-file.** The engine is deliberately database-free: models, criteria, path
-generation, coverage and validation are all pure. If this does not pass, stop
-here.
+76 test files — **no Neo4j, no model calls, no config file.** The engine is
+deliberately database-free: models, criteria, path generation, coverage and
+validation are all pure. If this does not pass, stop here.
+
+One caveat on that command: 136 of those tests DO need Joern and a JDK, and
+`conftest.py` fails rather than skips without them, deliberately — they are the
+only behavioural test the query packs have. Run `metis doctor` first. To exercise
+just the engine-free half, see the `--ignore` list in `CLAUDE.md`.
 
 ```bash
 uv run python -m metis_mcp.mbt.cli workflow list
@@ -44,8 +48,17 @@ export METIS_NEO4J_PASSWORD=<password>           # required, and only from the e
 ```
 
 **The password is never read from an argument** (PLT-005), so it cannot reach
-shell history or a process listing. There is no config file: the v1
-`~/.metis/config.json` requirement went with the v1 engine.
+shell history or a process listing.
+
+The environment is not the only source. There is one config file —
+`~/.metis/config.json` — or one override, `METIS_CONFIG_PATH`, which when set is
+the *only* candidate considered. It supplies `graph.neo4j.uri`/`user` and a
+`password_env` naming the variable that holds the secret; the secret itself
+never lives in the file. What went with the v1 engine is the *requirement* to
+have one, and the project-local `.metis/config.*` that used to be tried first —
+a per-repository override of a machine's connection makes "which database did
+that write go to" unanswerable from the command alone. A project-local file is
+reported rather than silently skipped, so it cannot go quiet on you.
 
 Apply the schema — which is **generated** from `metis_mcp/ontology/labels.py`,
 not hand-written:
@@ -71,7 +84,8 @@ instance; it simply does not rely on being one.
 interpreter path and an absolute `cwd`. Both are required, and both are absolute
 on purpose: a client launches the server from its own working directory.
 
-The surface is **seven read-only tools**. `list_workflows` is the cheapest check
+The surface is **nineteen read-only tools**, five of them the authoring
+surface (X-6e). `list_workflows` is the cheapest check
 that it is wired up: it reads the workflow registry and needs no graph.
 
 ## A first real run
@@ -98,7 +112,8 @@ failure**, anything else failed.
 
 - No `Component` nodes exist in the live graph, so coverage honestly reports
   "version not recorded (P-16)" until `persist` has run.
-- UIF → Episode has no implementation; `intake_processor.py --land` refuses with
-  that reason rather than reporting success. Extraction itself is real.
-- `Database`/`Table`/`Column` are not in the ontology and have no re-entry
-  trigger recorded.
+- Intake creates a `Requirement` only from EARS-conformant text. `metis intake
+  land` carries a UIF into the graph as an `Episode` plus a `<Source>Item`
+  anchor; free prose — most Jira titles — lands as a `Finding` pointing at
+  `knowledge-capture` instead, because `ears_pattern` has no empty form and
+  guessing one is what `ac_mining` refuses to do (S-13).

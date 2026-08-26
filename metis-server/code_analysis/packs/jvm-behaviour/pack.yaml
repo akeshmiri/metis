@@ -4,7 +4,7 @@
 # downstream consumes the contract, never Joern's raw output -- so an engine
 # upgrade touches this pack and nothing else (spec X-3).
 name: jvm-behaviour
-version: 0.1.0
+version: 0.2.0
 contract: metis.cpg-extract/1
 
 engine:
@@ -36,3 +36,11 @@ known_limits:
      is labelled as one"
   - "a @FeignClient interface is excluded: its mappings declare calls this
      service MAKES, not endpoints it serves"
+
+# Provenance. The Spring shapes this pack resolves -- the same handler definition jvm-structural uses -- the two must agree or an
+#   outcome does not join its endpoint -- were read from
+# `github/codeql`'s java/ql/lib/semmle/code/java/frameworks/spring/*.qll
+# (MIT, (c) GitHub, Inc.). The rule is theirs; the Scala is ours. Nothing
+# from CodeQL is installed, invoked or shipped: QL is inert without its
+# proprietary engine, which is what makes the libraries usable as a
+# specification and useless as a dependency.

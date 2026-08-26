@@ -1,11 +1,14 @@
 """
 Shared test fixtures for the MBT engine, rendering and review suites.
 
-The login model here is the real one from demo_data/login_example.py -- 10 states
-and 17 transitions, of which 16 are `implemented` and 1 (2FA enrolment) is
-`planned`. Its shape was extracted from that file rather than invented, so
-assertions like "covers every implemented transition" are checkable claims
-rather than self-fulfilling ones.
+The login model here is a real recovered model -- 10 states and 17 transitions,
+of which 16 are `implemented` and 1 (2FA enrolment) is `planned`. Its shape was
+extracted rather than invented, so assertions like "covers every implemented
+transition" are checkable claims rather than self-fulfilling ones.
+
+It was lifted from `demo_data/login_example.py`, which went with the v1 engine;
+this file is the only copy now, which is why the shape is stated here rather
+than by pointing at a path a reader cannot open.
 
 Kept out of the test files themselves so three suites can share it without
 importing each other.

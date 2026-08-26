@@ -47,6 +47,53 @@ from metis_mcp.ontology.labels import NEED_REVIEW, NEEDS_REVIEW_STATES
 # (I-17, I-18) before the plan is ever built.
 HUMAN_FACTS = ("lifecycle_state", "name", "name_tier", "provenance")
 
+# Set once, when the node first appears, and never re-asserted.
+#
+# **Not a human fact** -- no reviewer decided it -- but it needs the same
+# mechanism for a different reason, which is why it is a second name rather than
+# an addition to the tuple above. Whoever adds a field here has to answer which
+# reason applies.
+#
+# An Episode's id is content-derived (D-8), so the same node means the same
+# ingested content, and `t_recorded` is therefore "when this content was first
+# seen". Re-deriving it on a later run does not record a new fact; it restates
+# the clock.
+#
+# It used to ride in the unconditional `SET n += row.machine`, so re-landing
+# unchanged content rewrote the timestamp and no two runs ever produced the same
+# graph. TR-6 held for identity -- no duplicate node -- and failed for bytes,
+# which is the half anyone diffing two runs actually needs.
+FIRST_SEEN_FACTS = ("t_recorded",)
+
+# Set at creation and changed only by a deliberate act, never by re-landing.
+#
+# `valid_to` is the dangerous one, and the reason this is not simply left as a
+# machine fact. Invalidation SETS `valid_to`; if landing re-asserted it, the next
+# routine extraction would reset it to "" and silently resurrect a superseded
+# fact. An invalidation that an unrelated re-run can undo is not an invalidation.
+#
+# `valid_from` is here for the ordinary first-seen reason: the instant a claim
+# started being true does not change because somebody re-ran extraction.
+VALIDITY_FACTS = ("valid_from", "valid_to")
+
+# Everything written by `ON CREATE SET`. Three reasons, one clause — kept as
+# three names because whoever adds a field has to answer which reason applies.
+ON_CREATE_FACTS = HUMAN_FACTS + FIRST_SEEN_FACTS + VALIDITY_FACTS
+
+
+def split_row(row: dict) -> dict:
+    """One planned node's properties, split into what MERGE may re-assert.
+
+    Pure and named so the rule is inspectable: the split used to be an inline
+    comprehension inside `land`, reachable only with a live session, so the one
+    thing worth asserting about it could not be asserted without a database.
+    """
+    return {
+        "id": row["id"],
+        "on_create": {k: v for k, v in row.items() if k in ON_CREATE_FACTS},
+        "machine": {k: v for k, v in row.items() if k not in ON_CREATE_FACTS},
+    }
+
 
 # Which edge each kind of evidence gets. One place, so a transition cannot point
 # at an `Endpoint` with one relationship type here and another somewhere else.
@@ -55,7 +102,13 @@ EVIDENCE_RELATIONSHIPS = {
     "DeclaredOutcome": "DERIVED_FROM",
     "ExceptionMapping": "DERIVED_FROM",
     "Parameter": "EXERCISES",
-    "Field": "REQUIRES",
+    # No `Field`: a field is a property of its type, not a node (X-6d), and the
+    # label is staged out. The entry outlived the label, and because a mapped
+    # label is *planned* before it is validated, a single field on a rejection
+    # made `validate_relationship` reject `(ApiCall)-[:REQUIRES]->(Field)`, put
+    # "unknown label 'Field'" into `plan.errors`, and refuse the WHOLE model
+    # with "nothing was written". `test_evidence_relationships_name_real_labels`
+    # now fails the moment this map names a label the ontology does not have.
     "Class": "EXPECTS",
     "Check": "CONSTRAINED_BY",
 }
@@ -460,14 +513,11 @@ def land(session, plan: LandingPlan) -> LandingResult:
         # Cypher is an APOC function, and this deployment is Community with no
         # APOC -- but the plainer reason is that two named maps read as what they
         # are, where a `[k IN keys(row) WHERE ...]` comprehension does not.
-        split = [{"id": row["id"],
-                  "human": {k: v for k, v in row.items() if k in HUMAN_FACTS},
-                  "machine": {k: v for k, v in row.items() if k not in HUMAN_FACTS}}
-                 for row in rows]
+        split = [split_row(row) for row in rows]
         result = session.run(
             f"UNWIND $rows AS row "
             f"MERGE (n:{label} {{id: row.id}}) "
-            f"ON CREATE SET n += row.human "
+            f"ON CREATE SET n += row.on_create "
             f"SET n += row.machine{extra} "
             f"RETURN count(n) AS written", rows=split)
         nodes_written += _count(result)
@@ -512,3 +562,107 @@ def _count(result) -> int:
     for row in result:
         return int(row["written"])
     return 0
+
+
+# ---------------------------------------------------------------------------
+# Invalidation (bi-temporal; see ontology.labels.VALIDITY_LABELS)
+# ---------------------------------------------------------------------------
+
+INVALIDATE_CYPHER = """
+UNWIND $ids AS wanted
+MATCH (n {id: wanted})
+WHERE (n.valid_to IS NULL OR n.valid_to = '')
+SET n.valid_to = $valid_to
+RETURN count(n) AS written
+"""
+
+
+def invalidate(session, ids, valid_to: str, actor: str = "") -> dict:
+    """Close the validity window on facts that have stopped being true.
+
+    **Nothing is deleted.** The node stays, its edges stay, and an as-at read
+    still finds it — "what did we believe in March" is a question this graph
+    should answer rather than one it should have forgotten. That is the whole
+    difference between a validity window and a `DELETE`.
+
+    **Not a lifecycle decision, and deliberately not routed through one.**
+    Approving is a judgement about whether a claim is right; invalidating records
+    that the world moved. A superseded criterion keeps whatever review state a
+    human gave it, because retracting the approval would misrepresent what they
+    decided.
+
+    **Already-closed windows are left alone.** The `WHERE` clause means a second
+    call is a no-op rather than a rewrite: re-invalidating would move the instant
+    a fact stopped being true to whenever somebody happened to run this, which is
+    the same class of error `FIRST_SEEN_FACTS` exists to prevent.
+
+    Returns what was closed and what was not found, because "nothing matched"
+    and "everything was already closed" are different answers and a single count
+    cannot tell them apart.
+    """
+    wanted = sorted(set(ids))
+    if not wanted:
+        return {"closed": 0, "already_closed": 0, "missing": []}
+    if not valid_to.strip():
+        raise ValueError(
+            "invalidation needs the instant the fact stopped being true; "
+            "an empty `valid_to` is what 'still valid' means")
+
+    present = {row["id"] for row in session.run(
+        "UNWIND $ids AS wanted MATCH (n {id: wanted}) RETURN n.id AS id",
+        ids=wanted)}
+    closed = _count(session.run(INVALIDATE_CYPHER, ids=wanted, valid_to=valid_to))
+    return {
+        "closed": closed,
+        "already_closed": len(present) - closed,
+        "missing": sorted(set(wanted) - present),
+        "actor": actor,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Backfilling validity onto nodes that predate it
+# ---------------------------------------------------------------------------
+
+BACKFILL_VALIDITY_CYPHER = """
+MATCH (n)
+WHERE any(l IN labels(n) WHERE l IN $labels) AND n.valid_from IS NULL
+SET n.valid_from = $valid_from,
+    n.valid_to = coalesce(n.valid_to, '')
+RETURN count(n) AS written
+"""
+
+
+def backfill_validity(session, valid_from: str, labels=None) -> dict:
+    """Give pre-validity nodes a window, so reads can stop tolerating their absence.
+
+    **This exists so the `IS NULL` tolerance can be removed.** Reads used to
+    accept a missing `valid_to` as "still valid", which kept an existing graph
+    readable on the day validity shipped. That tolerance also means a node whose
+    validity was never set is indistinguishable from one deliberately left open —
+    so once every node carries a window, the reads can require one and the
+    ambiguity goes.
+
+    **`valid_from` is the caller's to choose, and it is a claim.** These facts
+    were true before this ran; the honest value is when the data was believed
+    from — a release date, the commit the model was extracted at — not the moment
+    of the migration. There is no default for that reason.
+
+    Idempotent: only nodes with no `valid_from` are touched, so running it twice
+    does not move a window that was already set.
+    """
+    from metis_mcp.ontology.labels import VALIDITY_LABELS
+
+    if not valid_from.strip():
+        raise ValueError(
+            "backfill needs the instant these facts were believed from; there is "
+            "no sensible default, and 'now' would claim they became true at "
+            "migration time")
+    targets = list(labels or VALIDITY_LABELS)
+    written = _count(session.run(BACKFILL_VALIDITY_CYPHER,
+                                 labels=targets, valid_from=valid_from))
+    remaining = session.run(
+        "MATCH (n) WHERE any(l IN labels(n) WHERE l IN $labels) "
+        "AND n.valid_from IS NULL RETURN count(n) AS c",
+        labels=targets).single()["c"]
+    return {"written": written, "still_missing": remaining, "labels": targets}

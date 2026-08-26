@@ -106,8 +106,21 @@ def test_a_declared_base_url_is_used(demo_structural):
 
 
 def test_no_declared_security_says_so_and_does_not_say_open(demo_structural):
-    """The distinction that matters: extraction cannot see a filter chain or a
-    gateway, so "nothing declared" is the only claim available."""
+    """The distinction that matters: "nothing declared" is never "open".
+
+    Two caveats on what this actually exercises, both true and neither obvious:
+
+    - Extraction CAN now read a Spring `HttpSecurity` filter chain
+      (`jvm-structural`'s `chainSecurityFor`), so the old reason given here --
+      "extraction cannot see a filter chain" -- no longer holds. A gateway, or a
+      chain outside the analysed sources, is still invisible.
+    - `R.build` reads the FLATTENED `security_schemes` key that
+      `raw_landing._security_properties` produces. This test hands it a raw
+      structural endpoint, which carries `security` instead, so `declared` is
+      False here whatever the pack recovered -- it would be False for
+      `@DemoSecured` too. The note is what is under test; the flattening is
+      covered where it is produced.
+    """
     built = R.build(_endpoint(demo_structural, "/record/page"))
     assert built["security"]["declared"] is False
     assert "not the same as open" in built["security"]["note"]

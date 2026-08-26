@@ -6,12 +6,12 @@
 
 ```
 usage: metis-mbt [-h]
-                 {paths,render,report,payload,knowledge,feature,glossary,spec-requirement,intent,data,guide,page-object,spec-build,feature-derive,intake,entity,structure,review,override,coverage-gap,validate,drift,publish,ac-mine,doctor,init,analyse,frameworks,ui,reconcile,divergence,spec,sources,land,findings,persist,workflow} ...
+                 {paths,render,report,payload,knowledge,feature,glossary,spec-requirement,intent,data,guide,page-object,spec-build,feature-derive,intake,entity,structure,review,override,coverage-gap,validate,drift,publish,ac-mine,doctor,init,analyse,frameworks,ui,reconcile,divergence,spec,sources,land,findings,persist,workflow,backfill-validity,retrieval-bench,lessons} ...
 
 CLI for the MBT engine (application spec §9.4, first slice).
 
 positional arguments:
-  {paths,render,report,payload,knowledge,feature,glossary,spec-requirement,intent,data,guide,page-object,spec-build,feature-derive,intake,entity,structure,review,override,coverage-gap,validate,drift,publish,ac-mine,doctor,init,analyse,frameworks,ui,reconcile,divergence,spec,sources,land,findings,persist,workflow}
+  {paths,render,report,payload,knowledge,feature,glossary,spec-requirement,intent,data,guide,page-object,spec-build,feature-derive,intake,entity,structure,review,override,coverage-gap,validate,drift,publish,ac-mine,doctor,init,analyse,frameworks,ui,reconcile,divergence,spec,sources,land,findings,persist,workflow,backfill-validity,retrieval-bench,lessons}
     paths               generate covering paths
     render              render paths as test cases
     report              coverage report
@@ -54,6 +54,12 @@ positional arguments:
     findings            land validation findings and divergences (spec §8.2)
     persist             write paths and cases to the graph
     workflow            run a defined workflow with its gates (spec §3.2)
+    backfill-validity   give pre-validity nodes a window, before reads start
+                        requiring one
+    retrieval-bench     measure search against questions whose answers are
+                        known
+    lessons             land the authored academy (docs/academy/) as Lesson
+                        nodes
 
 options:
   -h, --help            show this help message and exit

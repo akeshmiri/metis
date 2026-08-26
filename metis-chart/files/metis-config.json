@@ -13,7 +13,6 @@
     "glob": "/app/corpus/*.md"
   },
   "graph": {
-    "backend": "neo4j",
     "neo4j": {
       "uri": "bolt://{{ .Release.Name }}-neo4j:7687",
       "user": "neo4j",
@@ -28,12 +27,12 @@
   },
   "connectors": {
     "application_code": {
-      "athena": {
+      "source_database": {
         "host": "localhost",
         "port": 5432,
-        "dbname": "athena",
-        "user": "athena",
-        "password_env": "ATHENA_DB_PASSWORD"
+        "dbname": "CHANGE_ME",
+        "user": "CHANGE_ME",
+        "password_env": "METIS_SOURCE_DB_PASSWORD"
       }
     }
   },
@@ -43,8 +42,5 @@
       "classification": "public_internal",
       "note": "This platform's own design documents."
     }
-  ],
-  "token_optimization": {
-    "headroom_enabled": false
-  }
+  ]
 }

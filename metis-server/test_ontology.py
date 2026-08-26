@@ -75,8 +75,8 @@ def test_the_label_set_is_closed_and_each_label_is_argued():
     test enforces: name the writer, name the reader, and if either is "a file
     somebody will write one day", stage it in §8.7 instead.
     """
-    assert len(KNOWN_LABELS) == 61, (
-        f"the ontology is sixty-one labels (spec D-1); found {len(KNOWN_LABELS)}: "
+    assert len(KNOWN_LABELS) == 62, (
+        f"the ontology is sixty-two labels (spec D-1); found {len(KNOWN_LABELS)}: "
         f"{sorted(KNOWN_LABELS)}. Adding one requires naming its writer and its "
         f"reader, not just its purpose."
     )
@@ -688,3 +688,150 @@ def test_no_cypher_names_a_label_the_ontology_does_not_have():
         "Cypher names labels the ontology does not have. A query naming a "
         "label that no longer exists is valid Cypher that matches nothing:\n  "
         + "\n  ".join(offences))
+
+
+def test_evidence_relationships_name_real_labels():
+    """Every label in `EVIDENCE_RELATIONSHIPS` must exist and the edge it maps
+    to must be legal.
+
+    The test above scans Cypher *strings*; this map is a Python dict, so it went
+    unchecked. It carried `"Field": "REQUIRES"` after `Field` was staged out
+    (X-6d), and the consequence was not a dead entry. Landing plans an evidence
+    edge for any mapped label, and the plan is validated after it is built, so a
+    single field on a rejection put "unknown label 'Field'" into `plan.errors`
+    and `land`/`land_model` refused the ENTIRE model with "nothing was written".
+
+    Asserted against the ontology rather than against a copy of the map, so
+    staging a label out is enough to fail this — no second list to remember.
+    """
+    from metis_mcp.model_sources.landing import EVIDENCE_RELATIONSHIPS
+
+    offences = []
+    for label, rel_type in EVIDENCE_RELATIONSHIPS.items():
+        if label not in LABELS:
+            why = ("staged out — see STAGED_OUT" if label in STAGED_OUT
+                   else "not in the ontology")
+            offences.append(f"{label!r} -> {rel_type!r}: {why}")
+            continue
+        # The edge is planned FROM a transition, and a classified transition
+        # carries `:ApiCall`/`:UiAction` instead of `:Transition`, so every
+        # concrete surface has to accept it.
+        for source in ("ApiCall", "UiAction"):
+            outcome = validate_relationship(source, rel_type, label)
+            if not outcome.valid:
+                offences.append(
+                    f"({source})-[:{rel_type}]->({label}) is planned by "
+                    f"landing and refused by the catalogue: {outcome.errors}")
+
+    assert not offences, (
+        "EVIDENCE_RELATIONSHIPS names something the ontology will refuse. Each "
+        "of these makes landing refuse the whole model, not just the edge:\n  "
+        + "\n  ".join(offences))
+
+
+# Rule ids cited in code that the specification does not define.
+#
+# `PLT-*` is an entire rule family with no section in the spec: the code
+# implements and documents it (`mbt/graph_session.py` is the fullest statement --
+# resolution order for a graph connection, no default password, and a secret that
+# must never reach a process listing or shell history), and cites it eleven
+# times, but §-anything never introduces it. CLAUDE.md quotes PLT-005 as though
+# it were settled.
+#
+# Listed rather than silently tolerated, and listed rather than invented: writing
+# normative text into the authoritative spec is an authoring decision, not a
+# test's to make. Deleting an entry here once the section exists is the whole
+# fix. Nothing may be ADDED to this list without the same conversation.
+# Empty. `PLT-002`, `PLT-003` and `PLT-005` are defined in §11.0 of the
+# specification now — they were cited eleven times in code and written nowhere,
+# which is a dangling reference that reads as authority.
+#
+# Kept as a named set rather than deleted: the guard below needs somewhere to
+# record "known, and here is why" if a citation ever legitimately precedes its
+# definition. An empty exemption list is a stronger statement than no list.
+UNDEFINED_RULE_IDS: dict[str, str] = {}
+
+_RULE_ID = re.compile(r"\b(?:M|S|P|D|GD|N|X|T|C|PLT|R|A|G)-[0-9]+[a-z]?\b")
+
+
+def test_every_rule_id_cited_in_code_is_defined_in_the_spec():
+    """The code cites spec rule ids inline; a citation of a rule nobody wrote is
+    a dangling reference that reads as authority.
+
+    This is the traceability direction that was never checked. The spec defines
+    285 ids and the code cites 178; all but the `PLT-*` family resolve, and that
+    family resolves nowhere at all.
+    """
+    spec_ids = set(_RULE_ID.findall(SPEC.read_text()))
+
+    cited: dict[str, list[str]] = {}
+    for path in sorted(Path(".").glob("metis_mcp/**/*.py")) + \
+            sorted(Path(".").glob("code_analysis/**/*.py")):
+        for rule_id in _RULE_ID.findall(path.read_text()):
+            cited.setdefault(rule_id, []).append(str(path))
+
+    dangling = {r: sorted(set(p))[:3] for r, p in cited.items()
+                if r not in spec_ids and r not in UNDEFINED_RULE_IDS}
+    assert not dangling, (
+        "code cites rule ids the specification does not define:\n  "
+        + "\n  ".join(f"{r} — cited in {', '.join(p)}"
+                      for r, p in sorted(dangling.items())))
+
+    # The exemption list may not outlive the gap it records.
+    stale = {r for r in UNDEFINED_RULE_IDS if r in spec_ids}
+    assert not stale, (
+        f"{sorted(stale)} are defined in the spec now — delete them from "
+        f"UNDEFINED_RULE_IDS")
+
+
+# Read queries that touch a validity-carrying label and do NOT filter on it.
+#
+# Harmless TODAY and dangerous the moment it is not: nothing sets `valid_to` yet,
+# so every node is currently valid and an unfiltered read cannot return a
+# superseded fact. The instant an invalidation path exists, each of these starts
+# returning history as though it were current — and that failure looks exactly
+# like success, which is why it is listed rather than left to be noticed.
+#
+# Emptying this list is the rest of the bi-temporal work.
+# Empty. Every read over a validity-carrying label now filters on it.
+#
+# Kept as a named, asserted-against set rather than deleted: the guard below
+# fails when a NEW query reads one of these labels without filtering, and it
+# needs somewhere to say "known, and here is why" if that is ever the right
+# answer. An empty exemption list is a stronger statement than no list.
+UNFILTERED_VALIDITY_READS: dict[str, str] = {}
+
+
+def test_every_read_over_a_validity_label_filters_on_validity_or_is_listed():
+    """A query that ignores `valid_to` answers "what did we ever believe", not
+    "what do we believe now" — and returns the first while looking like the
+    second.
+
+    **Inspects the module's actual constants, not its source text.** The first
+    version regexed the file, and reported a false gap the moment a query was
+    built by concatenation rather than as one literal, because the pattern
+    captured only the fragment before the first `+`. What matters is the string
+    Neo4j actually receives.
+
+    `lifecycle_state` filtering is NOT a substitute — review state and validity
+    are independent axes, and an Approved fact can be superseded.
+    """
+    import re as _re
+
+    from metis_mcp.mbt import graph_loader
+    from metis_mcp.ontology.labels import VALIDITY_LABELS
+
+    label_alt = "|".join(VALIDITY_LABELS)
+    offences = []
+    for name in sorted(n for n in vars(graph_loader) if n.endswith("_CYPHER")):
+        body = getattr(graph_loader, name)
+        if not isinstance(body, str) or not _re.search(rf":({label_alt})\b", body):
+            continue
+        filters = "valid_to" in body
+        if filters and name in UNFILTERED_VALIDITY_READS:
+            offences.append(f"{name} now filters on validity — delete it from "
+                            f"UNFILTERED_VALIDITY_READS")
+        elif not filters and name not in UNFILTERED_VALIDITY_READS:
+            offences.append(f"{name} reads a validity-carrying label and does not "
+                            f"filter on `valid_to`, and is not listed as a known gap")
+    assert not offences, "\n  ".join([""] + offences)

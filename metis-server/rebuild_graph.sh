@@ -31,7 +31,20 @@ cd "$(dirname "$0")"
 PY=.venv/bin/python3
 : "${METIS_NEO4J_URI:=bolt://localhost:7687}"
 : "${METIS_NEO4J_USER:=neo4j}"
-: "${METIS_NEO4J_PASSWORD:?set METIS_NEO4J_PASSWORD (never as an argument — PLT-005)}"
+# `cypher-shell` below needs the secret directly, so the script has to hold it —
+# but it must not be a SECOND source of truth. `graph_session.resolve()` is the
+# one resolver (environment, then ~/.metis/config.json), and asking it here means
+# a password configured the supported way is found without being exported.
+#
+# This used to be a bare `:?` on the environment variable alone, which meant that
+# moving the password into the config file — the arrangement the tool itself
+# recommends — broke the rebuild while `metis` kept working.
+if [ -z "${METIS_NEO4J_PASSWORD:-}" ]; then
+  METIS_NEO4J_PASSWORD="$(PYTHONPATH=. $PY -c \
+    'from metis_mcp.mbt.graph_session import resolve; print(resolve().password)' \
+    2>/dev/null || true)"
+fi
+: "${METIS_NEO4J_PASSWORD:?no graph password: set METIS_NEO4J_PASSWORD, or configure graph.neo4j in ~/.metis/config.json (never as an argument — PLT-005)}"
 export METIS_NEO4J_URI METIS_NEO4J_USER METIS_NEO4J_PASSWORD
 CONTAINER="${METIS_NEO4J_CONTAINER:-metis-graph}"
 
@@ -138,10 +151,22 @@ echo "==> 3b/5  the UI models, from the frontend packs"
 for pair in "$UI_FACTS:records" "$DOM_FACTS:records-page"; do
   facts="${pair%%:*}"; journey="${pair#*:}"
   [ -f "$facts" ] || { echo "    !! $facts absent — no UI model for $journey"; continue; }
+  # A surface that yields no model is REPORTED and does not stop the rebuild.
+  # `records-page` is the case that proves this is needed: its mutations have
+  # runtime-computed signatures, so `js-ui` recovers the handlers and can name no
+  # observable outcome (§5.8). That is a correct refusal about a deliberately
+  # hard corpus, not a failure of the run -- and because it was raised, three
+  # later stages (the login model, the acceptance criteria, the report) were
+  # skipped while the script still exited 0 through its own pipeline.
   PYTHONPATH=. $PY - <<EOF | sed 's/^/    /'
+import sys
 from metis_mcp.mbt.graph_session import session
 from metis_mcp.model_sources import get, land, plan_landing
-result = get("web").produce(path="$facts", journey="$journey")
+try:
+    result = get("web").produce(path="$facts", journey="$journey")
+except ValueError as refusal:
+    print(f"!! $journey: no UI model — {refusal}")
+    sys.exit(0)
 plan = plan_landing(result, journey="$journey", job_id="rebuild")
 with session() as s:
     outcome = land(s, plan)
@@ -159,6 +184,21 @@ echo "==> 4/5  acceptance criteria (the intent side)"
 # demo_project/openapi.json documents 200, and a person settles that.
 $PY demo_data/land_spec_criteria.py "$DEMO/specs" | sed 's/^/    /'
 
+echo "==> 4b/5  the academy (Métis's own material, as a source like any other)"
+# `docs/academy/` lands as `Lesson` through the ordinary landing path, into the
+# SAME graph as everything above. That is the point rather than an economy: the
+# intent is that `ask` answers a question about Métis the way it answers one
+# about a product, and Neo4j cannot join across databases in one session -- so a
+# separate academy database would put the lessons somewhere `search_knowledge`
+# could never see them next to a criterion. Separation is by label (`:Lesson`)
+# and by its own Episode, which is what the ontology already gives.
+#
+# Reported and non-fatal, for the reason 3b now is: a checkout without the docs
+# is a thin graph, not a reason to skip the stages after this one.
+if ! $PY -m metis_mcp.mbt.cli lessons --job-id rebuild 2>&1 | sed 's/^/    /'; then
+  echo "    !! the academy did not land — continuing; the demo graph is unaffected"
+fi
+
 echo "==> 5/5  cross-surface INVOKES proposals (M-5a)"
 if [ ! -f "$UI_FACTS" ]; then
   echo "    !! $UI_FACTS absent — no INVOKES proposals."
@@ -170,47 +210,32 @@ else
 # current synthesiser: all 91 matched no transition, and the writer counted them
 # as written anyway.
 UI_FACTS="$UI_FACTS" PYTHONPATH=. $PY - <<'EOF' | sed 's/^/    /'
-import json, os, re
-from metis_mcp.mbt.cross_surface import (
-    InvokesLink, LinkSet, persist_invokes, persist_triggers)
+# The derivation itself lives in `metis_mcp/mbt/link_proposals.py`, where it is
+# pure and therefore testable. It was inline here, and in that form carried four
+# defects no test could see -- see that module's docstring for what they were.
+import json, os
+from metis_mcp.mbt.cross_surface import persist_invokes, persist_triggers
 from metis_mcp.mbt.graph_session import session
+from metis_mcp.mbt.link_proposals import propose
 
 facts = json.load(open(os.environ["UI_FACTS"]))
 
 with session() as s:
-    # The specific labels, not `:Transition`. A classified transition no longer
-    # carries the generic label, so matching on it here returned nothing at all
-    # and the derivation silently proposed zero links.
-    ui_rows = list(s.run("MATCH (t:UiAction) RETURN t.id AS id"))
+    # The specific labels, not `:Transition`: a classified transition no longer
+    # carries the generic one, so matching on it returns nothing at all.
+    ui_rows = list(s.run(
+        "MATCH (t:UiAction) RETURN t.id AS id, t.name AS name, t.trigger AS trigger"))
     api_rows = list(s.run(
-        "MATCH (t:ApiCall) "
-        "RETURN t.id AS id, t.trigger AS trigger, t.outcome_status AS status"))
+        "MATCH (t:ApiCall) RETURN t.id AS id, t.trigger AS trigger"))
 
-    def api_for(endpoint):
-        """API transitions whose trigger path ends with this endpoint.
+    proposal = propose(ui_rows, api_rows, facts.get("api_calls", ()),
+                       proposed_by="react-ui")
+    for screen in proposal.unmatched_screens:
+        print(f"!! no UiAction names screen {screen!r} — proposing nothing for it")
+    for endpoint in proposal.unmatched_endpoints:
+        print(f"!! no ApiCall path ends with {endpoint!r} — proposing nothing for it")
 
-        Suffix matching, because controllers are dual-mounted and a gateway
-        strips the prefix. Scoped by nothing else here: the demo is one service,
-        and a cross-service guard needs more than one to be worth asserting.
-        """
-        out = []
-        for row in api_rows:
-            trigger = (row.get("trigger") or "")
-            parts = trigger.split(None, 1)
-            if len(parts) == 2 and parts[1].endswith(endpoint):
-                out.append(row["id"])
-        return out
-
-    links = []
-    for call in facts.get("api_calls", ()):
-        endpoint = call.get("endpoint", "")
-        screens = [r["id"] for r in ui_rows if call.get("screen", "") in r["id"]]
-        for ui_id in screens:
-            for api_id in api_for(endpoint):
-                links.append(InvokesLink(ui_transition_id=ui_id,
-                                         api_transition_id=api_id,
-                                         evidence=f"{call.get('screen')} -> {endpoint}"))
-    unique = LinkSet(links=links)
+    unique = proposal.link_set("records")
     t_written, t_unmatched = persist_triggers(s, unique, confirmed_only=False)
     i_written, i_unmatched = persist_invokes(s, unique, confirmed_only=False)
     print(f"{t_written} TRIGGERS (the page starts the call), "

@@ -13,7 +13,6 @@
     "glob": "/absolute/path/to/your/documents/*.md"
   },
   "graph": {
-    "backend": "REPLACE: local | neo4j",
     "neo4j": {
       "uri": "REPLACE: bolt://localhost:7687",
       "user": "REPLACE: neo4j",
@@ -44,8 +43,5 @@
   },
   "security": {
     "jwt_secret": "REPLACE: generate a local development secret of at least 32 bytes"
-  },
-  "token_optimization": {
-    "headroom_enabled": false
   }
 }

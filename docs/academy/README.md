@@ -9,10 +9,19 @@ tell which sentences the engine stands behind.
 
 Read them in order. The first is the one that saves the most time.
 
+**Concepts — what the system is, and is not**
+
 1. [What Métis does not do](01-what-metis-does-not-do.md)
 2. [The shape of the model](02-the-shape-of-the-model.md)
 3. [Facts, evidence, and why nothing is approved](03-facts-and-evidence.md)
 4. [Joins that cannot be made yet](04-deferred-joins.md)
+
+**Practice — how to use it**
+
+5. [The two gates, and why there are only two](05-the-two-gates.md)
+6. [From a repository to test cases](06-from-a-repository-to-test-cases.md)
+7. [Time: what was true, and when](07-time-what-was-true-and-when.md)
+8. [Finding things, and which surface to ask](08-finding-things.md)
 
 ## Not yet landed in the graph
 
@@ -31,3 +40,8 @@ edited — and D-1 requires a named writer *and* a named reader before a label i
 worth adding. Neither has been argued for yet.
 
 So today these are files. Saying so is cheaper than a reader discovering it.
+
+The argument for the label it would need is written out in
+[PROPOSAL-landing-the-academy.md](PROPOSAL-landing-the-academy.md) — including
+the case against, and the condition under which it should be refused. It is
+argued, not decided; nothing has been added to the ontology.

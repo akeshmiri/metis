@@ -560,6 +560,32 @@ class OpenAPISource(ModelSource):
             # document contained and this could not carry -- the same channel
             # S-13's blocked proposals use.
             skipped=[("document", note) for note in adapter.notes],
+            # **The declaration is evidence, not just a comparison input.**
+            #
+            # `connectors/intakes.json` declares this intake lands `Endpoint`,
+            # `DeclaredOutcome`, `Parameter` and `Class`. It did not: the
+            # evidence layer is planned from `reports` (`workflow/handlers.py`),
+            # this source never set it, and `reports.get("structural")` returning
+            # None sent the handler down the branch written for hand-authored
+            # models -- "no code facts behind it" -- so every declared fact in
+            # the document was dropped without a word.
+            #
+            # Carrying it here is enough to land them, because identity is
+            # already natural: `raw_landing.endpoint_id` keys on
+            # `(repo, service, method, path)`, so a contract endpoint and the
+            # handler that implements it reach ONE node under the same scope.
+            # Neither source's own id space (operationId here, handler signature
+            # there) ever reaches the graph.
+            #
+            # §4.1 is unaffected: the code-vs-contract comparison is a set
+            # difference over REPORTS, computed before anything is landed.
+            # Sharing a node makes agreement expressible; it does not hide
+            # disagreement.
+            #
+            # No `behaviour` key: a document declares outcomes, it does not
+            # implement them, and `plan_raw_landing` treats that as absent
+            # rather than empty.
+            reports={"structural": adapter.report},
             proposed_by=author or "openapi",
         )
 

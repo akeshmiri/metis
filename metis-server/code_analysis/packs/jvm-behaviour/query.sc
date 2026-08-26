@@ -72,7 +72,75 @@ import java.io.PrintWriter
   val declaredVerbs = named("entry_point")
   val verbs = if (declaredVerbs.nonEmpty) declaredVerbs else
     Map("GetMapping" -> "GET", "PostMapping" -> "POST", "PutMapping" -> "PUT",
-        "DeleteMapping" -> "DELETE", "PatchMapping" -> "PATCH")
+        "DeleteMapping" -> "DELETE", "PatchMapping" -> "PATCH",
+        // `RequestMapping` was absent here while jvm-structural carried it, so a
+        // stereotype composing it resolved to a handler there and to nothing
+        // here. The two packs must agree on what a handler IS or the join in
+        // `synthesis` silently falls back to a bare verb for its trigger.
+        "RequestMapping" -> "ANY")
+
+  // ---- Annotation composition, overrides, controller identity ----------
+  //
+  // Duplicated from jvm-structural because a pack is a standalone script. The
+  // two must agree: `synthesis` joins an outcome to its endpoint on the handler
+  // method's fullName, and when they disagree the outcome does not join and the
+  // transition gets a bare verb ("GET") with no route as its trigger. Measured:
+  // three such transitions appeared the moment jvm-structural learned to resolve
+  // composition and this pack had not.
+  //
+  // Ported from github/codeql (MIT, (c) GitHub, Inc.).
+  val annotationDecls: Map[String, List[Annotation]] =
+    cpg.typeDecl
+      .filter(_.annotation.name.l.exists(n => n == "Retention" || n == "Target"))
+      .map(td => td.name -> td.annotation.l)
+      .toMap
+
+  def composedWith(a: Annotation, seen: Set[String] = Set.empty): List[Annotation] =
+    if (seen.contains(a.name)) Nil
+    else a :: annotationDecls.getOrElse(a.name, Nil)
+      .flatMap(meta => composedWith(meta, seen + a.name))
+
+  def verbOf(a: Annotation): Option[String] =
+    composedWith(a).flatMap { c =>
+      verbs.get(c.name).map {
+        case "ANY" =>
+          c.parameterAssign.code.l
+            .flatMap("^\\s*method\\s*=\\s*(.+)$".r.findFirstMatchIn(_))
+            .map(_.group(1).split("\\.").last.replaceAll("[^A-Za-z]", "").toUpperCase)
+            .find(_.nonEmpty).getOrElse("ANY")
+        case verb => verb
+      }
+    }.headOption
+
+  def supertypesOf(td: TypeDecl, depth: Int = 0): List[TypeDecl] =
+    if (depth > 8) Nil
+    else td.inheritsFromTypeFullName.toList
+      .filterNot(_ == "java.lang.Object")
+      .flatMap(fn => cpg.typeDecl.fullNameExact(fn).l)
+      .flatMap(sup => sup :: supertypesOf(sup, depth + 1))
+
+  def overridden(m: Method): List[Method] =
+    m.typeDecl.headOption.toList
+      .flatMap(supertypesOf(_))
+      .flatMap(_.method.nameExact(m.name).l)
+      .filter(_.signature == m.signature)
+
+  def mappingAnnotations(m: Method): List[Annotation] =
+    (m :: overridden(m)).flatMap(_.annotation.l)
+
+  def ownerAnnotations(m: Method): List[Annotation] =
+    m.typeDecl.headOption.toList
+      .flatMap(td => td :: supertypesOf(td))
+      .flatMap(_.annotation.l)
+      .flatMap(a => composedWith(a))
+
+  def isController(m: Method): Boolean =
+    ownerAnnotations(m).exists(a => a.name == "Controller" || a.name == "RestController")
+
+  def returnsResponseBody(m: Method): Boolean =
+    ownerAnnotations(m).exists(_.name == "RestController") ||
+      (m :: overridden(m)).flatMap(_.annotation.l).exists(_.name == "ResponseBody") ||
+      ownerAnnotations(m).exists(_.name == "ResponseBody")
 
   // `@ResponseStatus(HttpStatus.CREATED)` is written by name far more often than
   // by number. Only the ones a handler realistically declares -- an exhaustive
@@ -204,20 +272,28 @@ import java.io.PrintWriter
       case s if s.nonEmpty => s
       case _ => Set("FeignClient")
     }
+    // Through composition, matching jvm-structural: a house stereotype wrapping
+    // `@FeignClient` used to escape this and become behaviour for a route the
+    // service does not serve.
     m.typeDecl.headOption.toList.flatMap(_.annotation.l)
-      .exists(a => markers.contains(a.name))
+      .exists(a => composedWith(a).exists(c => markers.contains(c.name)))
   }
 
+  // The same three conditions jvm-structural applies, in the same order. A
+  // handler is a method ON A CONTROLLER whose mapping may be inherited, and
+  // whose return value is a response body rather than a view name.
   val handlers = cpg.method.isExternal(false)
-    .filter(_.annotation.name.exists(verbs.contains))
-    .filterNot(isOutboundClient).l
+    .filter(m => mappingAnnotations(m).exists(a => verbOf(a).nonEmpty))
+    .filterNot(isOutboundClient)
+    .filter(isController)
+    .filter(returnsResponseBody).l
 
   var checkId = 0
   val checkBuf = scala.collection.mutable.ListBuffer[String]()
   val outcomeBuf = scala.collection.mutable.ListBuffer[String]()
 
   handlers.foreach { m =>
-    val verb = m.annotation.name.l.flatMap(verbs.get).headOption.getOrElse("ANY")
+    val verb = mappingAnnotations(m).flatMap(verbOf).headOption.getOrElse("ANY")
     val endpointId = s"${m.fullName}::${verb}"
 
     // Declared outcomes: @ApiResponse(responseCode = "NNN"). These are a real

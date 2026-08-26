@@ -136,6 +136,62 @@ def constraints_cypher(edition: str = COMMUNITY) -> str:
                              f"— enforced by ontology.validation, not by Neo4j")
         lines.append("")
 
+    # ---- Free text search --------------------------------------------------
+    # One index across every searchable label, because a search that had to be
+    # told which label to look in would not be a search. Generated from
+    # `labels.SEARCH_TARGETS` so the index and `graph_loader.SEARCH_CYPHER`
+    # cannot name different properties.
+    from metis_mcp.ontology.labels import SEARCH_INDEX, SEARCH_TARGETS
+
+    search_labels = "|".join(sorted(SEARCH_TARGETS))
+    search_props = sorted({p for props in SEARCH_TARGETS.values() for p in props})
+    lines += [
+        "// Free-text search (Lucene, Community edition). Replaces substring",
+        "// matching: `CONTAINS` cannot rank, cannot tokenise, and cannot tell a",
+        "// title match from a body match.",
+        f"CREATE FULLTEXT INDEX {SEARCH_INDEX} IF NOT EXISTS",
+        f"FOR (n:{search_labels})",
+        f"ON EACH [{', '.join('n.' + p for p in search_props)}]",
+        "// The `english` analyzer, not the default `standard` one. Measured: with",
+        "// the default, searching `lock` returned NOTHING for a criterion whose",
+        "// text says \"the account is locked\" — standard tokenises and lowercases",
+        "// but does not stem, so it beats CONTAINS on ranking and loses to it on",
+        "// the word-form matching that is half the reason to want full text.",
+        "OPTIONS {indexConfig: {`fulltext.analyzer`: 'english'}};",
+        "",
+    ]
+
+    # ---- Semantic search ---------------------------------------------------
+    # Same labels as the full-text index: a search that had to be told which
+    # kind of similarity to use would not be a search either. Nodes without an
+    # embedding are simply absent from this index, so it is inert until
+    # something populates the property.
+    from metis_mcp.ontology.labels import (
+        VECTOR_DIMENSIONS,
+        VECTOR_PROPERTY,
+        VECTOR_SIMILARITY,
+        vector_index_for,
+    )
+
+    lines += [
+        "// Semantic search. Inert until `embedding` is populated — an unembedded",
+        "// node is absent from its index rather than wrong in it.",
+        "//",
+        "// One index PER LABEL: Neo4j accepts the multi-label form for a full-text",
+        "// index and rejects it for a vector index.",
+    ]
+    for label in sorted(SEARCH_TARGETS):
+        lines += [
+            f"CREATE VECTOR INDEX {vector_index_for(label)} IF NOT EXISTS",
+            f"FOR (n:{label})",
+            f"ON (n.{VECTOR_PROPERTY})",
+            "OPTIONS {indexConfig: {",
+            f"  `vector.dimensions`: {VECTOR_DIMENSIONS},",
+            f"  `vector.similarity_function`: '{VECTOR_SIMILARITY}'",
+            "}};",
+        ]
+    lines.append("")
+
     return "\n".join(lines)
 
 

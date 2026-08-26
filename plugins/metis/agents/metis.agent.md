@@ -5,6 +5,8 @@ description: Métis's workflow router. Turns a request into a defined workflow w
 
 <!-- generated from metis_mcp/workflow/stages.py — do not edit by hand -->
 
+<!-- generated from metis_mcp/workflow/stages.py — do not edit by hand -->
+
 # Métis — Workflow Router
 
 Every request to Métis runs a **defined workflow**: an ordered set of
@@ -64,7 +66,7 @@ wrong workflow produces a confident artefact about the wrong thing.
 | Skill | Use when |
 |---|---|
 | `metis-behavior-modeling` | A user is defining or reviewing states and transitions and wants them checked for well-formedness |
-| `metis-intake-processor` | A user wants a source captured in a normalized, reviewable shape |
+| `metis-intake-processor` | Somebody wants what a source SAYS the system should do brought into Métis |
 | `metis-knowledge-capture` | Someone tells Métis a rule the system should follow and wants it formalised and reconciled |
 | `metis-model-build` | Someone asks to build or rebuild a model for a service, or to re-extract after code changed |
 | `metis-review-assist` | A workflow has halted at model-approval, or when a user wants help deciding approve/reject on a model's elements |

@@ -336,3 +336,69 @@ def format_batch(batch: Batch) -> str:
               f"{AFFIRMATIVE!r}.",
               "  One decision covers this batch (T-19). There is no default-yes (T-18)."]
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Confirmation over a stateless transport (G2)
+# ---------------------------------------------------------------------------
+
+class ConfirmationReplayed(ConfirmationRefused):
+    """A confirmation was presented twice. The second time is refused."""
+
+
+class ConfirmationTickets:
+    """Single-use, run-bound confirmations for an HTTP caller.
+
+    **G2 is "a literal affirmative confirmation, in that run".** On a terminal
+    that phrase is self-enforcing: the run is the process the operator is looking
+    at. HTTP has no run — a request body carrying the word `publish` is a string
+    an attacker can replay, a proxy can retry, and a client library can send
+    twice on a timeout it decided was transient. Any of those would re-confirm a
+    publication nobody re-authorised.
+
+    So the confirmation is bound to a ticket this server issued, for one batch,
+    to one identity, and consumed the first time it is accepted. The ticket is
+    not a secret and does not need to be: it is worthless without the credential
+    that requested it, and worthless a second time to anyone.
+
+    In memory on purpose. NF-4 states a single instance with no HA target, so a
+    ticket that does not survive a restart costs a re-confirmation — which is the
+    safe direction. Persisting them would mean a confirmation could outlive the
+    process that showed the operator what they were confirming.
+    """
+
+    def __init__(self) -> None:
+        self._open: dict[str, tuple[str, str, int]] = {}
+
+    def issue(self, ticket: str, batch_fingerprint: str, actor: str,
+              batch_size: int) -> str:
+        """Record that this identity was shown this batch."""
+        self._open[ticket] = (batch_fingerprint, actor, batch_size)
+        return ticket
+
+    def redeem(self, ticket: str, literal: str, batch_fingerprint: str,
+               actor: str) -> Confirmation:
+        """Consume a ticket, or refuse and say which rule refused it.
+
+        Consumed BEFORE the literal is checked, so a caller cannot probe for a
+        valid ticket by sending wrong words at it.
+        """
+        held = self._open.pop(ticket, None)
+        if held is None:
+            raise ConfirmationReplayed(
+                "this confirmation has already been used, or was never issued. "
+                "A publication is confirmed once; ask for the batch again and "
+                "confirm the batch you are shown (G2, T-18).")
+
+        held_fingerprint, held_actor, batch_size = held
+        if held_fingerprint != batch_fingerprint:
+            raise ConfirmationRefused(
+                "the batch changed after it was shown. A confirmation covers "
+                "what the confirmer SAW (T-17), so this one does not carry.")
+        if held_actor != actor:
+            raise ConfirmationRefused(
+                f"the batch was shown to {held_actor!r} and confirmed by "
+                f"{actor!r}. A confirmation records who gave it (N-13), and it "
+                f"is not transferable.")
+        # `confirm` still enforces the literal word and the non-empty identity.
+        return confirm(literal=literal, confirmed_by=actor, batch_size=batch_size)

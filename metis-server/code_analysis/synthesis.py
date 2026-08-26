@@ -581,7 +581,7 @@ def synthesise(behaviour: ExtractionReport, endpoints: list[dict],
             inputs=rejection.inputs, security=rejection.security,
             data_requirements=rejection.constraints,
             outcome_source=DECLARED, guard_claim=rejection.claim,
-            evidence=_evidence_for(repo, rejection.endpoint, fields=rejection.fields,
+            evidence=_evidence_for(repo, rejection.endpoint,
                                    rejection=rejection, declared=known_types,
                                    by_simple=types_by_simple),
             # A rejection's body is the framework's error shape, not the
@@ -678,7 +678,7 @@ def declared_types(structural) -> tuple[set[str], dict[str, str]]:
 
 
 def _evidence_for(repo: str, endpoint: dict | None, outcome=None,
-                  checks=(), fields=(), rejection=None,
+                  checks=(), rejection=None,
                   declared: set[str] | None = None,
                   by_simple: dict | None = None) -> tuple:
     """`(label, node_id)` pairs into the evidence layer (spec D-14).
@@ -712,9 +712,6 @@ def _evidence_for(repo: str, endpoint: dict | None, outcome=None,
         pairs.append(("DeclaredOutcome", raw.outcome_id_for(repo, outcome)))
     for check in checks:
         pairs.append(("Check", raw.check_id(repo, check.id, check.expression)))
-    for type_name, field_name in fields:
-        owner = (by_simple or {}).get(type_name, type_name)
-        pairs.append(("Field", raw.field_id(repo, owner, field_name)))
     if rejection is not None and rejection.exception_ref:
         pairs.append(("ExceptionMapping", rejection.exception_ref))
 

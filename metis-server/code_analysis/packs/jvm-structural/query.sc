@@ -137,9 +137,143 @@ import java.io.PrintWriter
   // Annotation names come from configuration (spec X-10b/X-4); an unrecognised
   // framework yields nothing here, which the mapper reports as a config problem
   // rather than as an empty service.
-  val verbs = Map(
+  val builtinVerbs = Map(
     "GetMapping" -> "GET", "PostMapping" -> "POST", "PutMapping" -> "PUT",
     "DeleteMapping" -> "DELETE", "PatchMapping" -> "PATCH", "RequestMapping" -> "ANY")
+
+  // Profile-declarable, the way `outbound_client`, `security` and `schema`
+  // already are. Its absence was an asymmetry: a project could declare its own
+  // Feign marker but not its own mapping stereotype, so the one lookup with no
+  // escape hatch was the one that silently recovered nothing.
+  val verbs =
+    if (named("mapping").nonEmpty) builtinVerbs ++ named("mapping") else builtinVerbs
+
+  // ---- Annotation composition (Spring's own rule) ----------------------
+  //
+  // `@GetMapping` IS `@RequestMapping(method = GET)`, and a project's own
+  // stereotype wraps one of those in turn. Spring resolves this recursively
+  // (`AnnotationUtils.findAnnotation`); so does CodeQL, whose
+  // `SpringControllerAnnotation` is defined in terms of itself:
+  //
+  //   this.hasQualifiedName("org.springframework.stereotype", "Controller")
+  //   or this.getAnAnnotation().getType() instanceof SpringControllerAnnotation
+  //
+  // Matching the literal name instead failed in BOTH directions, and the second
+  // is the dangerous one: a house stereotype wrapping `@GetMapping` recovered no
+  // route at all, and one wrapping `@FeignClient` escaped the outbound-client
+  // exclusion and INVENTED a route the service does not serve.
+  //
+  // **Bounded to what the CPG contains.** Only annotation types declared in the
+  // analysed sources can be followed; a stereotype from a jar Métis never parsed
+  // is not resolvable here, and is left alone rather than guessed at. Declaring
+  // it in the project profile is the supported answer for that case.
+  //
+  // Ported from github/codeql (MIT, (c) GitHub, Inc.) -- the rule is theirs.
+  // Identified by `@Retention`/`@Target`, NOT by the source text. javasrc2cpg
+  // renders an annotation declaration's `code` as `public class GetJson` -- the
+  // word `@interface` never appears -- so a text filter matched nothing and the
+  // whole closure silently resolved to a single hop. Measured, not assumed.
+  //
+  // The idiom is also the right discriminator on its own terms: an annotation
+  // Spring reads at runtime must carry `@Retention(RUNTIME)`, and an ordinary
+  // class almost never carries either marker. That keeps a class from lending
+  // its annotations to an unrelated annotation of the same simple name.
+  val annotationDecls: Map[String, List[Annotation]] =
+    cpg.typeDecl
+      .filter(_.annotation.name.l.exists(n => n == "Retention" || n == "Target"))
+      .map(td => td.name -> td.annotation.l)
+      .toMap
+
+  /** Every annotation reachable from `a` by composition, `a` itself first.
+    *
+    * `seen` is a cycle guard: annotations may legally reference one another
+    * (`@Retention` carries `@Documented`, which carries `@Retention`), and an
+    * unguarded walk does not terminate.
+    */
+  def composedWith(a: Annotation, seen: Set[String] = Set.empty): List[Annotation] =
+    if (seen.contains(a.name)) Nil
+    else a :: annotationDecls.getOrElse(a.name, Nil)
+      .flatMap(meta => composedWith(meta, seen + a.name))
+
+  // ---- Controller identity and inherited mappings ----------------------
+  //
+  // CodeQL makes the class stereotype a PRECONDITION of a request-mapping
+  // method (`SpringControllerMethod` requires `getDeclaringType() instanceof
+  // SpringController`) and then resolves the mapping through `overrides*`. Both
+  // halves are needed together: requiring the stereotype alone deletes a route
+  // whose mapping lives on an interface, and walking overrides alone still
+  // counts a Spring MVC handler as a REST surface.
+
+  /** Supertypes of `m`'s declaring type, transitively. Bounded: a cycle cannot
+    * occur in legal Java, but a malformed CPG should not hang extraction. */
+  def supertypesOf(td: TypeDecl, depth: Int = 0): List[TypeDecl] =
+    if (depth > 8) Nil
+    else td.inheritsFromTypeFullName.toList
+      .filterNot(_ == "java.lang.Object")
+      .flatMap(fn => cpg.typeDecl.fullNameExact(fn).l)
+      .flatMap(sup => sup :: supertypesOf(sup, depth + 1))
+
+  /** The methods `m` overrides -- matched on name AND signature, so an overload
+    * does not lend its mapping to a sibling. */
+  def overridden(m: Method): List[Method] =
+    m.typeDecl.headOption.toList
+      .flatMap(supertypesOf(_))
+      .flatMap(_.method.nameExact(m.name).l)
+      .filter(_.signature == m.signature)
+
+  /** Mapping annotations on `m` or on anything it overrides (CodeQL:
+    * `this.overrides*(superMethod)`). The shape springdoc generates and that
+    * teams share between a client and the service serving it. */
+  def mappingAnnotations(m: Method): List[Annotation] =
+    (m :: overridden(m)).flatMap(_.annotation.l)
+
+  /** Annotations on the declaring class and its supertypes, composition
+    * resolved. */
+  def ownerAnnotations(m: Method): List[Annotation] =
+    m.typeDecl.headOption.toList
+      .flatMap(td => td :: supertypesOf(td))
+      .flatMap(_.annotation.l)
+      .flatMap(a => composedWith(a))
+
+  /** A Spring controller of any kind. `@RestController` is checked by name as
+    * well as by composition: Spring's own annotations are not in the CPG, so
+    * `@RestController` cannot be followed to the `@Controller` it carries. */
+  def isController(m: Method): Boolean =
+    ownerAnnotations(m).exists(a => a.name == "Controller" || a.name == "RestController")
+
+  /** Whether the handler's return value is a RESPONSE BODY.
+    *
+    * `@RestController` implies `@ResponseBody`; plain `@Controller` does not --
+    * there the String is a view name handed to a template resolver, and
+    * modelling it as a body claims the caller receives text nobody ever sends.
+    * That is the `@FeignClient` fault by another route: behaviour attributed to
+    * a service that does not have it. */
+  def returnsResponseBody(m: Method): Boolean =
+    ownerAnnotations(m).exists(_.name == "RestController") ||
+      (m :: overridden(m)).flatMap(_.annotation.l).exists(_.name == "ResponseBody") ||
+      ownerAnnotations(m).exists(_.name == "ResponseBody")
+
+  /** The HTTP verb this annotation declares, directly or by composition.
+    *
+    * `@RequestMapping` carries its verb in `method =`, so resolving a stereotype
+    * to the NAME `RequestMapping` and stopping would report every composed
+    * mapping as `ANY` -- turning a precise `GET` into "some verb", which reads
+    * like recovered information and is not.
+    */
+  def verbOf(a: Annotation): Option[String] =
+    composedWith(a).flatMap { c =>
+      verbs.get(c.name).map {
+        case "ANY" =>
+          // Read straight off `parameterAssign` rather than through `argPairs`:
+          // that helper is defined further down and a Scala script forbids the
+          // forward reference across the vals in between.
+          c.parameterAssign.code.l
+            .flatMap("^\\s*method\\s*=\\s*(.+)$".r.findFirstMatchIn(_))
+            .map(_.group(1).split("\\.").last.replaceAll("[^A-Za-z]", "").toUpperCase)
+            .find(_.nonEmpty).getOrElse("ANY")
+        case verb => verb
+      }
+    }.headOption
 
   // Real Spring code routes through constants far more often than string
   // literals -- `@GetMapping(COMMIT)` where `COMMIT = "/commit"`. An earlier
@@ -344,7 +478,16 @@ import java.io.PrintWriter
     "RequestHeader" -> "header",
     "RequestBody"   -> "body",
     "RequestPart"   -> "form",
-    "ModelAttribute" -> "form"
+    "ModelAttribute" -> "form",
+    // `contract.IN_COOKIE` has existed since cookie parameters were found to be
+    // "disclosed as unmappable and dropped"; the map that feeds it never named
+    // the annotation. "send this in a cookie" and "send this in a header" build
+    // different requests, which is the whole reason the location is separate.
+    //
+    // `@MatrixVariable` is the other name CodeQL binds and is deliberately NOT
+    // added: it has no location in `PARAMETER_LOCATIONS`, and choosing one is an
+    // ontology decision (D-2), not a pack fix.
+    "CookieValue"   -> "cookie"
   )
 
   // Constraints worth carrying: they are the test-data conditions a fixture has
@@ -460,16 +603,102 @@ import java.io.PrintWriter
     "PermitAll" -> "role"
   )
 
-  def securityJson(m: Method): String = {
+  // ---- Security declared in the filter chain --------------------------
+  //
+  // Until now this pack read security from annotations only, and said so: an
+  // endpoint with no fact meant "nothing was declared on it", never "it is
+  // open". That stays true -- but a filter chain IS a declaration, and refusing
+  // to read it left the commonest way of securing a Spring service invisible.
+  //
+  // CodeQL models the same builder (`SpringSecurity.qll`: `authorizeRequests` /
+  // `authorizeHttpRequests`, `requestMatcher(s)`, `securityMatcher(s)`,
+  // `permitAll`, `anyRequest`). Ported from github/codeql (MIT, (c) GitHub, Inc.).
+  //
+  // **`permitAll` is the one shape that licenses the word "open"**, and it gets
+  // its own scheme for exactly that reason: "declared public" and "nothing
+  // declared" are different facts, and collapsing them is the claim this pack
+  // has always refused to make.
+  val securityRules = Map(
+    "permitAll" -> "public", "denyAll" -> "denied",
+    "authenticated" -> "authenticated", "fullyAuthenticated" -> "authenticated",
+    "hasRole" -> "role", "hasAnyRole" -> "role",
+    "hasAuthority" -> "authority", "hasAnyAuthority" -> "authority")
+
+  val QUOTED = "\"([^\"]*)\"".r
+
+  def quotedStrings(s: String): List[String] =
+    QUOTED.findAllMatchIn(s).map(_.group(1)).filter(_.nonEmpty).toList
+
+  // Each call in a fluent chain carries the chain UP TO ITSELF as its `code`, so
+  // the longest one in a method is the complete expression. Taken verbatim
+  // rather than reassembled: the source text is the fact.
+  val securityChains: List[String] =
+    cpg.method.l.flatMap { m =>
+      val codes = m.call.l.filter(c => securityRules.contains(c.name)).map(_.code)
+        .filter(c => c.contains("requestMatchers") || c.contains("anyRequest") ||
+                     c.contains("securityMatcher"))
+      if (codes.isEmpty) None else Some(codes.maxBy(_.length))
+    }.distinct
+
+  val CHAIN_RULE =
+    ("(requestMatchers|securityMatchers|securityMatcher|anyRequest)\\(([^)]*)\\)" +
+     "\\.(permitAll|denyAll|authenticated|fullyAuthenticated|hasRole|hasAnyRole|" +
+     "hasAuthority|hasAnyAuthority)\\(([^)]*)\\)").r
+
+  /** `(patterns, rule, arguments)` in the order they are written. Order IS the
+    * semantics: Spring applies the first matcher that matches, so a rule list
+    * read out of order authorises the wrong thing. */
+  def chainRules(chain: String): List[(List[String], String, List[String])] =
+    CHAIN_RULE.findAllMatchIn(chain).map { mt =>
+      val patterns =
+        if (mt.group(1) == "anyRequest") List("/**") else quotedStrings(mt.group(2))
+      (patterns, mt.group(3), quotedStrings(mt.group(4)))
+    }.toList
+
+  /** Ant-style path patterns as Spring means them: a slash followed by a double
+    * star spans segments; a single star stops at one. Everything else is
+    * literal. (Spelled out rather than shown, because Scala nests block
+    * comments and the literal pattern opens one that never closes.) */
+  def antMatches(pattern: String, path: String): Boolean = {
+    // Via a sentinel, because the naive ordering corrupts itself: replacing the
+    // multi-segment wildcard first inserts `.*`, and the single-star pass then
+    // rewrites THAT star into `[^/]*`. Measured, not theorised -- it matched
+    // `/record/{id}` and not `/record/{id}/archive`, and the catch-all matched
+    // nothing at all.
+    val SENTINEL = "\u0000"
+    val rx = pattern.replace(".", "\\.")
+      .replace("/**", SENTINEL)
+      .replace("*", "[^/]*")
+      .replace(SENTINEL, "(/.*)?")
+    ("^" + rx + "$").r.findFirstIn(path).isDefined
+  }
+
+  /** The first chain rule whose matcher covers `path`. */
+  def chainSecurityFor(path: String): Option[(String, String, List[String])] =
+    securityChains.flatMap(chainRules).collectFirst {
+      case (patterns, rule, args) if patterns.exists(antMatches(_, path)) =>
+        (securityRules.getOrElse(rule, rule), rule, args)
+    }
+
+  def securityJson(m: Method, path: String = ""): String = {
     val own = m.annotation.l ++ m.typeDecl.headOption.toList.flatMap(_.annotation.l)
-    val facts = own.filter(a => securityAnnotations.contains(a.name)).map { a =>
+    val annotated = own.filter(a => securityAnnotations.contains(a.name)).map { a =>
       val roles = argPairs(a).map(_._2).flatMap(v => arrayMembers(v).getOrElse(List(v)))
         .map(_.replaceAll("^\"|\"$", "").trim).filter(_.nonEmpty).distinct
       s"""{"scheme":"${esc(securityAnnotations(a.name))}",""" +
-      s""""expression":"${esc(a.code)}",""" +
+      s""""expression":"${esc(a.code)}","source":"annotation",""" +
       s""""roles":[${roles.map(r => "\"" + esc(r) + "\"").mkString(",")}]}"""
     }.distinct
-    "[" + facts.mkString(",") + "]"
+    // The filter chain, appended rather than merged: an endpoint may be
+    // annotated AND matched by the chain, and those are two separate
+    // declarations by two different mechanisms. Reporting one is losing the
+    // other.
+    val chained = chainSecurityFor(path).toList.map { case (scheme, rule, args) =>
+      s"""{"scheme":"${esc(scheme)}",""" +
+      s""""expression":"${esc(rule)}(${esc(args.mkString(", "))})","source":"filter-chain",""" +
+      s""""roles":[${args.map(r => "\"" + esc(r) + "\"").mkString(",")}]}"""
+    }
+    "[" + (annotated ++ chained).mkString(",") + "]"
   }
 
   def classAnnotation(m: Method): Option[Annotation] =
@@ -489,7 +718,11 @@ import java.io.PrintWriter
   // Collapsing those two into "" is what hid the dual-mount defect.
   def classPrefix(m: Method): String = {
     val owner = m.typeDecl.name.headOption.getOrElse("")
+    // Supertypes too: a controller may carry no type-level mapping of its own
+    // and inherit `@RequestMapping` from the API interface it implements, which
+    // is where springdoc-shaped contracts put it.
     m.typeDecl.headOption.toList
+      .flatMap(td => td :: supertypesOf(td))
       .flatMap(_.annotation.name("RequestMapping").l)
       .headOption
       .map(a => routeArg(a).map(r => resolvePath(r, owner)).getOrElse(""))
@@ -506,13 +739,23 @@ import java.io.PrintWriter
       case s if s.nonEmpty => s
       case _ => Set("FeignClient")
     }
+    // Through composition, for the same reason `verbOf` is: a house stereotype
+    // wrapping `@FeignClient` used to escape this check, and the endpoint list
+    // then carried routes this service calls rather than serves.
     m.typeDecl.headOption.toList.flatMap(_.annotation.l)
-      .exists(a => markers.contains(a.name))
+      .exists(a => composedWith(a).exists(c => markers.contains(c.name)))
   }
 
-  val endpoints = internal.filterNot(isOutboundClient).flatMap { m =>
-    m.annotation.l.flatMap { a =>
-      verbs.get(a.name).map { verb =>
+  // `isController` is a precondition, not a nicety: without it a Spring MVC
+  // handler (`@Controller`, no `@ResponseBody`) is recovered as a REST endpoint
+  // whose body is a view name. `returnsResponseBody` separates the two.
+  val endpoints = internal
+    .filterNot(isOutboundClient)
+    .filter(isController)
+    .filter(returnsResponseBody)
+    .flatMap { m =>
+    mappingAnnotations(m).flatMap { a =>
+      verbOf(a).map { verb =>
         val rawParam = routeArg(a)
         val owner = m.typeDecl.name.headOption.getOrElse("")
         val resolved = rawParam.map(r => resolvePath(r, owner)).getOrElse("")
@@ -524,7 +767,7 @@ import java.io.PrintWriter
         s""""path":"${esc(path)}","path_source":"${esc(rawParam.getOrElse(""))}",""" +
         s""""handler_method_id":"${esc(m.fullName)}",""" +
         s""""parameters":${parametersJson(m)},""" +
-        s""""security":${securityJson(m)},""" +
+        s""""security":${securityJson(m, path)},""" +
         s""""consumes":${mediaTypes(a, "consumes")},""" +
         s""""produces":${mediaTypes(a, "produces", classAnnotation(m))},""" +
         s""""validated":${isValidated(m)},""" +

@@ -1,11 +1,27 @@
-# Extraction — all sources follow this pattern
+# Capture one stated source — all three follow this pattern
 
-**Used by:** any source in the Supported Sources table (`jira`, `confluence`, `swagger`, `scale`, `code`, `database`) — [intake-processor](../SKILL.md)
+**Used by:** `jira`, `scale`, `confluence` — [intake-processor](../SKILL.md)
 
-**R** Read source data: fetch from API (Jira/Confluence) or parse from file (Swagger/code/schema). Stop and report if source is unreachable or malformed.
+**R** — Read. Run `metis intake fetch --system <s> --key <k> --base-url <url>
+--token-env <NAME> --out <dir>`. Pass the NAME of the variable holding the
+token, never the token (PLT-005). Stop and report if the source is unreachable:
+a 401 reported as "no such issue" is the failure this step exists to avoid.
 
-**P** Map to UIF: apply the source-specific extractor. Separate FACTS from SPECIFICATIONS. Mark conflicts explicitly — never silently reconcile.
+**P** — Check. `fetch` prints a conformance verdict per document. A document
+marked `WILL BE REFUSED` is not landed; report the reason. An advisory is not a
+defect — "this text is not EARS-conformant, so it will land as a `Finding`" is
+correct behaviour, and saying it here is the point.
 
-**I** Write UIF JSON to `~/.atlas/tmp/uif/<source>/<scope-id>.json`. Validate schema before write. Report path and key counts on completion.
+**I** — Land. Run `metis intake land <dir>/<key>.uif.json`. Report the per-label
+counts it prints, and the count of claimed acceptance criteria it **declined**
+— that number is evidence the S-13 refusal happened, not a warning.
 
-**Gate** File must exist and pass schema validation before downstream skills may consume it.
+**Gate** — Everything lands at `Quarantine` (S-4). Nothing here approves
+anything, and nothing downstream may generate from it until a human passes G1.
+
+## Where the files go
+
+`--out` is a directory the caller names, and the UIF file is an inspectable
+intermediate rather than a deliverable. There is no default output location
+under a home directory: this step previously wrote into a sibling project's tmp
+tree, which is the coupling the port exists to remove.

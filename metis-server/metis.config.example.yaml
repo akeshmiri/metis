@@ -1,6 +1,12 @@
-# Métis config template — copy to .metis/config.yaml (project-level) or
-# ~/.metis/config.yaml (host-level default) and fill in for real.
-# See config_manager.py for the resolution rule this file participates in.
+# Métis config template — copy to `~/.metis/config.json` and fill in for real.
+#
+# Two things to note before copying. The reader is JSON-only, so a `.yaml` copy
+# is REPORTED as unreadable rather than silently skipped; this file is the
+# annotated reference, and `metis.config.example.json` is the one to copy.
+# And there is no project-level slot: `~/.metis/config.json` is the single
+# default, or `METIS_CONFIG_PATH` names the only file considered. The resolution
+# rule lives in `metis_mcp/mbt/graph_session.py::config_paths` — the
+# `config_manager.py` this header used to cite went with the v1 engine.
 
 zdr:
   confirmed: false   # REPLACE only after metis-const-053-confirmation-record.md
@@ -22,7 +28,6 @@ repositories:
     note: "REPLACE: why this classification"
 
 graph:
-  backend: "REPLACE: local | neo4j"
   neo4j:
     uri: "REPLACE: e.g. bolt://localhost:7687"
     user: "REPLACE: e.g. neo4j"
@@ -37,10 +42,3 @@ server:
 
 security:
   jwt_secret_env: "REPLACE: env var name holding the real JWT secret (streamable-http only)"
-
-# §9.1 Headroom-style response compression -- opt-in, off by default.
-# REQ-METIS-COST-01 treats this as a guardrail-boundary control, not a
-# tuning default; source_episode_id/source_span are never compressed
-# regardless of this setting.
-token_optimization:
-  headroom_enabled: false

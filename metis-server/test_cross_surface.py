@@ -80,14 +80,30 @@ def _ui_model(include_locked=True, restated_guard=False) -> Model:
 
 
 def _links(confirmed=True, include_locked=True) -> LinkSet:
+    """INVOKES says which UI transition *renders* an outcome; TRIGGERS says which
+    UI action *starts* the call (M-5a).
+
+    One click starts the login request, and `a-ok`/`a-bad`/`a-locked` are its
+    three outcomes — so `u-ok` TRIGGERS all three however many of them the UI
+    can render. Dropping the locked outcome from INVOKES therefore leaves it
+    triggered and unobserved, which is the unhandled-outcome question exactly.
+    Recording it is not optional detail: the same-trigger heuristic that used to
+    infer this from the invokes map alone has been removed.
+    """
     pairs = [("u-ok", "a-ok"), ("u-bad", "a-bad")]
     if include_locked:
         pairs.append(("u-locked", "a-locked"))
     links = LinkSet(journey="login")
-    for ui, api in pairs:
+
+    def _link(ui, api):
         link = InvokesLink(ui_transition_id=ui, api_transition_id=api,
                            proposed_by="jvm-behaviour", evidence={"endpoint": "/auth/login"})
-        links.links.append(confirm_link(link, "alice") if confirmed else link)
+        return confirm_link(link, "alice") if confirmed else link
+
+    for ui, api in pairs:
+        links.links.append(_link(ui, api))
+    for api in ("a-ok", "a-bad", "a-locked"):
+        links.triggers.append(_link("u-ok", api))
     return links
 
 

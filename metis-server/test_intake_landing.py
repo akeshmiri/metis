@@ -66,9 +66,9 @@ def test_the_anchor_carries_the_identifier_its_own_system_uses():
     ("database", "DatasourceItem", "datasource_id"),
 ])
 def test_every_extractor_has_an_anchor(system, label, prop):
-    """Taken from what the extractors actually emit, not what they are called:
-    `swagger_extractor.py` writes `source_system="swagger"` and Zephyr Scale's
-    writes `"scale"`."""
+    """Taken from what a producer actually emits, not what the source is
+    called: an OpenAPI document's `source_system` is `swagger` and Zephyr
+    Scale's is `scale`."""
     doc = _uif(scope={"primary_id": "X-1", "primary_type": "t",
                       "source_system": system})
     plan = I.plan_intake(doc)

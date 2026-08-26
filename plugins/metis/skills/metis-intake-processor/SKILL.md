@@ -1,116 +1,110 @@
 ---
 name: metis-intake-processor
-description: Extract a real source — Jira, Confluence, Swagger/OpenAPI, Zephyr Scale, source code or a database — into one Unified Intake Format (UIF) document, every field traced to the response it came from, nothing inferred. Use when a user wants a source captured in a normalized, reviewable shape. The landing half has no implementation in this build and says so rather than pretending.
+description: Capture a stated requirement from a tracker or wiki — a Jira issue, a Zephyr Scale test case, or a Confluence page — as a Unified Intake Format document and land it in the graph. Every field traces to the response it came from; nothing is inferred. Use when somebody wants what a source SAYS the system should do brought into Métis. For code, OpenAPI or a database, see "Sources that do not go through UIF" below.
 ---
 
 # Métis intake-processor
 
-Extract one real source into one Unified Intake Format document. Every field
-traces to the response it came from; nothing is inferred.
+Bring one real source into the graph as evidence of what somebody *stated*. Two
+commands, both `metis`:
 
-Writing a UIF file is supported and useful for inspection. It is not the end of
-the pipeline — see **What this build cannot do** below before promising a user
-that anything reaches the graph.
+```bash
+metis intake fetch --system jira --key ABC-123 --base-url https://x.atlassian.net \
+                   --token-env METIS_TRACKER_TOKEN --out ./uif
+metis intake land ./uif/ABC-123.uif.json
+```
 
-## Supported sources
+`fetch` prints a conformance verdict per document before you land anything, so a
+document that will be refused says so at the door rather than after a run.
 
-| Source | Extractor | Config |
+## Sources this skill covers
+
+| `--system` | Source | Anchor landed |
 |---|---|---|
-| `jira` | `extractors/jira_extractor.py` | `configs/extractors/jira-extractor.yaml` |
-| `confluence` | `extractors/confluence_extractor.py` | `configs/extractors/confluence-extractor.yaml` |
-| `swagger` | `extractors/swagger_extractor.py` | `configs/swagger-extractor.yaml` |
-| `scale` | `extractors/scale_extractor.py` | `configs/scale-extractor.yaml` |
-| `code` | `extractors/code_extractor.py` | `configs/code-extractor.yaml` |
-| `database` | `extractors/database_extractor.py` | `configs/database-extractor.yaml` |
+| `jira` | a named Jira issue — summary, description, type, status, labels | `JiraItem` |
+| `scale` | a named Zephyr Scale test case — name, objective, status, labels | `ZephyrItem` |
+| `confluence` | a named Confluence page — title, body, status, labels | `ConfluenceItem` |
 
-**Step**: [steps/01-extract.md](steps/01-extract.md) — one generic procedure for
-every source above.
+`scale` is Zephyr Scale. The value is `scale` and not `zephyr` because that is
+what `intake_landing.ANCHORS` keys `ZephyrItem` on; renaming it would detach
+every item from its anchor.
 
-## The pipeline this feeds
+**Named items only.** These read the keys they are given. They do not crawl a
+project, run JQL, walk a Confluence space, or follow links — a crawl is a
+different capability and would need arguing for.
 
-```
-source → extractor → UIF   (the file is the deliverable)
-                                                    ├─ Stage 1 deterministic triage (free)
-                                                    ├─ Stage 2 model mining (only the ambiguous remainder)
-                                                    └─ Stage 4 Requirement + AC + TestDesign, at Quarantine
-```
+**Read-only by construction.** `tracker.ENDPOINTS` is a closed allowlist of GET
+paths and `assert_read_only` checks every URL before it is issued, so a reader
+that grew a write fails in the test suite rather than in front of somebody's
+tracker (X-7a).
 
-## What this build cannot do
+**The token is named, never passed.** `--token-env` takes the NAME of an
+environment variable. A secret on a command line is in the shell history, the
+process list, and every CI log that echoes its commands (PLT-005).
 
-**The UIF→Episode step no longer exists.** It ran through
-`metis_mcp/uif_intake.py`, which was removed with the v1 engine; `--land` now
-refuses with that reason rather than writing nothing and reporting success.
-Extraction is unaffected and real.
+## Sources that do not go through UIF
 
-Say this to the user before they run an extraction expecting the graph to
-change. A refusal they were warned about is a limitation; the same refusal
-after they have staged a source is a waste of their time.
+Code, OpenAPI and databases are read directly into the extraction contract by
+their own readers, which recover far more than a UIF can carry. Do not reach for
+this skill for them:
 
-When the step returns, it will render the UIF to markdown and drop ids,
-timestamps and extractor metadata. That is deliberate: Stage 1 triages prose for
-behavioural cues, and handing it raw JSON would get every block discarded.
+| Source | Command | Reader |
+|---|---|---|
+| source code | `metis analyse` | the Joern query packs |
+| OpenAPI / Swagger | `metis spec` | `code_analysis.openapi` |
+| a database catalogue | `metis data` | `code_analysis.db_catalogue` |
+
+`metis guide` renders the current capability map, and `connectors/intakes.json`
+is the declaration it is generated from — including what each intake **cannot**
+do.
 
 ## Non-negotiable rules
 
-1. **A UIF's claimed structure is not trusted.** UIF arrives with
-   `specifications.acceptance_criteria` already labelled as acceptance criteria.
-   This skill still does **not** create `AcceptanceCriterion` nodes from that
-   claim — the text goes through the same mining and guardrail path as any other
-   intake, landing at `Quarantine` for human review. Trusting an upstream
-   extractor's labelling is the shortcut `atlas_bridge.py` explicitly refuses,
-   and this skill refuses it too.
-2. **Never land an empty Episode.** A UIF that renders to no prose is refused
-   with a reason, not written — an empty Episode looks like successful ingestion
-   of nothing.
-3. **Never construct UIF paths inline.** Output paths come from `configs/`.
-4. **Output is JSON only.** No code samples in extractor output.
+1. **A document's claimed acceptance criteria are never trusted.** A UIF may
+   arrive with `specifications.acceptance_criteria` already labelled as such,
+   and no `AcceptanceCriterion` is created from it. A criterion asserted by the
+   document that raised the requirement is not independent evidence of it
+   (S-13). The text goes through mining and review like any other intake, and
+   `intake land` reports how many claims it declined.
+2. **Everything lands at `Quarantine`.** No intake writes `Approved` (S-4).
+3. **Only EARS-conformant text becomes a `Requirement`.** Free prose — most Jira
+   titles — lands as a `Finding` pointing at `knowledge-capture` instead. That
+   is correct behaviour and it is also the most surprising thing this intake
+   does, which is why `fetch` says it before you land.
+4. **Never state a value the source did not.** No invented priority, no guessed
+   URL, no reconstructed formatting.
 
 ## Verification
 
 ```bash
-cd plugins/metis/skills/metis-intake-processor
-python3 -m pytest tests/ -q      # extractor tests: no Neo4j, no model calls
+cd metis-server
+uv run python -m pytest test_tracker.py test_intake_landing.py test_intakes.py -q
 ```
 
-Three files: `tests/test_jira_extractor.py`, `tests/test_validators.py`,
-`tests/test_hard_format_constraints.py`.
-
-**13 of the 14 pass. `test_empty_source_references` fails, and it is a real gap,
-not a flaky test.** `validators.py` checks `uif_version`, `scope`, `metadata` and
-`links` and **never looks at `traceability` at all** — so a UIF with no
-provenance whatsoever validates clean. The schema requires
-`traceability.source_references`, all six extractors emit it, and this skill's
-whole claim is that every field is traced to the response it came from. The two
-tests also disagree with each other: `test_valid_uif`'s fixture carries no
-`traceability` either and expects to pass. Deciding which is right is a semantic
-call about this component, not a cleanup, so it is stated here rather than
-guessed at.
-
-**This used to name `metis-server/test_intake_processor.py`, which does not
-exist** — it tested the UIF→Episode landing that went with the v1 engine, and it
-was removed with it. A verification section naming a file nobody can run is worse
-than none: it reads as evidence.
+No Neo4j, no network, no model calls: the reader's fixture path is what the
+suite exercises, and the live read goes through a transport the caller opens.
 
 ## Where this came from
 
 Below the operational content deliberately: it is provenance, and it was costing
 a full screen ahead of the instructions on every invocation.
 
-**Ported from Atlas** (`.agents/skills/intake-processor`), then rewired. The
-extractors are unchanged real code; what changed is where the output goes. They
-were the cleanly-portable part of Atlas's tree — standard library and each
-other, no dependency on Atlas's shared runtime (`_shared_loader`,
-`config_provider`, `artifact_provider`) — which is why this skill was ported
-first.
+This skill was ported from Atlas (`.agents/skills/intake-processor`) and carried
+six extractor modules with it. **They have been retired.** Five were superseded
+by server-side readers that do strictly more — `code_analysis.tracker`,
+`code_analysis.openapi`, `code_analysis.db_catalogue` and the Joern packs — and
+three of those six could not run at all, raising `NotImplementedError` for the
+live path. The sixth, Confluence, was ported into `code_analysis.tracker`, where
+it dropped three defects rather than carrying them across:
 
-The first port took Jira alone and said so. The remaining five — Confluence,
-Swagger/OpenAPI, Zephyr Scale, code, database — followed because they are the
-sources Requirements have to be built from, and reaching into another project's
-tree for them was the one real coupling Métis had left.
+| Defect in the ported extractor | What it did |
+|---|---|
+| parsed an "Acceptance Criteria" heading into `specifications` | manufactured exactly the self-asserted criterion S-13 refuses |
+| hardcoded `"priority": "high"` | stated a value no source said |
+| hardcoded an example.com page URL | gave every page provenance pointing at a domain nobody owns |
 
-| | Atlas | Métis |
-|---|---|---|
-| Output | UIF JSON at `~/.atlas/tmp/uif/<source>/<scope-id>.json` | UIF intended to land as an `Episode` carrying `raw_content` |
-| Consumer | The UIF file itself, for review or later ingestion | The graph — **not implemented in this build** |
-| Schema | `.agents/skills/shared/schemas/` | `plugins/metis/skills/shared/schemas/` |
-| Sources | six extractors | six extractors |
+It also took only the first `<p>` as the description, losing every requirement
+stated below the opening paragraph. The body is now carried whole.
+
+What remains of Atlas here is attribution, which is required, and no live wire,
+which is forbidden — the distinction `test_independence.py` draws.

@@ -326,14 +326,19 @@ def divergences(ui_model: Model, api_model: Model, links: LinkSet,
                 remedy="re-extract the API surface, or retire the UI transition"))
 
     # Unhandled outcome: the UI *starts* this call and can never render this
-    # result. **This is a direct query now.** It used to be inferred from a
-    # same-trigger heuristic over the invokes map, because one edge type could
-    # not distinguish "the UI starts this flow" from "the UI rendered this
-    # outcome". With `TRIGGERS` separate, the question is exactly:
+    # result. **This is a direct query, and only a direct query.** It used to be
+    # inferred from a same-trigger heuristic over the invokes map, because one
+    # edge type could not distinguish "the UI starts this flow" from "the UI
+    # rendered this outcome". With `TRIGGERS` separate, the question is exactly:
     #
     #     triggered by some UiAction, and observed by none.
+    #
+    # That heuristic was kept for a while as a fallback for journeys whose links
+    # predated the split, and it is gone: it reported a finding derived from the
+    # very conflation `TRIGGERS` exists to remove, without saying that was where
+    # the finding came from. A journey with no `TRIGGERS` recorded now reports
+    # nothing here, which is what re-extraction fixes.
     triggered = links.triggered_api_ids(confirmed_only)
-    ui_targets = {t.target for t in ui_model.transitions.values()}
     reverse: dict[str, list[str]] = {}
     for ui_id, api_id in links.as_map(confirmed_only).items():
         reverse.setdefault(api_id, []).append(ui_id)
@@ -350,21 +355,6 @@ def divergences(ui_model: Model, api_model: Model, links: LinkSet,
                         f"call is made and this result can never be rendered (M-5f)"),
                 remedy="add the UI transition that renders this outcome (M-5b), or "
                        "confirm the outcome is genuinely unreachable from the UI"))
-            continue
-        if not ui_targets:
-            continue
-        # No TRIGGERS recorded: fall back to the older same-trigger inference, so
-        # a journey whose links predate this split still reports something.
-        same_trigger = [l for l in links.as_map(confirmed_only).values()
-                        if l in api_model.transitions
-                        and api_model.transitions[l].trigger == api_transition.trigger]
-        if same_trigger:
-            findings.append(Divergence(
-                kind=UNHANDLED_OUTCOME, element_id=tid, counterpart_id="",
-                detail=(f"the UI handles {api_transition.trigger!r} but has no "
-                        f"transition for the {api_transition.target} outcome — an "
-                        f"unhandled response (M-5f)"),
-                remedy="add the UI transition that renders this outcome (M-5b)"))
 
     findings.extend(check_restatement(ui_model, api_model, links))
     return findings

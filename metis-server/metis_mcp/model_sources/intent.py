@@ -34,6 +34,7 @@ prevent.
 """
 from __future__ import annotations
 
+
 import hashlib
 import json
 import re
@@ -48,6 +49,7 @@ from metis_mcp.ontology.labels import (
     HUMAN_CONFIRMED,
     INDEPENDENTLY_AUTHORED,
 )
+from metis_mcp.retrieval import search_text_for
 
 FILE_VERSION = "metis.intent/1"
 
@@ -348,13 +350,19 @@ def plan_intent(document: IntentFile, episode_id: str = "", job_id: str = "manua
         add_node("Intent", {
             "id": intent.id, "source_episode_id": episode_id,
             "name": intent.id, "statement": intent.statement,
+            "search_text": search_text_for(intent.id, intent.statement),
             "lifecycle_state": QUARANTINE,
+            # Bi-temporal validity: `valid_from` is when this claim started
+            # being true, `valid_to` is "" while it still is. Invalidation
+            # sets `valid_to`; nothing is deleted (see landing.VALIDITY_FACTS).
+            "valid_from": recorded, "valid_to": "",
         })
 
     for spec in document.specifications:
         if not add_node("Specification", {
             "id": spec.id, "source_episode_id": episode_id,
             "name": spec.id, "statement": spec.statement,
+            "search_text": search_text_for(spec.id, spec.statement),
             "provenance": spec.provenance,
             # The nouns it is about, normalised through the shared natural key so
             # a specification and the glossary agree about what `api spec` is.
@@ -364,6 +372,10 @@ def plan_intent(document: IntentFile, episode_id: str = "", job_id: str = "manua
             "contracts_json": json.dumps(
                 [{"kind": k, "path": p} for k, p in spec.contracts], sort_keys=True),
             "lifecycle_state": QUARANTINE,
+            # Bi-temporal validity: `valid_from` is when this claim started
+            # being true, `valid_to` is "" while it still is. Invalidation
+            # sets `valid_to`; nothing is deleted (see landing.VALIDITY_FACTS).
+            "valid_from": recorded, "valid_to": "",
         }):
             continue
         add_edge("Intent", spec.intent_id, "SPECIFIED_BY", "Specification", spec.id)

@@ -1,4 +1,4 @@
-# Sandbox overrides — matches Athena's own values-sbx.yaml convention.
+# Sandbox overrides.
 # Apply with: helm install metis . -f values.yaml -f values-sbx.yaml
 
 default:

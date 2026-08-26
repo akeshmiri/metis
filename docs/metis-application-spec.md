@@ -1852,10 +1852,10 @@ a bug in the fourth, not a variant reading.
 **D-3 — nothing is destructively overwritten.** Supersession creates a new
 version; the prior one remains reconstructable (M-15).
 
-### 8.2 Labels — sixty-one, and closed
+### 8.2 Labels — sixty-two, and closed
 
 The count is pinned by `test_ontology.py`
-(`assert len(KNOWN_LABELS) == 61`), so this table and
+(`assert len(KNOWN_LABELS) == 62`), so this table and
 `metis_mcp/ontology/labels.py` cannot drift apart without a test failing. D-1
 governs additions: name the writer and name the reader, or stage it in §8.7.
 
@@ -1900,7 +1900,8 @@ decision. Two representations of one fact is where most of this codebase's real
 defects have come from, so the rule is that they cannot disagree, and
 `test_ontology.py` asserts it rather than trusting it.
 
-| 56 | **`NeedReview`** | Marker: a human still owes a decision on this node | Landing, finding writer |
+| 51 | **`Lesson`** | One authored academy lesson about Métis itself — the only label whose subject is this system (D-2; see `docs/academy/PROPOSAL-landing-the-academy.md`) | `model_sources.lessons` / search |
+| 57 | **`NeedReview`** | Marker: a human still owes a decision on this node | Landing, finding writer |
 
 **The evidence layer.** The nine below hold the processed intake the control-flow
 model above is derived from. They were added together because they are one
@@ -1912,12 +1913,12 @@ neighbours) come off §8.7's staging list under D-11 — see **D-12**.
 | 14 | **`Endpoint`** | One HTTP entry point as recovered from code (Layer 2) | Raw landing (§5) |
 | 15 | **`Parameter`** | One input an endpoint reads: where it rides and what it must be | Raw landing |
 | 16 | **`Class`** | One declared type: a controller, a service, or a payload schema | Raw landing |
-| 57 | **`Enum`** | A type whose instances are a closed set of named constants. **Specialises `Class` and is written instead of it** — an enum's `constants` ARE the equivalence partitions of any field of that type, so it needs no boundary analysis. Numbered 57 and sitting here for the same reason `NeedReview` is numbered 56 and sits above row 14: the ordinal is order of addition, the position is the layer | Raw landing |
+| 58 | **`Enum`** | A type whose instances are a closed set of named constants. **Specialises `Class` and is written instead of it** — an enum's `constants` ARE the equivalence partitions of any field of that type, so it needs no boundary analysis. Numbered 57 and sitting here for the same reason `NeedReview` is numbered 56 and sits above row 14: the ordinal is order of addition, the position is the layer | Raw landing |
 | 17 | **`Field`** | One field of a type, with the constraints declared on it | Raw landing |
 | 18 | **`Method`** | One method, from Layer 1's structural pass | Raw landing |
-| 58 | **`Query`** | One thing the application asks a database, with the statement it sends. **Written as its dialect, never as `:Query`** — so every estate-wide question uses `label_expression("Query")` | Raw landing (X-19a) |
-| 59 | **`Postgres`** · **`Oracle`** · **`MySql`** | The dialect a query is sent in. Labels rather than a property because `MATCH (q:Oracle)` is the question people ask; they specialise `Query`, so the estate-wide form still exists and a service talking to two databases stays one queryable set | Raw landing |
-| 60 | **`JpaQuery`** | A repository call whose statement could not be recovered — carried raw with its reason, for a person to complete. The tier that exists so nothing is guessed | Raw landing |
+| 59 | **`Query`** | One thing the application asks a database, with the statement it sends. **Written as its dialect, never as `:Query`** — so every estate-wide question uses `label_expression("Query")` | Raw landing (X-19a) |
+| 60 | **`Postgres`** · **`Oracle`** · **`MySql`** | The dialect a query is sent in. Labels rather than a property because `MATCH (q:Oracle)` is the question people ask; they specialise `Query`, so the estate-wide form still exists and a service talking to two databases stays one queryable set | Raw landing |
+| 61 | **`JpaQuery`** | A repository call whose statement could not be recovered — carried raw with its reason, for a person to complete. The tier that exists so nothing is guessed | Raw landing |
 | 19 | **`DeclaredOutcome`** | One observable result of an entry point, as recovered | Raw landing |
 | 20 | **`Check`** | One condition evaluated on a path — a guard's own evidence | Raw landing |
 | 21 | **`ExceptionMapping`** | An `@ExceptionHandler`'s exception → status mapping | Raw landing |
@@ -1950,11 +1951,11 @@ neighbours) come off §8.7's staging list under D-11 — see **D-12**.
 | 48 | **`CodeItem`** | Evidence anchor for one analysed source tree at one revision | Intake landing |
 | 49 | **`SpecDocument`** | One rendered journey specification, stored in the graph | `specgen.specification` |
 | 50 | **`EntityDocument`** | One rendered business-entity specification | `specgen.entity` |
-| 51 | **`Intent`** | One stated need, before anybody has specified how it behaves | Knowledge capture |
-| 52 | **`Specification`** | One specified behaviour — where intent and code meet (§4.1) | Knowledge capture / extraction |
-| 53 | **`Feature`** | One user-facing capability, grouping the scenarios that show it | Knowledge capture |
-| 54 | **`RestServer`** | A `Component` serving an API surface — written **instead of** `:Component` | Extraction / approval |
-| 55 | **`WebServer`** | A `Component` serving a web surface — written **instead of** `:Component` | Extraction / approval |
+| 52 | **`Intent`** | One stated need, before anybody has specified how it behaves | Knowledge capture |
+| 53 | **`Specification`** | One specified behaviour — where intent and code meet (§4.1) | Knowledge capture / extraction |
+| 54 | **`Feature`** | One user-facing capability, grouping the scenarios that show it | Knowledge capture |
+| 55 | **`RestServer`** | A `Component` serving an API surface — written **instead of** `:Component` | Extraction / approval |
+| 56 | **`WebServer`** | A `Component` serving a web surface — written **instead of** `:Component` | Extraction / approval |
 
 **D-13 — the business layer is what the nouns mean, and it is deliberately not
 the evidence layer.** `Class` and `Field` record what the code *declares*;
@@ -2270,6 +2271,60 @@ trigger that justifies adding it, so growth is deliberate rather than accretive.
 - Five lifecycle states; generation reads only `Approved` (§8.6, D-10)
 - An explicit staging list for excluded labels (D-11)
 
+### 8.8a Validity in time (D-15, D-16)
+
+**D-15 — validity is a second axis, not a refinement of lifecycle.**
+`lifecycle_state` answers *has a human looked at this*; validity answers *was
+this ever true, and is it still*. They are independent, and a fact may be
+`Approved` and no longer valid. Collapsing them loses both answers, and a system
+whose purpose is comparing what the code does **now** against what somebody said
+**then** cannot express "true until release 4.2" with either alone.
+
+Four labels carry it — `Intent`, `Specification`, `Requirement`,
+`AcceptanceCriterion` — because "true until" means something for a claim and
+nothing for a `Method` or a `Class`, which are facts about a commit. An
+`Episode` is exempt for the same reason it is exempt from the baseline: it is
+already immutable and content-addressed.
+
+`valid_from` is required. `valid_to` is required **and may be empty**: `""` is
+the honest representation of "still true", where absent would be
+indistinguishable from "nobody recorded it" — the same conflation
+`Transition.guard_expression` refuses.
+
+**Invalidation sets `valid_to`. Nothing is deleted.** The superseded fact
+remaining answerable is the point: *what did we believe in March* is a question
+the graph should answer, not one it should have forgotten. Invalidation is
+therefore not a lifecycle decision and does not disturb one — retracting a
+reviewer's approval would misrepresent what they decided.
+
+Two consequences bind implementations:
+
+* **Validity properties are written once.** They ride in the `ON CREATE SET`
+  clause. Were `valid_to` re-asserted on every landing, a routine re-extraction
+  would reset a superseded fact to valid — an invalidation an unrelated re-run
+  can undo is not an invalidation.
+* **A read that ignores `valid_to` answers the wrong question.** It reports what
+  was ever believed while appearing to report what is believed now, and that
+  failure looks exactly like success. Every read over a validity-carrying label
+  filters on validity, or is recorded as a known exception.
+
+**D-16 — search indexes are generated from the catalogue, like every other
+constraint.** Free-text and semantic search are schema features of the graph
+database, not application code, so they are declared beside the labels they
+serve and emitted by the same generator. Two lists in two files is the drift the
+generated schema exists to prevent.
+
+Full-text uses a stemming analyzer: with the default tokeniser, a search for
+`lock` returns nothing for a criterion reading "the account is locked", which
+beats substring matching on ranking and loses to it on word forms.
+
+An embedding is meaningless outside the model that produced it. A vector
+therefore records which model wrote it, and a query whose model disagrees is
+**refused rather than answered** — the failure is otherwise silent and
+confidently wrong, which is X-3's lesson in a different costume. A corpus
+carrying more than one model is refused for the same reason: part of it would be
+unreachable without anybody being told.
+
 ### 8.9 Deferred to later sections
 
 | Question | Section |
@@ -2452,6 +2507,49 @@ interface and a permission model around an engine not yet known to work.
 - Self-approval override visible and recorded, never silent (N-11)
 - Audit records the evidence presented, not just the outcome (N-13, N-14)
 - Build order sequencing the engine ahead of interface and roles (N-16)
+- An HTTP API whose gates survive the transport (N-18, N-19)
+
+### 9.6 The HTTP API (N-18, N-19)
+
+**N-18 — a network surface authenticates; it does not trust what it is told.**
+The review UI reads identity from a header and trusts it, which is honest for a
+tool bound to loopback and unacceptable for anything reachable otherwise. On a
+network a trusted header is an impersonation hole leading directly into both
+gates, and every audit record it produces records whoever the caller claimed to
+be.
+
+Credentials are bearer tokens checked against a store of **digests**, so a leaked
+configuration file leaks nothing replayable. The environment names the store's
+path and never a secret (PLT-005). A raw token in the store is refused at load,
+because otherwise the file silently becomes a secret without anybody deciding
+that; a malformed line or an unknown role is refused rather than skipped, because
+a skipped line is a principal who believes they have access and does not.
+
+Nothing else changes. Capability is decided where it was already decided, the
+audit record is written by the function that already writes it — differing only
+in the surface it names — and a decision that cannot present its evidence is
+blocked rather than partially taken. A rule enforced in the router would be a
+rule the other surfaces do not have.
+
+**N-19 — a confirmation is bound to a run, and consumed once.**
+G2 requires a literal affirmative confirmation *in that run*. On a terminal that
+phrase enforces itself: the run is the process the operator is looking at. HTTP
+has no run — a request body carrying the affirmative word is a string an attacker
+can replay, a proxy can retry, and a client library can resend on a timeout it
+judged transient. Any of those re-confirms a publication nobody re-authorised.
+
+A confirmation over HTTP is therefore issued as a single-use ticket bound to the
+batch that was shown and the identity it was shown to, and consumed on first
+acceptance. A ticket that has been used, a batch that changed after it was shown,
+and a confirmation presented by a different identity are each refused, and the
+ticket is consumed **before** the literal word is checked so that a caller cannot
+probe for a valid ticket by sending wrong words at it.
+
+Reads answer with the same content as the agent surface. Where they cannot answer
+at all — no graph configured — they return **no content** rather than a success
+carrying a failure, because a success a client must read the body to disbelieve
+is a trap laid across every client library's happy path. A read that legitimately
+finds nothing is a different answer and says so.
 
 ---
 
@@ -2481,6 +2579,33 @@ evidence that behaviour is *correct*. They are evidence that behaviour is
 ---
 
 ## 11. Non-functional requirements
+
+### 11.0 Platform (PLT-002, PLT-003, PLT-005)
+
+Three rules the code has cited from the beginning and this document never
+defined. Written here because a citation of a rule nobody wrote is a dangling
+reference that reads as authority.
+
+**PLT-002 — a connection resolves in one order, and the order is stated.**
+Explicit arguments, then the environment, then a configuration file. No
+component decides its own precedence, so a connection that works in one place
+and not another is a difference in inputs rather than in code.
+
+**PLT-003 — there is no default credential, and a missing one halts.**
+A system that connects with a guessed credential is a system nobody can reason
+about: it is unclear afterwards which database was written, under whose
+authority. A missing credential is a halt carrying an instruction, never a
+fallback.
+
+**PLT-005 — a secret is named, never passed.**
+The environment names the variable holding a credential; the credential itself
+never reaches an argument. The rule is not "it must come from the environment" —
+it is that the secret must not reach a process listing, a shell history, or any
+log that captures a command line. A configuration file may name the variable; a
+configuration file that contains the secret is refused where it can be detected,
+and where a legacy file holds one it is read only if its permissions restrict it
+to its owner, and the run says on stderr that it did so. A world-readable secret
+read in silence is worse than either alternative.
 
 ### 11.1 Scale — assumptions, flagged for confirmation
 

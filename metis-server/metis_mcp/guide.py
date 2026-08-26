@@ -18,6 +18,18 @@ rather than a surprise.
 **Nothing here is authored.** A sentence that is not derivable from the tree
 does not belong in this module — it belongs in `docs/academy/`, which is
 authored on purpose and says so.
+
+**One page is Python-version-specific, and this is the warning.** `cli_page`
+captures argparse's `--help` output verbatim, and argparse's usage wrapping is
+not stable across versions: 3.13 keeps the trailing `...` of a long subcommand
+list on the previous line where 3.10-3.12 wrap it. The committed `cli.md`
+therefore matches on **3.13 only**, and both `test_guide.py` and
+`metis guide --check` compare bytes.
+
+If `cli.md: differs` and you changed no CLI argument, check your interpreter
+before you check your edit — CI pins 3.13 for exactly this reason. Regenerating
+on an older Python and committing the result would move the failure to everyone
+else rather than fixing it.
 """
 from __future__ import annotations
 
@@ -31,6 +43,34 @@ BANNER = (
     "overwrites it, and `test_guide.py` fails on a diff. -->")
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+
+
+class GuideRefused(Exception):
+    """`metis guide` was run somewhere it cannot regenerate anything."""
+
+
+def require_source_tree() -> pathlib.Path:
+    """Refuse unless ROOT really is a Métis checkout.
+
+    `ROOT` walks three parents up, which is the repository from a checkout and
+    an arbitrary directory above `site-packages` from an installed wheel. Both
+    inputs live there: `connectors/intakes.json`, which is outside the package
+    and so is not shipped, and `docs/`, which is where the output goes.
+
+    Without this the failure was `IntakesRefused: no intake declaration at
+    <site-packages>/../connectors/intakes.json` -- a path that reads like a
+    broken install rather than like "this command regenerates files that only
+    exist in the repository". Shipping a copy of `intakes.json` inside the
+    package would not have fixed it: the guide's *output* is `docs/`, which is
+    equally absent, so a wheel would have written pages nobody can see.
+    """
+    if not (ROOT / "docs" / "metis-application-spec.md").is_file():
+        raise GuideRefused(
+            f"`metis guide` regenerates this repository's docs/guide/ from the "
+            f"engine, so it only runs from a source checkout. Looked for the "
+            f"tree at {ROOT} and found no docs/metis-application-spec.md. "
+            f"Clone the repository and run it from there.")
+    return ROOT
 
 
 def _page(title: str, generated_from: str, body: list[str]) -> str:
@@ -231,6 +271,7 @@ def index_page() -> str:
 
 def generate() -> dict[str, str]:
     """`{filename: content}` for the whole guide."""
+    require_source_tree()
     out = {"README.md": index_page()}
     for name, builder in PAGES.items():
         if builder is not None:

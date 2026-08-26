@@ -1,16 +1,34 @@
-# Métis project-level configuration.
-# Resolution: this file (project-level) overrides ~/.metis/config.yaml
-# (host-level) if both exist. First-found-wins, no merge -- see
-# config_manager.py's docstring for the full resolution rule.
+# Métis project-level configuration -- KEPT AS A RECORD, NOT READ BY THIS BUILD.
+#
+# Resolution is in `metis_mcp/mbt/graph_session.py::config_paths`, and it is not
+# what an earlier version of this header claimed. There is one default,
+# `~/.metis/config.json`, or one override, `METIS_CONFIG_PATH`, which when set is
+# the *only* candidate. Project-local `.metis/config.*` used to be tried first;
+# that was removed deliberately, because a per-repository override of a machine's
+# connection makes "which database did that write go to" unanswerable from the
+# command alone.
+#
+# This file is therefore listed in `unreadable_config_paths` and REPORTED rather
+# than silently skipped: "there is configuration here I am not reading" is a
+# different answer from "there is no configuration". Editing a value here changes
+# nothing at runtime. Put real settings in `~/.metis/config.json`, or point
+# METIS_CONFIG_PATH at a file.
+#
+# The `config_manager.py` this header used to cite went with the v1 engine.
 
 zdr:
-  # Zero Data Retention status for the adopting organization. Fail-closed by
-  # default: while `confirmed` is false, any repository classified
-  # `confidential` below is blocked at the gate (CONST-051).
+  # Zero Data Retention status for the adopting organization.
   #
-  # Record the decision here once made -- see
-  # metis-const-053-confirmation-record.md for the procurement checklist and
-  # the fields to fill in.
+  # NOTHING READS THIS, AND THERE IS NO GATE. `CONST-051`..`CONST-053` are v1
+  # constitution rules: they appear nowhere in the current specification and in
+  # no module in this build. An earlier version of this comment said a
+  # `confidential` repository is "blocked at the gate", and no such gate exists
+  # -- the fail-closed behaviour it describes is not implemented. Kept as the
+  # record of a policy decision, which is what it is; do not read it as a
+  # control that is running.
+  #
+  # The procurement checklist it referred to is historical:
+  # docs/historical/design-notes-v1/metis-const-053-confirmation-record.md
   confirmed: false
   confirmed_date: null
   confirmed_by: null
@@ -27,23 +45,25 @@ corpus:
   # No corpus ships with Métis; point this at your own documents.
   glob: "REPLACE: /absolute/path/to/your/documents/*.md"
 
-# Graph backend. The v1 LocalGraphStore/Neo4jGraphStore split is gone --
-# metis_mcp/neo4j_graph_store.py and load_dogfooding_corpus.py went with the v1
-# engine. There is one path now: metis_mcp/mbt/graph_session.py, whose driver
-# import is deferred so every file-based command runs with no database at all.
+# The graph connection. There is one path -- metis_mcp/mbt/graph_session.py --
+# whose driver import is deferred, so every file-based command runs with no
+# database at all. There is no `backend` key: the v1 LocalGraphStore/
+# Neo4jGraphStore split went with the v1 engine, and a key naming a choice that
+# no longer exists reads as a supported control.
 # password_env names an environment variable holding the actual secret; the
 # secret never lives in this checked-in file (PLT-005).
 graph:
-  backend: local
   neo4j:
     uri: "bolt://localhost:7687"
     user: "neo4j"
     password_env: "METIS_NEO4J_PASSWORD"
 
-# Per-repository classification (CONST-051/052). Every repository Métis
-# ingests should have an explicit entry here -- anything NOT listed defaults
-# to `confidential` (fail-closed) and will be blocked, per CONST-052, not
-# silently treated as safe.
+# Per-repository classification. NOTHING READS THIS EITHER -- see the note under
+# `zdr` above. It is a declaration of intent, not an ingestion control.
+#
+# The intended rule was that every repository Métis ingests carries an explicit
+# entry, and that anything NOT listed defaults to `confidential` (fail-closed)
+# and is blocked rather than silently treated as safe. No code implements it.
 #
 # Given the ZDR decision above, most repositories should genuinely be
 # `public_internal` unless a specific one has a real contractual, regulatory,

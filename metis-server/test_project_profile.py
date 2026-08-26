@@ -212,27 +212,6 @@ def test_profiles_follow_metis_home(monkeypatch, tmp_path):
     assert profile_path("demo") == tmp_path / "profiles" / "demo.json"
 
 
-def test_a_stray_in_repo_profile_is_reported_not_read(monkeypatch, tmp_path):
-    """Two locations for one fact is two answers that can disagree, and the one
-    being ignored is exactly the one somebody just edited."""
-    from code_analysis.project_profile import LEGACY_IN_REPO, load_for, profiles_dir
-
-    monkeypatch.setenv("METIS_HOME", str(tmp_path / "home"))
-    repo = tmp_path / "demo"
-    (repo / ".metis").mkdir(parents=True)
-    (repo / LEGACY_IN_REPO).write_text(json.dumps(dict(GOOD, project="stray")))
-
-    # With no profile in METIS_HOME, the refusal must mention the stray one.
-    with pytest.raises(ProfileMissing) as e:
-        load_for(repo)
-    assert "NOT read" in str(e.value)
-
-    # With one, it is used and the stray is reported.
-    profiles_dir().mkdir(parents=True, exist_ok=True)
-    (profiles_dir() / "demo.json").write_text(json.dumps(dict(GOOD, project="demo")))
-    profile = load_for(repo)
-    assert profile.project == "demo"
-    assert any("ignored" in n for n in profile.notes)
 
 
 def test_the_cache_keeps_only_the_most_recent_builds(tmp_path):

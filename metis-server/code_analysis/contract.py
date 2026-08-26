@@ -128,16 +128,26 @@ class ParameterFact:
 class SecurityFact:
     """What an endpoint requires of a caller, Layer 2.
 
-    Recovered from declarative security only (`@PreAuthorize`, `@Secured`,
-    `@RolesAllowed`, and any class-level equivalent). Security enforced in a
-    filter chain or a gateway is **not** visible here, so an endpoint with no
-    `SecurityFact` means *nothing was declared on it*, never *it is open*. The
-    two are not the same claim and the second one is not ours to make.
+    Recovered from declarative security: annotations (`@PreAuthorize`,
+    `@Secured`, `@RolesAllowed`, and class-level equivalents) and Spring
+    Security's `HttpSecurity` filter chain, distinguished by `source`.
+
+    Security enforced at a gateway, or in a chain this analysis never saw, is
+    still invisible -- so an endpoint with no `SecurityFact` means *nothing was
+    declared that we could read*, never *it is open*. `scheme: "public"` is the
+    single construct that says open out loud (`permitAll`), and it is kept
+    distinct from absence for exactly that reason.
     """
 
-    scheme: str                    # e.g. "oauth2", "basic", "role"
+    scheme: str                    # e.g. "oauth2", "basic", "role", "public"
     expression: str                # the declaration, verbatim
     roles: tuple[str, ...] = ()
+    # WHERE the declaration lives. "annotation" is on the handler or its class;
+    # "filter-chain" is a global `HttpSecurity` rule that happens to match this
+    # route. They are different risks and a reviewer needs to tell them apart: a
+    # chain rule is ordered against every other route in the application and can
+    # be weakened from somewhere this endpoint never mentions.
+    source: str = ""
 
 
 @dataclass(frozen=True)

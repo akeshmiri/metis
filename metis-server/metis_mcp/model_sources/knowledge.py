@@ -53,8 +53,10 @@ than in a database.
 """
 from __future__ import annotations
 
+
 import json
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 import re
@@ -64,6 +66,7 @@ from metis_mcp.ears_checker import check_ears_conformance
 from metis_mcp.model_sources.ac_mining import Criterion, _parse
 from metis_mcp.mbt.model import QUARANTINE
 from metis_mcp.ontology.labels import CODE_DERIVED
+from metis_mcp.retrieval import search_text_for
 
 FILE_VERSION = "metis.knowledge/1"
 
@@ -398,7 +401,8 @@ def to_criteria(knowledge: KnowledgeFile) -> list[Criterion]:
 
 def plan_documentation(knowledge: KnowledgeFile, episode_id: str,
                        criterion_transitions: dict | None = None,
-                       glossary=None) -> "LandingPlan":
+                       glossary=None,
+                       t_recorded: str | None = None) -> "LandingPlan":
     """Stage 2 for stage 1's facts: `Requirement`, `AcceptanceCriterion`, `HAS_AC`.
 
     Built as a `LandingPlan` and written by `landing.land`, so these nodes go
@@ -456,21 +460,30 @@ def plan_documentation(knowledge: KnowledgeFile, episode_id: str,
                  "BusinessArea", knowledge.area)
 
     ears = requirement.ears
+    recorded = t_recorded or datetime.now(timezone.utc).isoformat(timespec="seconds")
+
     add_node("Requirement", {
         "id": requirement.id, "source_episode_id": episode_id,
         "name": requirement.id, "text": requirement.text,
+        "search_text": search_text_for(requirement.id, requirement.text,
+                                       knowledge.statement),
         # Never force-tagged: the checker decides, and a non-conformant statement
         # was already refused by `validate` before reaching here.
         "ears_pattern": ears.pattern or "",
         "revision": 1,
         "lifecycle_state": QUARANTINE,
         "statement": knowledge.statement,
+        # Bi-temporal validity: `valid_from` is when this claim started being
+        # true, `valid_to` is "" while it still is. Invalidation sets
+        # `valid_to`; nothing is deleted (see landing.VALIDITY_FACTS).
+        "valid_from": recorded, "valid_to": "",
     })
 
     for entry in knowledge.entries:
         if not add_node("AcceptanceCriterion", {
             "id": entry.id, "source_episode_id": episode_id,
             "name": entry.id, "text": entry.text,
+            "search_text": search_text_for(entry.id, entry.text),
             "revision": 1,
             "lifecycle_state": QUARANTINE,
             "provenance": provenance_for(entry),
@@ -479,6 +492,10 @@ def plan_documentation(knowledge: KnowledgeFile, episode_id: str,
             "derived": entry.derived,
             "complement_of": entry.complement_of,
             "source_statement": entry.source_statement,
+            # Bi-temporal validity: `valid_from` is when this claim started being
+            # true, `valid_to` is "" while it still is. Invalidation sets
+            # `valid_to`; nothing is deleted (see landing.VALIDITY_FACTS).
+            "valid_from": recorded, "valid_to": "",
         }):
             continue
         add_edge("Requirement", requirement.id, "HAS_AC",

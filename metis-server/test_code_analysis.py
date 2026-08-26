@@ -349,3 +349,122 @@ def test_no_manifest_names_a_private_repository():
         verified = str(blob.get("verified_against", ""))
         assert "demo_project" in verified, (
             f"{path}: verified_against must name the checked-in corpus")
+
+
+# --------------------------------------------------------------------------
+# Preflight diagnoses the environment, rather than blaming the install
+#
+# Both conditions below were met on a clean macOS box and both were reported as
+# "check the install" -- the same shape as the test-inventory diagnosis that
+# blamed unresolved dependencies and pointed at `--fetch-dependencies`, which
+# would not have helped. Free to run: the parsing is pure.
+# --------------------------------------------------------------------------
+
+def test_the_launcher_names_the_tool_it_cannot_find():
+    """Joern's macOS launcher shells out to `greadlink` (GNU coreutils). Without
+    it `$(greadlink -f "$0")` is empty, `dirname ""` is `.`, and the launcher
+    only works when the working directory IS joern-cli -- which surfaces as
+    "version unreadable"."""
+    from code_analysis.engine import launcher_fix, missing_launcher_tool
+
+    stderr = "/Users/x/joern/joern-cli/joern: line 4: greadlink: command not found\n"
+    assert missing_launcher_tool(stderr) == "greadlink"
+    fix = launcher_fix(stderr)
+    assert "greadlink" in fix and "brew install coreutils" in fix
+
+
+def test_an_unexplained_probe_falls_back_rather_than_inventing_a_cause():
+    """A wrong cause costs more than no cause. When stderr says nothing usable,
+    the message must not name a tool."""
+    from code_analysis.engine import launcher_fix, missing_launcher_tool
+
+    assert missing_launcher_tool("") == ""
+    assert missing_launcher_tool("some unrelated warning") == ""
+    assert "check the install" in launcher_fix("some unrelated warning")
+
+
+def test_a_shipped_astgen_under_the_wrong_name_is_a_mismatch_not_a_missing_install(
+        tmp_path):
+    """4.0.604's macOS-arm build ships `astgen-macos-arm`; `jssrc2cpg` looks for
+    `astgen-macos`. Every JS pack then fails with "Local astgen binary not
+    found", which reads like a broken install and is a naming mismatch. The
+    check has to say which, and give the one-line repair."""
+    from code_analysis.engine import astgen_check, astgen_expected_name
+
+    directory = tmp_path / "frontends" / "jssrc2cpg" / "bin" / "astgen"
+    directory.mkdir(parents=True)
+    (directory / (astgen_expected_name() + "-arm")).write_text("binary")
+
+    check = astgen_check(tmp_path)
+    assert not check.ok
+    assert astgen_expected_name() in check.detail
+    assert "mismatch" in check.fix and "ln -s" in check.fix
+
+
+def test_a_present_astgen_passes():
+    from code_analysis.engine import astgen_check, astgen_expected_name
+    import pathlib, tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp)
+        directory = root / "frontends" / "jssrc2cpg" / "bin" / "astgen"
+        directory.mkdir(parents=True)
+        (directory / astgen_expected_name()).write_text("binary")
+        assert astgen_check(root).ok
+
+
+def test_no_engine_is_reported_as_no_engine_not_as_a_missing_astgen():
+    """Ordering matters in a preflight: the first true cause is the useful one."""
+    from code_analysis.engine import astgen_check
+
+    check = astgen_check(None)
+    assert not check.ok and "no engine" in check.detail
+
+
+# --------------------------------------------------------------------------
+# Incremental review: which recovered behaviour a commit range could have moved
+# --------------------------------------------------------------------------
+
+def test_changed_files_are_relative_to_the_analysed_directory():
+    """The path form has to match `Anchor.file`, or nothing lines up.
+
+    `git -C <dir> diff --name-only` prints paths from the REPOSITORY root, so a
+    service inside a monorepo comes back as `services/records/src/...` while its
+    anchors say `src/...`. Every comparison then misses, `impact` reports nothing
+    touched, and "no behaviour at risk" is indistinguishable from "the two sides
+    never spoke the same language". `--relative` is what makes them agree.
+
+    Asserted against this repository, which is itself a subdirectory of a git
+    root — so the bug this guards against is reproducible here.
+    """
+    from code_analysis.engine import changed_files
+
+    changed = changed_files(".", "HEAD~1")
+    assert changed, "expected some change in the last commit"
+    assert not [p for p in changed if p.startswith("metis-server/")], (
+        "paths came back relative to the repository root, not to the analysed "
+        "directory — they will not match any anchor")
+
+
+def test_an_unanswerable_range_is_empty_rather_than_an_exception():
+    """A missing commit, a shallow clone and a directory that is not a
+    repository are all "I cannot tell you what changed".
+
+    Empty rather than raising, matching `head_commit` — but the caller has to
+    understand that this is NOT the same claim as "nothing changed". It is why
+    the range is the caller's to choose.
+    """
+    from code_analysis.engine import changed_files
+
+    assert changed_files(".", "not-a-real-commit") == []
+    assert changed_files("/tmp", "HEAD~1") == []
+    assert changed_files(".", "   ") == []
+    assert changed_files(".", "HEAD", "HEAD") == []
+
+
+def test_the_output_is_sorted_and_deduplicated():
+    """It feeds `impact`, whose answer should not depend on git's ordering."""
+    from code_analysis.engine import changed_files
+
+    changed = changed_files(".", "HEAD~1")
+    assert changed == sorted(set(changed))

@@ -4,7 +4,7 @@
 # downstream consumes the contract, never Joern's raw output -- so an engine
 # upgrade touches this pack and nothing else (spec X-3).
 name: jvm-structural
-version: 0.1.0
+version: 0.2.0
 contract: metis.cpg-extract/1
 
 engine:
@@ -19,16 +19,20 @@ layers: [1, 2, 3]          # structural, endpoints, type registry
 status: working
 verified_against:
   repo: demo_project/records-service
-  java_files: 16
-  result: "7 endpoints, 5 exception mappings, 0 unparsed. 38 methods declared,
-    9 dropped as noise (6 inert accessors, 3 boilerplate), 29 kept."
-  # Both directions. The @FeignClient interface declares two more mappings and
-  # they must NOT be counted: they are calls this service makes of another one,
-  # and modelling them as endpoints generates cases nobody can run.
-  endpoints_cross_checked: "7 — asserted in test_extraction.py against the
+  java_files: 27
+  result: "12 endpoints, 5 exception mappings, 0 unparsed. 64 methods declared,
+    10 dropped as noise (7 inert accessors, 3 boilerplate), 54 kept."
+  # Both directions, and both now go through annotation COMPOSITION rather than
+  # a literal name match -- see `composedWith` / `verbOf` in query.sc.
+  endpoints_cross_checked: "12 — asserted in test_extraction.py against the
     checked-in corpus, so this is re-runnable rather than recorded"
-  routes: ["/record", "/record/{id}", "/record/{id}/archive", "/summary/{id}"]
-  negative: "ArchiveClient's /store and /store/{id} are absent from endpoints"
+  routes: ["/record", "/record/{id}", "/record/{id}/archive", "/record/{id}/label",
+           "/record/batch", "/record/page", "/summary/{id}", "/json/{id}",
+           "/contract/{id}"]
+  negative: "ArchiveClient's /store and /store/{id} are absent, and so are
+    InternalStoreClient's /internal-store/{id} (a @FeignClient reached through a
+    project's own stereotype) and ViewController's /ui/records (Spring MVC: the
+    String is a view name, not a response body)"
 known_limits:
   # Measured on a real 12-endpoint service: 389 methods declared, 166 inert
   # accessors and 23 boilerplate dropped, 200 kept — 49% of the method nodes were
@@ -74,3 +78,10 @@ frameworks:
       validation:
         cross_cutting: false
         matches: [Valid, Validated, NotNull, NotBlank]
+
+# Provenance. The Spring shapes this pack resolves -- controller stereotypes, meta-annotation composition and inherited mappings -- were read from
+# `github/codeql`'s java/ql/lib/semmle/code/java/frameworks/spring/*.qll
+# (MIT, (c) GitHub, Inc.). The rule is theirs; the Scala is ours. Nothing
+# from CodeQL is installed, invoked or shipped: QL is inert without its
+# proprietary engine, which is what makes the libraries usable as a
+# specification and useless as a dependency.

@@ -38,6 +38,50 @@ from metis_mcp.ontology.labels import label_expression
 
 # One model is one <journey>-<surface> machine (spec M-1). `functional_areas`
 # carries the journey (M-4) and `surface` the other half of the identity.
+# ---------------------------------------------------------------------------
+# Bi-temporal reads (see ontology.labels.VALIDITY_LABELS)
+# ---------------------------------------------------------------------------
+
+def valid_where_it_applies(alias: str) -> str:
+    """Present-tense, for a read spanning labels that do not all carry validity.
+
+    Search covers six labels and only four have a window, so a bare
+    `valid_to = ''` drops `BusinessEntity` and `Lesson` entirely — measured: a
+    search for a term in a landed lesson returned nothing at all.
+
+    This asks the question per node instead: a label with no window passes, and
+    one that has a window must have an open one. It is NOT the `IS NULL`
+    tolerance that was removed — that accepted a validity-carrying node with no
+    window, which is the ambiguity `backfill-validity` exists to end. This
+    accepts only labels for which a window was never defined.
+    """
+    from metis_mcp.ontology.labels import VALIDITY_LABELS
+
+    carries = " OR ".join(f"l = '{label}'" for label in VALIDITY_LABELS)
+    return (f"(NOT any(l IN labels({alias}) WHERE {carries}) "
+            f"OR {alias}.valid_to = '')")
+
+
+def currently_valid(*aliases: str) -> str:
+    """The clause that keeps a read in the present tense.
+
+    **Every validity-carrying node is required to have a window**, so this asks
+    for one rather than tolerating its absence. It used to accept `valid_to IS
+    NULL` as "still valid", which kept a graph readable across the release that
+    introduced validity — and made a node whose window was never set
+    indistinguishable from one deliberately left open.
+
+    `metis backfill-validity` is what closes that gap on an existing graph, and
+    it must be run BEFORE this build reads one: a node with no `valid_from` now
+    drops out of every read, and the query still succeeds while it does.
+
+    Composed rather than f-string-interpolated into the query bodies: those
+    contain literal Cypher maps (`{id: ac.id, ...}`), and an f-string would need
+    every brace doubled — a silent corruption waiting for whoever edits next.
+    """
+    return " AND ".join(f"({a}.valid_to = '')" for a in aliases)
+
+
 STATES_CYPHER = """
 MATCH (s:State)
 WHERE $journey IN s.functional_areas AND s.surface = $surface
@@ -181,6 +225,7 @@ LIMIT 1
 VALIDATING_CRITERIA_CYPHER = f"""
 MATCH (ac:AcceptanceCriterion)-[:VALIDATES]->(t:{label_expression("Transition")})
 WHERE $journey IN t.functional_areas AND t.surface = $surface
+  AND {currently_valid("ac")}
 RETURN t.id AS transition_id, ac.id AS criterion_id
 ORDER BY t.id, ac.id
 """
@@ -412,8 +457,9 @@ LIMIT 1
 # hardcoded parent label matches nothing and reports no error.
 ENTITY_CRITERIA_CYPHER = f"""
 MATCH (ac:AcceptanceCriterion)-[:REFERENCES]->(e:BusinessEntity)
-WHERE e.id = $entity_id
+WHERE e.id = $entity_id AND {currently_valid("ac")}
 OPTIONAL MATCH (r:Requirement)-[:HAS_AC]->(ac)
+WHERE {currently_valid("r")}
 OPTIONAL MATCH (ac)-[:VALIDATES]->(t:{label_expression("Transition")})
 RETURN ac.id AS id, ac.text AS text, ac.provenance AS provenance,
        ac.lifecycle_state AS lifecycle_state,
@@ -474,10 +520,15 @@ ORDER BY d.rendered_at DESC
 LIMIT 1
 """
 
+# Present tense by default. The criteria filter goes on the OPTIONAL MATCH, not
+# in the outer WHERE: an outer clause would drop the whole requirement row when
+# its only criterion is superseded, turning "this requirement has no current
+# criteria" into "this requirement does not exist".
 REQUIREMENT_CYPHER = """
 MATCH (r:Requirement)
-WHERE r.id = $requirement_id
+WHERE r.id = $requirement_id AND """ + currently_valid("r") + """
 OPTIONAL MATCH (r)-[:HAS_AC]->(ac:AcceptanceCriterion)
+WHERE """ + currently_valid("ac") + """
 OPTIONAL MATCH (r)-[:BELONGS_TO]->(a:BusinessArea)
 OPTIONAL MATCH (anchor)-[:REPRESENTS]->(r)
 RETURN r.id AS id, r.text AS text, r.statement AS statement,
@@ -493,18 +544,65 @@ LIMIT 1
 # criterion, and which of the three it was is part of the answer -- collapsing
 # them into one list would lose the only thing that tells a reader what to do
 # next.
-SEARCH_CYPHER = """
-MATCH (n)
-WHERE (n:BusinessEntity OR n:Requirement OR n:AcceptanceCriterion)
-  AND (toLower(coalesce(n.name, '')) CONTAINS toLower($query)
-       OR toLower(coalesce(n.text, '')) CONTAINS toLower($query)
-       OR toLower(coalesce(n.description, '')) CONTAINS toLower($query))
+# Semantic neighbours. `db.index.vector.queryNodes` takes k up front, so the
+# limit is the search rather than a filter after it — asking for 20 and then
+# discarding 15 would have made the index do five times the work for the same
+# answer.
+#
+# The model each vector was written with comes back so the caller can refuse a
+# mismatch (`retrieval.require_matching_model`) instead of ranking nonsense.
+VECTOR_SEARCH_CYPHER = """
+CALL db.index.vector.queryNodes($index, $k, $vector) YIELD node AS n, score
+WHERE """ + valid_where_it_applies("n") + """
 RETURN labels(n)[0] AS label, n.id AS id,
        coalesce(n.name, '') AS name,
        coalesce(n.description, n.text, '') AS body,
        coalesce(n.lifecycle_state, '') AS lifecycle_state,
-       coalesce(n.provenance, '') AS provenance
-ORDER BY label, id
+       n.embedding_model AS embedding_model,
+       score
+ORDER BY score DESC, label, id
+"""
+
+# Which models wrote the vectors currently in the graph. One value is healthy;
+# several means an interrupted re-embedding, and none means semantic search has
+# nothing to rank.
+EMBEDDING_MODELS_CYPHER = """
+MATCH (n)
+WHERE n.embedding_model IS NOT NULL
+RETURN DISTINCT n.embedding_model AS model
+"""
+
+
+def _searchable_labels() -> str:
+    """`n:A OR n:B OR ...` from the ontology, never hand-written.
+
+    The full-text index spans every searchable label, so a query naming a
+    shorter list would silently discard hits the index went to the trouble of
+    finding — and the shorter list is the one that rots when a label is added.
+    """
+    from metis_mcp.ontology.labels import SEARCH_TARGETS
+
+    return " OR ".join(f"n:{label}" for label in sorted(SEARCH_TARGETS))
+
+
+# Lucene, not `CONTAINS`. Substring matching cannot rank, cannot tokenise, and
+# cannot tell a name match from a body match — so "lock" missed "locking" and
+# every result came back in id order, which is no order at all.
+#
+# `BusinessEntity` and `Lesson` carry no validity window, so the clause is
+# applied only to the labels that do — a bare `valid_to = ''` would otherwise
+# drop every one of them.
+SEARCH_CYPHER = """
+CALL db.index.fulltext.queryNodes($index, $query) YIELD node AS n, score
+WHERE (""" + _searchable_labels() + """)
+  AND """ + valid_where_it_applies("n") + """
+RETURN labels(n)[0] AS label, n.id AS id,
+       coalesce(n.name, '') AS name,
+       coalesce(n.description, n.text, '') AS body,
+       coalesce(n.lifecycle_state, '') AS lifecycle_state,
+       coalesce(n.provenance, '') AS provenance,
+       score
+ORDER BY score DESC, label, id
 LIMIT $limit
 """
 
@@ -537,6 +635,26 @@ def load_requirement(session, requirement_id: str) -> dict | None:
     return item
 
 
+# Lucene reserves these. A user typing `auth:` or `lock~` is asking a question,
+# not writing a query language, and an unescaped one raises a parse error that
+# reads like the database is broken.
+_LUCENE_SPECIAL = r'+-&|!(){}[]^"~*?:\\/'
+
+
+def lucene_escape(text: str) -> str:
+    """User input as a literal term, not as Lucene syntax."""
+    out = []
+    for ch in text:
+        if ch in _LUCENE_SPECIAL:
+            out.append("\\")
+        out.append(ch)
+    return "".join(out)
+
+
+class SearchIndexMissing(RuntimeError):
+    """The full-text index has not been created in this database."""
+
+
 def search_knowledge(session, query: str, limit: int = 20) -> list[dict]:
     """Entities, requirements and criteria matching a term.
 
@@ -546,17 +664,57 @@ def search_knowledge(session, query: str, limit: int = 20) -> list[dict]:
     for argument 'query'`. Every other loader here uses keywords safely because
     none of their parameters share a name with the driver's.
     """
-    rows = session.run(SEARCH_CYPHER, {"query": query, "limit": limit})
-    return [dict(row) for row in rows]
+    from metis_mcp.ontology.labels import SEARCH_INDEX
+
+    try:
+        rows = session.run(SEARCH_CYPHER, {"index": SEARCH_INDEX,
+                                           "query": lucene_escape(query),
+                                           "limit": limit})
+        return [dict(row) for row in rows]
+    except Exception as exc:                       # noqa: BLE001 - re-raised below
+        # **Reported, never silently degraded.** Falling back to `CONTAINS` here
+        # would leave search working badly with no signal, which is the failure
+        # this codebase refuses: the caller would get worse answers and no reason
+        # to suspect them. An absent index is a schema that has not been applied,
+        # and that is fixable in one command.
+        if "no such fulltext schema index" in str(exc).lower() or \
+                "there is no such fulltext schema index" in str(exc).lower():
+            raise SearchIndexMissing(
+                f"the full-text index {SEARCH_INDEX!r} does not exist in this "
+                f"database. Apply schema/metis2-01-constraints.cypher — it is "
+                f"generated from the ontology and creates it.") from exc
+        raise
 
 
 # ---------------------------------------------------------------------------
 # The intent spine — what feature derivation reads (§4.1)
 # ---------------------------------------------------------------------------
 
+def valid_at(alias: str, parameter: str = "$at") -> str:
+    """The same read, as of an instant. `valid_from <= at < valid_to`.
+
+    The half-open interval is deliberate: a fact invalidated at T was true up to
+    T and not at T, so an as-at query at exactly T must not return it. Closing
+    both ends would make a fact briefly true and superseded at once.
+    """
+    return (f"({alias}.valid_from <= {parameter}) "
+            f"AND ({alias}.valid_to = '' OR {alias}.valid_to > {parameter})")
+
+
+# The same read, as of an instant. Derived from the query above by substituting
+# the clause rather than by copying the body, so a change to what a requirement
+# returns cannot apply to only one of them.
+REQUIREMENT_AS_AT_CYPHER = (
+    REQUIREMENT_CYPHER
+    .replace(currently_valid("r"), valid_at("r"))
+    .replace(currently_valid("ac"), valid_at("ac")))
+
+
 SPECIFICATIONS_CYPHER = """
 MATCH (s:Specification)
+WHERE """ + currently_valid("s") + """
 OPTIONAL MATCH (i:Intent)-[:SPECIFIED_BY]->(s)
+WHERE """ + currently_valid("i") + """
 RETURN s.id AS id, s.statement AS statement, s.provenance AS provenance,
        s.entities AS entities, s.contracts_json AS contracts_json,
        s.lifecycle_state AS lifecycle_state,
@@ -571,6 +729,7 @@ ORDER BY s.id
 SPEC_IMPLEMENTATIONS_CYPHER = f"""
 MATCH (c:{label_expression("Component")})-[:EXPOSES|HAS_PAGE]->(x)
 MATCH (x)-[:IMPLEMENTS]->(s:Specification)
+WHERE {currently_valid("s")}
 RETURN s.id AS specification_id, c.component AS component
 ORDER BY specification_id
 """
@@ -610,6 +769,7 @@ def load_known_entity_keys(session) -> set[str]:
 # behaviour is what the capability means", so it is the stronger evidence.
 FEATURE_SCENARIOS_BY_CRITERION_CYPHER = f"""
 MATCH (f:Feature)<-[:REALISED_BY]-(s:Specification)-[:HAS_AC]->(ac:AcceptanceCriterion)
+WHERE {currently_valid("s")} AND {currently_valid("ac")}
 MATCH (ac)-[:VALIDATES]->(t:{label_expression("Transition")})
 MATCH (sc:Scenario)-[c:COVERS {{is_validated: true}}]->(t)
 RETURN DISTINCT f.id AS feature_id, sc.id AS scenario_id
@@ -621,6 +781,7 @@ ORDER BY feature_id, scenario_id
 # contract line up, not that anybody agreed this is what the capability means.
 FEATURE_SCENARIOS_BY_IMPLEMENTATION_CYPHER = f"""
 MATCH (f:Feature)<-[:REALISED_BY]-(s:Specification)<-[:IMPLEMENTS]-(x)
+WHERE {currently_valid("s")}
 MATCH (t:{label_expression("Transition")})-[:DERIVED_FROM]->(x)
 MATCH (sc:Scenario)-[c:COVERS {{is_validated: true}}]->(t)
 RETURN DISTINCT f.id AS feature_id, sc.id AS scenario_id
@@ -647,3 +808,41 @@ def load_feature_scenarios(session) -> tuple[dict, dict]:
     for row in session.run(FEATURE_SCENARIOS_BY_IMPLEMENTATION_CYPHER):
         by_implementation.setdefault(row["feature_id"], []).append(row["scenario_id"])
     return by_criterion, by_implementation
+
+
+def embedding_models(session) -> set[str]:
+    """Which models wrote the vectors in this graph."""
+    return {row["model"] for row in session.run(EMBEDDING_MODELS_CYPHER)
+            if row["model"]}
+
+
+def hybrid_search(session, query: str, provider=None, limit: int = 20):
+    """Keyword and semantic, fused by rank.
+
+    `provider` absent means keyword only — which is the default deployment, and
+    is a complete answer rather than a degraded one. Semantic search is added
+    when somebody supplies a model, and refused rather than approximated when the
+    model does not match what wrote the corpus.
+    """
+    from metis_mcp import retrieval
+    from metis_mcp.ontology.labels import SEARCH_TARGETS, vector_index_for
+
+    keyword = search_knowledge(session, query, limit=limit)
+    if provider is None:
+        return retrieval.fuse(keyword, [], limit=limit)
+
+    retrieval.require_matching_model(provider, embedding_models(session))
+    vector = list(provider.embed(query))
+
+    # One index per label (Neo4j rejects the multi-label form for vector
+    # indexes), so each is queried and the rankings are merged. Sorted by score
+    # before fusing: RRF reads position, and concatenating three per-label lists
+    # without re-ordering would let label order stand in for relevance.
+    semantic = []
+    for label in sorted(SEARCH_TARGETS):
+        rows = session.run(VECTOR_SEARCH_CYPHER, {
+            "index": vector_index_for(label), "k": limit, "vector": vector})
+        semantic.extend(dict(r) for r in rows)
+    semantic.sort(key=lambda r: (-r["score"], r["label"], r["id"]))
+
+    return retrieval.fuse(keyword, semantic, limit=limit)

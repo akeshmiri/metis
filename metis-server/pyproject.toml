@@ -12,17 +12,31 @@ license = "MIT"
 #   neo4j   metis_mcp/mbt/graph_session.py — the driver import is deferred
 #           (graph_session.session), so every file-based command and the whole
 #           test suite still run with no database. It stays a hard dependency
-#           because five of the seven MCP tools query the graph: an install of
-#           `metis-mcp-server` that cannot reach one is not a server.
+#           because most of the read-only MCP tools query the graph: an install
+#           of `metis-mcp-server` that cannot reach one is not a server. (No
+#           count here on purpose — the tool count lives in server.py, and
+#           test_documentation_sync.py checks the prose that states it.)
 #   PyYAML  code_analysis/openapi.py
 dependencies = [
     "mcp>=1.0.0,<2.0.0",
     "neo4j>=5.0.0",
     "PyYAML>=6.0",
+    # The HTTP API (metis_mcp/api). One package on a tree that was already
+    # installed: `mcp` brings starlette, pydantic and uvicorn, which is
+    # everything FastAPI needs. `review_ui` argues against a web framework on
+    # NF-4 grounds and that argument is weaker than it was — but the part it does
+    # not weaken is surface, which is why `api/auth.py` exists.
+    "fastapi>=0.110",
 ]
 
 [project.scripts]
 metis-mcp-server = "metis_mcp.server:main"
+# The CLI is the fullest surface (N-8) and had no console script at all: it was
+# reachable only as `python -m metis_mcp.mbt.cli`, while `engine.py`,
+# `project_profile.py` and cli.py's own help told people to run `metis doctor`,
+# `metis init`, `metis guide` and `metis frameworks` -- four commands that no
+# install produced. `test_structure.py` now checks the entry point resolves.
+metis = "metis_mcp.mbt.cli:main"
 
 [project.optional-dependencies]
 test = [

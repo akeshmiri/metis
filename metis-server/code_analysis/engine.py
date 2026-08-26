@@ -27,7 +27,9 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 PACKS_DIR = Path(__file__).parent / "packs"
@@ -97,6 +99,91 @@ class Preflight:
                 "\n".join(c.describe() for c in failed))
 
 
+# Two diagnostics for failures that are NOT Métis's and NOT the analysed code's.
+#
+# Both were met on a clean macOS install and both were reported as "check the
+# install", which is the same unhelpful shape the test-inventory diagnosis once
+# had: it blamed unresolved dependencies and pointed at `--fetch-dependencies`,
+# which reaches Maven Central and would not have helped. A preflight that names
+# the wrong cause costs more than one that says nothing.
+
+# The launcher shells out to a tool it does not ship. On Darwin it calls
+# `greadlink` (GNU coreutils); with that missing, `$(greadlink -f "$0")` is empty,
+# `dirname ""` is `.`, and the launcher resolves its own directory to the CWD --
+# so `joern` works when run from inside joern-cli and fails everywhere else. The
+# version probe then reports "version unreadable", sending the reader to debug
+# Joern rather than to install coreutils.
+_MISSING_TOOL = re.compile(r"([A-Za-z0-9_.\-]+): command not found")
+
+
+def missing_launcher_tool(stderr: str) -> str:
+    """The tool Joern's own launcher needs and cannot find, or "".
+
+    Pure, so it is tested without an engine: the string is the evidence.
+    """
+    found = _MISSING_TOOL.search(stderr or "")
+    return found.group(1) if found else ""
+
+
+def launcher_fix(stderr: str) -> str:
+    """What to actually do, when the probe's stderr says what went wrong."""
+    tool = missing_launcher_tool(stderr)
+    if not tool:
+        return "the launcher did not report a version; check the install"
+    hint = ("brew install coreutils" if tool.startswith("g")
+            else f"install {tool} and put it on PATH")
+    return (f"Joern's launcher calls `{tool}`, which is not on PATH. Without it "
+            f"the launcher resolves its own directory to `.`, so it only works "
+            f"when the working directory IS joern-cli. Fix: {hint}")
+
+
+# The JavaScript frontend shells out to a per-platform `astgen` binary, and
+# 4.0.604's macOS-arm distribution ships `astgen-macos-arm` while `jssrc2cpg`
+# looks for `astgen-macos`. Every JS pack then fails with "Local astgen binary
+# not found", which reads like a broken install and is a naming mismatch.
+_ASTGEN_DIR = ("frontends", "jssrc2cpg", "bin", "astgen")
+
+
+def astgen_expected_name() -> str:
+    """What `jssrc2cpg` will look for on this platform."""
+    if sys.platform == "darwin":
+        return "astgen-macos"
+    if sys.platform.startswith("win"):
+        return "astgen-win.exe"
+    return "astgen-linux"
+
+
+def astgen_check(home: Path | None) -> Check:
+    """Whether the JS frontend can run at all.
+
+    Not folded into the `joern` check: a JVM-only project does not need it, and
+    `require(ignore=("astgen",))` is how such a caller says so. Reported either
+    way, because "the JS packs recovered nothing" and "the JS packs could not
+    start" are different facts.
+    """
+    if home is None:
+        return Check("astgen", False, "no engine", "install Joern first")
+    directory = home.joinpath(*_ASTGEN_DIR)
+    expected = directory / astgen_expected_name()
+    if expected.exists():
+        return Check("astgen", True, str(expected))
+    if not directory.is_dir():
+        return Check("astgen", False, f"no {directory}",
+                     "this Joern distribution ships no JS frontend; JVM packs are "
+                     "unaffected, so `require(ignore=(\"astgen\",))` if that is fine")
+    # The usual case: it IS shipped, under a name the frontend does not ask for.
+    siblings = sorted(p.name for p in directory.iterdir() if p.name.startswith("astgen"))
+    near = [n for n in siblings if n.startswith(expected.name)]
+    if near:
+        return Check(
+            "astgen", False,
+            f"{expected.name} missing; {', '.join(near)} present",
+            f"a naming mismatch in the distribution, not a broken install. "
+            f"Fix: ln -s {near[0]} {expected}")
+    return Check("astgen", False, f"{expected.name} missing; found {siblings or 'nothing'}",
+                 "set ASTGEN_BIN to a working astgen, or reinstall the frontend")
+
+
 def pinned_version(pack: str = STRUCTURAL) -> str:
     """The engine version this pack was verified against (X-3)."""
     manifest = PACKS_DIR / pack / "pack.yaml"
@@ -137,14 +224,31 @@ def installed_version(home: Path | None = None) -> str:
     home = home or joern_home()
     if home is None:
         return ""
-    try:
-        out = subprocess.run([str(home / "joern"), "--nocolors"],
-                             input="println(version)\n:exit\n", text=True,
-                             capture_output=True, timeout=300)
-    except (OSError, subprocess.TimeoutExpired):
+    out = _probe_launcher(home)
+    if out is None:
         return ""
     found = _JOERN_VERSION.search(out.stdout or "")
     return found.group(1) if found else ""
+
+
+@lru_cache(maxsize=4)
+def _probe_launcher(home: Path):
+    """Run the launcher once and keep the result, stderr included.
+
+    Cached because `preflight` needs the stdout (for the version) AND the stderr
+    (for WHY there is no version), and each call starts a JVM -- asking twice
+    doubled the cost of a preflight that is meant to be the cheap step.
+
+    The first launch on a cold install can exceed even this timeout; that is why
+    a timeout is reported as "unreadable" with the launcher's own words rather
+    than as a missing engine.
+    """
+    try:
+        return subprocess.run([str(home / "joern"), "--nocolors"],
+                              input="println(version)\n:exit\n", text=True,
+                              capture_output=True, timeout=300)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
 
 
 def preflight(check_engine_version: bool = True) -> Preflight:
@@ -161,9 +265,11 @@ def preflight(check_engine_version: bool = True) -> Preflight:
     else:
         version = installed_version(home) if check_engine_version else pin
         if not version:
+            probe = _probe_launcher(home)
+            stderr = (probe.stderr or "") if probe is not None else ""
             result.checks.append(Check(
                 "joern", False, f"found at {home}, version unreadable",
-                "the launcher did not report a version; check the install"))
+                launcher_fix(stderr)))
         elif version != pin:
             # X-3: pinned, not a range. Reported as a failure rather than a
             # warning because the 2.x->4.x storage change broke packs SILENTLY,
@@ -179,6 +285,11 @@ def preflight(check_engine_version: bool = True) -> Preflight:
     result.checks.append(Check(
         "jdk", bool(java), java or "not found",
         "javasrc2cpg needs a JDK on PATH"))
+
+    # The JS frontend's own dependency. Reported always, gated by nobody: a
+    # JVM-only caller passes `ignore=("astgen",)`, which is a decision it makes
+    # explicitly rather than a failure it never hears about.
+    result.checks.append(astgen_check(home))
 
     # Every pack, and every pack's OWN pin. X-3 pins the engine per pack, and
     # four of the five had no manifest — so this compared the install against
@@ -340,6 +451,52 @@ def head_commit(repo: str | Path) -> str:
         return out.stdout.strip() if out.returncode == 0 else ""
     except (OSError, subprocess.TimeoutExpired):
         return ""
+
+
+def changed_files(repo: str | Path, since: str, until: str = "HEAD") -> list[str]:
+    """Repo-relative paths that differ between two commits.
+
+    The missing half of an incremental review. `metis_mcp.impact` already answers
+    "which recovered behaviour do these files touch" and its docstring says to
+    pass what `git diff --name-only` prints — this is the step that produces that
+    list, so the question can be asked about two commits instead of about a set
+    of paths somebody assembled by hand.
+
+    **Reporting, not extraction.** A CPG is whole-program: call graphs and type
+    resolution are global, so there is no meaningful per-file rebuild and this
+    does not make one. What it makes cheaper is the REVIEW — re-extraction still
+    reads everything, and this says which of the results could possibly have
+    moved.
+
+    Repo-relative on purpose: that is the form anchors are stored in
+    (`Anchor.file`), so the output can be compared against them without either
+    side normalising paths and the two disagreeing about what a path is.
+
+    Returns `[]` on any git failure rather than raising. A missing commit, a
+    shallow clone or a directory that is not a repository are all "I cannot tell
+    you what changed", and the caller distinguishes that from "nothing changed"
+    by having asked for a range it believes in — the same shape `head_commit`
+    already uses.
+    """
+    if not since.strip():
+        return []
+    try:
+        out = subprocess.run(
+            # `--relative` is load-bearing, not tidiness. Without it git prints
+            # paths from the REPOSITORY root, so analysing a service inside a
+            # monorepo returns `services/records/src/...` while its anchors say
+            # `src/...` — every path fails to match, `impact` reports nothing
+            # touched, and "no behaviour at risk" is indistinguishable from "the
+            # comparison never lined up". Measured against this repo: without it,
+            # paths came back prefixed with `metis-server/`.
+            ["git", "-C", str(repo), "diff", "--name-only", "--relative",
+             since, until],
+            capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if out.returncode != 0:
+        return []
+    return sorted({line.strip() for line in out.stdout.splitlines() if line.strip()})
 
 
 def annotation_table(framework: str, project_annotations: dict | None) -> str:

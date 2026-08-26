@@ -41,6 +41,15 @@ RESTATED_GUARD = "restated_guard"          # M-5c
 VALIDATION = "validation"                  # §2.6 / M-18
 UNGUARDED_OUTCOME = "unguarded_outcome"    # §5.8's recovery limit
 
+# Retrieval quality, measured against questions whose answers were written before
+# anyone ran a search. Two types, not one, because they are different failures
+# with different remedies: `retrieval_absent` means the node cannot be reached
+# for a question it should answer, and `retrieval_rank` means it is reached but
+# something else wins. Collapsing them into one number is exactly what
+# `retrieval.score` refuses to do.
+RETRIEVAL_RANK = "retrieval_rank"          # reached, but not first
+RETRIEVAL_ABSENT = "retrieval_absent"      # not reached at all
+
 OPEN = "open"
 
 
@@ -61,6 +70,55 @@ class FindingRecord:
     @property
     def id(self) -> str:
         return "finding:" + _id(self.finding_type, self.about_id, self.detail)
+
+
+def findings_from_retrieval(report, *, about_label: str = "Lesson"
+                            ) -> list["FindingRecord"]:
+    """A benchmark's misses as findings, one per miss.
+
+    **This is the loop the academy was landed to close.** The intent recorded in
+    `CLAUDE.md` is that `ask` answers a question about Métis the way it answers
+    one about a product — and that a lesson which reads badly through `ask` is
+    then a finding about the *tools*, not a note in someone's head.
+
+    The finding is `ABOUT` the node that should have won, because that is the
+    node a reader looks up. What it says, though, is about retrieval: the
+    remedy is never "rewrite the lesson to contain the query words". Writing
+    prose to satisfy a search is how a corpus stops being readable by people,
+    and it would make the benchmark score itself.
+
+    `severity` is advisory throughout. A ranking miss blocks nothing, and
+    reporting it as though it did would put it beside a validation failure that
+    stops generation.
+
+    Pure: takes a report, returns records, touches no session. `about_label` is a
+    parameter because the same measurement applies to any searchable label — the
+    academy is the first corpus, not the only possible one.
+    """
+    records: list[FindingRecord] = []
+    for miss in report.misses:
+        absent = miss.rank is None
+        if absent:
+            detail = (f"{miss.question!r} does not retrieve {miss.expected} at "
+                      f"all. Reachability, not ranking: no amount of re-ordering "
+                      f"surfaces it")
+            remedy = ("check the node carries `search_text` and that the query's "
+                      "terms appear in the material at all; a genuinely absent "
+                      "answer may mean the question has no answer in this corpus")
+        else:
+            won = ", ".join(miss.got) or "nothing"
+            detail = (f"{miss.question!r} ranks {miss.expected} at {miss.rank}; "
+                      f"{won} won instead")
+            remedy = ("a ranking gap, and NOT a reason to edit the material to "
+                      "contain the query's words — prose written to satisfy a "
+                      "search stops being readable by people, and makes the "
+                      "benchmark grade itself. Fix the analyzer, the index, or "
+                      "supply an embedding provider (`--hybrid`)")
+        records.append(FindingRecord(
+            finding_type=RETRIEVAL_ABSENT if absent else RETRIEVAL_RANK,
+            severity="advisory", detail=detail, remedy=remedy,
+            about_label=about_label, about_id=miss.expected))
+    return records
 
 
 @dataclass
@@ -247,7 +305,72 @@ def plan_load(model: Model, *, journey: str, surface: str, version: int,
 # What each statement kind writes, so `validate_plan` can check the properties
 # against the ontology the way `landing.add_node` does. A kind absent here writes
 # no node — `contains` and `about` are MATCH/MERGE over existing ones.
-_WRITES_NODE = {"version": None, "finding": "Finding"}
+# `episode` is registered so `validate_plan` CHECKS it. An unregistered kind is
+# skipped, which would have let `plan_findings` write an Episode missing a
+# required property — the exact class of bug the `component` comment above
+# records, arriving by the other door.
+_WRITES_NODE = {"version": None, "finding": "Finding", "episode": "Episode"}
+
+
+EPISODE_CYPHER = """
+MERGE (e:Episode {id: $id})
+ON CREATE SET e.created_at = datetime()
+SET e.t_recorded = $t_recorded, e.source_connector = $source_connector,
+    e.job_id = $job_id, e.name = $name, e.evidence = $evidence
+"""
+
+
+def plan_findings(findings: list[FindingRecord], *, job_id: str = "manual",
+                  source_connector: str = "retrieval-bench",
+                  t_recorded: str = "") -> LoadPlan:
+    """A plan for findings that belong to no model.
+
+    `plan_load` is model-centric by design — it needs a journey, a surface, a
+    commit and a `Model` to namespace element ids against. A retrieval finding
+    has none of those: it is about a `Lesson`, and a lesson belongs to a corpus
+    rather than to a behaviour model.
+
+    **`about_id` is used verbatim, and that is a claim worth stating.** The
+    namespacing `_about_id` performs exists because landing rewrites element ids
+    as `{model_id}::{element_id}`; a `Lesson` id is already the id it was landed
+    with. Passing one through `_about_id` would prefix it with a model that does
+    not exist and the `ABOUT` edge would match nothing — the silent-edge failure
+    this module's own comments were written about. `load` reports unattached
+    findings, so a mismatch here surfaces as a count rather than as silence.
+    """
+    from datetime import datetime, timezone
+
+    plan = LoadPlan()
+    if not findings:
+        return plan
+
+    recorded = t_recorded or datetime.now(timezone.utc).isoformat(timespec="seconds")
+    # Content-derived (D-8): the same misses re-landed are the same episode, so a
+    # bench run repeated after no change is a no-op rather than a new record of
+    # the same measurement.
+    episode_id = "ep-retrieval-" + _id(
+        source_connector, *sorted(f.id for f in findings))
+    plan.statements.append(("episode", EPISODE_CYPHER, {
+        "id": episode_id, "t_recorded": recorded,
+        "source_connector": source_connector, "job_id": job_id,
+        "name": f"{source_connector}: {len(findings)} miss(es)",
+        "evidence": f"{len(findings)} question(s) whose expected answer did not win"}))
+
+    for finding in sorted(findings, key=lambda f: (f.finding_type, f.about_id)):
+        plan.statements.append(("finding", FINDING_CYPHER, {
+            "id": finding.id, "finding_type": finding.finding_type,
+            "severity": finding.severity, "detail": finding.detail,
+            "remedy": finding.remedy, "resolution": OPEN,
+            "episode": episode_id,
+            # No model: a lesson belongs to a corpus, not to a behaviour model.
+            # Empty rather than invented — `model_id` is not required on Finding,
+            # and a made-up one would make this findable under a model nobody
+            # built.
+            "model_id": ""}))
+        plan.statements.append(("about", ABOUT_CYPHER, {
+            "finding_id": finding.id, "about_id": finding.about_id}))
+        plan.findings += 1
+    return plan
 
 
 def validate_plan(plan: LoadPlan) -> list[str]:

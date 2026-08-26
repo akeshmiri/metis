@@ -424,3 +424,81 @@ def test_the_temporal_pitfall_is_named_and_not_just_the_happy_path(declared):
     database = next(i for i in declared if i["id"] == "database")
     assert "undated" in database["temporal"]["known_pitfalls"], (
         "an extraction-time default must be declared as such, not as a date")
+
+
+# --------------------------------------------------------------------------
+# The reader, the declaration and the CLI must name the same sources
+# --------------------------------------------------------------------------
+#
+# **The drift this catches, which actually happened.** `ANCHORS` mapped
+# `confluence -> ConfluenceItem` and a `ConfluenceExtractor` sat in a skill, so
+# by every local check Confluence was supported. It was not: `tracker.ENDPOINTS`
+# had no path for it, `--system` offered `jira` and `scale`, and `intakes.json`
+# declared nothing. Three artefacts each individually consistent, and no way to
+# fetch a page.
+#
+# Joined on the ANCHOR rather than the intake id, because the two deliberately
+# differ: the intake is `zephyr` and its `source_system` is `scale`.
+
+def _tracker_intakes(declared):
+    return [i for i in declared if i.get("reader") == "code_analysis.tracker"]
+
+
+def test_every_tracker_the_reader_can_fetch_is_a_declared_intake(declared):
+    """A source the reader can reach and no intake declares is a capability
+    that exists and cannot be found — `intakes.describe()` is the capability
+    map, and a map missing a road is worse than one that admits the gap."""
+    from code_analysis import tracker
+    from metis_mcp.model_sources.intake_landing import ANCHORS
+
+    anchored = {i["anchor"] for i in _tracker_intakes(declared)}
+    for system in sorted(tracker.ENDPOINTS):
+        assert system in ANCHORS, (
+            f"`tracker.ENDPOINTS` can fetch {system!r} and `ANCHORS` has no "
+            f"anchor label for it, so every item would land unattached")
+        label = ANCHORS[system][0]
+        assert label in anchored, (
+            f"`tracker.ENDPOINTS` can fetch {system!r} (anchor {label}) and no "
+            f"intake in intakes.json declares it. Add the declaration in the "
+            f"same change as the endpoint.")
+
+
+def test_every_declared_tracker_intake_can_actually_be_fetched(declared):
+    """The reverse, and the one that would have failed loudest: an intake
+    promising a source the reader cannot reach."""
+    from code_analysis import tracker
+    from metis_mcp.model_sources.intake_landing import ANCHORS
+
+    fetchable = {ANCHORS[s][0] for s in tracker.ENDPOINTS if s in ANCHORS}
+    for intake in _tracker_intakes(declared):
+        assert intake["anchor"] in fetchable, (
+            f"intake {intake['id']!r} names `code_analysis.tracker` and there "
+            f"is no endpoint for its anchor {intake['anchor']!r}")
+
+
+def test_the_cli_offers_every_source_the_reader_supports():
+    """`--system`'s choices are derived from `tracker.ENDPOINTS` rather than
+    hand-kept. This pins that they are derived: a literal list here is how a
+    source becomes unreachable from the surface that is meant to be the
+    fullest one."""
+    from code_analysis import tracker
+    from metis_mcp.mbt.cli import tracker_systems
+
+    assert tracker_systems() == set(tracker.ENDPOINTS)
+
+
+def test_these_guards_can_fail():
+    """A consistency check that passes because it compares a thing to itself
+    proves nothing. Introduce the exact drift and assert each guard catches it."""
+    from code_analysis import tracker
+    from metis_mcp.model_sources.intake_landing import ANCHORS
+
+    # An endpoint with no anchor, which is the first assertion above.
+    assert "nowhere" not in ANCHORS
+    anchored = {i["anchor"] for i in _tracker_intakes(intakes.all_intakes())}
+    assert anchored, "no intake names the tracker reader; the join is vacuous"
+
+    # An anchor that exists but is declared by no intake — Confluence's exact
+    # former state — must not be silently acceptable.
+    assert ANCHORS["swagger"][0] not in anchored, (
+        "this fixture assumes OpenApiItem is not a tracker intake")

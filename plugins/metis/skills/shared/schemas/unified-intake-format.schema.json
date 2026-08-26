@@ -50,12 +50,9 @@
             "jira",
             "confluence",
             "scale",
-            "code",
+            "code_repository",
             "swagger",
-            "database",
-            "athena",
-            "kubernetes",
-            "composite"
+            "database"
           ]
         },
         "created_at": {

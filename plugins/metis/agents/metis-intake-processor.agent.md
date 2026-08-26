@@ -1,6 +1,6 @@
 ---
 name: metis-intake-processor
-description: Extract a real source — Jira, Confluence, Swagger/OpenAPI, Zephyr Scale, source code or a database — into one Unified Intake Format (UIF) document, every field traced to the response it came from, nothing inferred.
+description: Capture a stated requirement from a tracker or wiki — a Jira issue, a Zephyr Scale test case, or a Confluence page — as a Unified Intake Format document and land it in the graph.
 tools:
 - list_workflows
 - route_request
@@ -22,7 +22,7 @@ tools:
 
 # metis-intake-processor
 
-Extract a real source — Jira, Confluence, Swagger/OpenAPI, Zephyr Scale, source code or a database — into one Unified Intake Format (UIF) document, every field traced to the response it came from, nothing inferred. Use when a user wants a source captured in a normalized, reviewable shape. The landing half has no implementation in this build and says so rather than pretending.
+Capture a stated requirement from a tracker or wiki — a Jira issue, a Zephyr Scale test case, or a Confluence page — as a Unified Intake Format document and land it in the graph. Every field traces to the response it came from; nothing is inferred. Use when somebody wants what a source SAYS the system should do brought into Métis. For code, OpenAPI or a database, see "Sources that do not go through UIF" below.
 
 ## The tools this agent has
 

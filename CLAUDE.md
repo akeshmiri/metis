@@ -15,7 +15,7 @@ spec win.
 
 ## The engine was rebuilt. Ignore anything describing the old one.
 
-Commit `61814dc` replaced the v1 engine. These no longer exist: the 45-label
+Commits `61814dc` and `4701389` replaced the v1 engine (`4701389` is the Intent → Specification → Feature rebuild; its message names a count that was true when it was written and is not now). These no longer exist: the 45-label
 ontology, `structural_validation.py`, `layer8_heuristics.py`,
 `confidence_tiering.py`, `guardrails/`, `quality_report.py`,
 `demo_data/login_example.py`, `demo_data/generate_demo_data.py`,
@@ -38,7 +38,7 @@ design-shaped that is not the spec, the guide or a lesson is history.
 
 ## Facts that decide how you work here
 
-- **The ontology is 61 labels and it is closed.** `metis_mcp/ontology/labels.py`
+- **The ontology is 62 labels and it is closed.** `metis_mcp/ontology/labels.py`
   is the single source: `LABELS`, `ALLOWED_RELATIONSHIPS`, and `STAGED_OUT` (the
   deliberately-excluded labels, each with the trigger that would bring it back).
   The Cypher schema is **generated** from it. Adding a label or relationship is
@@ -134,17 +134,52 @@ Two habits that follow from this:
 cd metis-server
 uv venv                        # uv is installed; use it, not python3 -m venv
 uv pip install -e ".[test]"    # the extra is what brings pytest
-uv run python -m pytest -q     # 1,503 tests in 69 files. Joern + a JDK are
-                               # required (test_extraction.py builds real CPGs
-                               # from demo_project/); no service, no network.
+uv run python -m pytest -q     # 1,671 tests in 76 test files. No service, no
+                               # network -- but 136 of them need Joern 4.0.604
+                               # and a JDK, and conftest.py FAILS rather than
+                               # skips without them (deliberately: it is the
+                               # only behavioural test the five query packs
+                               # have). Without Joern installed you get
+                               # "~1,535 passed, 136 errors", all of them
+                               # from the missing engine.
+                               #
+                               # Two macOS prerequisites, both now DIAGNOSED by
+                               # `metis doctor` rather than left to be guessed:
+                               # GNU coreutils (`brew install coreutils`, for the
+                               # `greadlink` Joern's launcher shells out to), and
+                               # a symlink because 4.0.604's macOS-arm build
+                               # ships `astgen-macos-arm` while jssrc2cpg asks
+                               # for `astgen-macos`. Run `metis doctor` first; it
+                               # prints the exact repair for each.
+
+# The engine-free half, which is what you can run with no Joern:
+uv run python -m pytest -q --ignore=test_extraction.py --ignore=test_recipe.py \
+    --ignore=test_connectivity.py --ignore=test_data_layer.py \
+    --ignore=test_data_cli.py      # 1,535 pass, 0 errors
 ```
+
+CI runs these as two jobs on the same triggers — `test` (engine-free) and
+`extraction` (installs a pinned Joern and runs exactly those five files).
+Until 2026-08-24 no CI step installed Joern at all, so every run errored in 89
+tests; if you add a sixth engine-dependent file, name it in **both** jobs.
+
+The CLI is `metis` (`metis doctor`, `metis guide --check`, …). It is a console
+script now; before 2026-08-24 only `metis-mcp-server` was declared and the CLI
+was reachable only as `python -m metis_mcp.mbt.cli`, while error messages told
+people to run `metis doctor`.
 
 A live Neo4j (`metis-graph`) may be running locally. **It holds real work —
 treat it as read-only** unless the user asks otherwise; use a disposable
 container for anything that writes.
 
 `METIS_NEO4J_PASSWORD` comes from the environment and never from an argument
-(PLT-005).
+(PLT-005, now defined in spec §11.0 along with PLT-002 and PLT-003).
+
+**Four runtime dependencies**: `mcp`, `neo4j`, `PyYAML`, `fastapi`. The fourth
+is newer and smaller than it looks — `mcp` already brings starlette, pydantic
+and uvicorn, so FastAPI's whole substantive tree was installed before the HTTP
+surface existed. No embedding provider is bundled: semantic search is a Protocol
+with no implementation, and a default install loads no model.
 
 ## Things that are genuinely open
 
@@ -161,13 +196,22 @@ container for anything that writes.
   `knowledge-capture` instead, because `ears_pattern` has no empty form and
   guessing one is what `ac_mining` refuses to do (S-13). A UIF's *claimed*
   acceptance criteria are never trusted into `AcceptanceCriterion` nodes.
-- **The academy is not landed in the graph.** `docs/academy/` is four
-  authored lessons. The intent is that they land through normal intake so `ask`
-  answers questions about Métis as it does about a product — and a lesson that
-  reads badly through `ask` is then a finding about the tools. That needs a
-  label which does not exist: `knowledge` lands `BusinessArea`/`BusinessEntity`/
-  `Intent`, and a lesson is none of those. An ontology change under D-2, not
-  yet argued for.
+- **The academy lands, and `rebuild_graph.sh` lands it by default.**
+  `docs/academy/` is eight authored lessons. `Lesson` is a real label with a
+  writer (`model_sources/lessons.py`) and a CLI verb (`metis lessons`), so the
+  ontology change this entry used to call for has been made — `knowledge` still
+  lands `BusinessArea`/`BusinessEntity`/`Intent` and a lesson is still none of
+  those, which is why `Lesson` is its own label rather than a fourth one there.
+  Stage 4b of the rebuild lands them at `Quarantine` like every other source.
+
+  **They land in the same graph as the product facts, on purpose.** The intent
+  is that `ask` answers a question about Métis the way it answers one about a
+  product, and Neo4j cannot join across databases in one session — so a separate
+  academy database would put the lessons somewhere `search_knowledge` could
+  never see them beside a criterion. Separation is by label and by episode. What
+  is still open is the loop this was for: a lesson that reads badly through
+  `ask` should become a finding about the tools, and nothing yet turns it into
+  one. `docs/academy/retrieval-questions.tsv` is the start of that.
 - **Component-level vs system-level acceptance criteria** — an OpenAPI document
   gives the component level mechanically; the system level needs the
   preconditions that produce a given set of parameters, and those are not

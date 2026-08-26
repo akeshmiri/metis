@@ -2,10 +2,11 @@
 MBT engine tests (application spec §6) -- the acceptance criteria for path
 generation, checked against real ground truth.
 
-The fixture is the actual login model from demo_data/login_example.py: 10 states,
-17 transitions of which 16 are `implemented` and 1 (2FA enrolment) is `planned`.
-Its shape was extracted from that file, not invented, so "covers every
-implemented transition" is a checkable claim rather than a self-fulfilling one.
+The fixture is a real recovered login model (`mbt_fixtures.login_model`): 10
+states, 17 transitions of which 16 are `implemented` and 1 (2FA enrolment) is
+`planned`. Its shape was extracted, not invented, so "covers every implemented
+transition" is a checkable claim rather than a self-fulfilling one. It came from
+`demo_data/login_example.py`, which went with the v1 engine.
 
 Free to run: no Neo4j, no model calls, no config. That is the point of keeping
 the engine database-free (metis_mcp/mbt/model.py).
