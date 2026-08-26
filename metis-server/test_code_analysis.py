@@ -437,7 +437,20 @@ def test_changed_files_are_relative_to_the_analysed_directory():
     Asserted against this repository, which is itself a subdirectory of a git
     root — so the bug this guards against is reproducible here.
     """
+    import subprocess
+
     from code_analysis.engine import changed_files
+
+    # `changed_files` answers an unanswerable range with `[]` rather than
+    # raising, so without this the shallow-clone case arrives as a bare
+    # `assert []` and reads as a failure about relative paths. CI checks out
+    # `fetch-depth: 1` by default, which is exactly that case.
+    probe = subprocess.run(["git", "rev-parse", "HEAD~1"],
+                           capture_output=True, text=True)
+    assert probe.returncode == 0, (
+        "no HEAD~1: this looks like a shallow clone, and this test needs a real "
+        "commit range. In CI set `fetch-depth: 2` on actions/checkout; locally "
+        "run `git fetch --deepen=1`")
 
     changed = changed_files(".", "HEAD~1")
     assert changed, "expected some change in the last commit"
