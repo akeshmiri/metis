@@ -1,3 +1,6 @@
+---
+topics: practice
+---
 # 7 · Time: what was true, and when
 
 Métis carries two independent axes, and confusing them loses both answers.

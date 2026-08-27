@@ -75,8 +75,8 @@ def test_the_label_set_is_closed_and_each_label_is_argued():
     test enforces: name the writer, name the reader, and if either is "a file
     somebody will write one day", stage it in §8.7 instead.
     """
-    assert len(KNOWN_LABELS) == 63, (
-        f"the ontology is sixty-two labels (spec D-1); found {len(KNOWN_LABELS)}: "
+    assert len(KNOWN_LABELS) == 64, (
+        f"the ontology is sixty-four labels (spec D-1); found {len(KNOWN_LABELS)}: "
         f"{sorted(KNOWN_LABELS)}. Adding one requires naming its writer and its "
         f"reader, not just its purpose."
     )

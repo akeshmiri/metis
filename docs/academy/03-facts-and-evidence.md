@@ -1,3 +1,6 @@
+---
+topics: concepts
+---
 # 3 · Facts, evidence, and why nothing is approved
 
 ## Everything lands at Quarantine

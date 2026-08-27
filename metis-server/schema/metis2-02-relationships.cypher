@@ -147,6 +147,7 @@ CREATE INDEX rel_c_o_n_s_t_r_a_i_n_e_d__b_y_t_valid IF NOT EXISTS FOR ()-[x:CONS
 //   (Scenario)-[:GENERATED_FROM]->(Component)  — The exact version this path covers
 //   (Scenario)-[:COVERS]->(Transition)  {sequence, is_validated}  — Ordered traversal — makes coverage computable
 //   (Scenario)-[:PRODUCES]->(TestCase)  — The rendered artefact
+//   (Lesson)-[:BELONGS_TO]->(Topic)  — The subject it covers, shared with every other document that covers it
 //   (BusinessEntity)-[:BELONGS_TO]->(BusinessArea)  — Which domain this noun lives in
 //   (Requirement)-[:BELONGS_TO]->(BusinessArea)  — Which domain this requirement governs
 //   (AcceptanceCriterion)-[:REFERENCES]->(BusinessEntity)  — A business noun this criterion acts on or constrains

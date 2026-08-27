@@ -1,3 +1,6 @@
+---
+topics: concepts
+---
 # 4 · Joins that cannot be made yet
 
 Two facts that belong together often arrive at different times, and the

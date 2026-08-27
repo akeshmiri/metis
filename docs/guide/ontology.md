@@ -4,7 +4,7 @@
 
 *Generated from `metis_mcp/ontology/labels.py`.*
 
-63 labels, 117 relationships, 20 staged out.
+64 labels, 118 relationships, 20 staged out.
 
 The ontology is **closed**. Adding a label or a relationship is a reviewed change under D-2, not an edit — four places have to agree, and the Cypher schema is generated from `labels.py` so two of them cannot drift apart.
 
@@ -66,6 +66,7 @@ The ontology is **closed**. Adding a label or a relationship is a reviewed chang
 - `State`
 - `Table`
 - `TestCase`
+- `Topic`
 - `Transition` — written instead as `ApiCall`, `UiAction`
 - `UiAction`
 - `UiElement` — written instead as `Action`, `Dialog`, `Event`, `Form`, `Menu`, `Navigation`, `Pagination`, `Row`, `Sort`, `UiTable`
@@ -120,6 +121,7 @@ The ontology is **closed**. Adding a label or a relationship is a reviewed chang
 - `Intent` -[:SPECIFIED_BY]-> `Specification`
 - `JiraItem` -[:LINKS_TO]-> `JiraItem`
 - `JiraItem` -[:REPRESENTS]-> `Requirement`
+- `Lesson` -[:BELONGS_TO]-> `Topic`
 - `Lesson` -[:CONTAINS]-> `Passage`
 - `Menu` -[:HAS_ELEMENT]-> `Action`
 - `Menu` -[:HAS_ELEMENT]-> `Dialog`

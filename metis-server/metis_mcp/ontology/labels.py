@@ -1,7 +1,7 @@
 """
 The ontology (application spec §8.2, §8.3).
 
-Sixty-three labels in eight layers: a **control-flow** model (State, Transition and
+Sixty-four labels in eight layers: a **control-flow** model (State, Transition and
 friends), the **evidence** layer it is derived from (Endpoint, Parameter, Class,
 Field, Method, DeclaredOutcome, Check, ExceptionMapping, Route), a small
 **business** layer (BusinessArea, BusinessEntity) giving the nouns a criterion
@@ -21,7 +21,7 @@ The remaining two -- the catalogue in §8.2/§8.3 of the specification, and this
 docstring -- are human-readable and are checked against this module by
 test_ontology.py.
 
-Why sixty-three, and why that number should worry you: see D-1 and the note in
+Why sixty-four, and why that number should worry you: see D-1 and the note in
 `test_ontology`. A label is included only when something writes it AND something
 reads it -- the second half is the one that is easy to skip, and a writer alone
 is how an ontology accretes. §8.7 lists the deliberately-excluded labels with
@@ -460,6 +460,36 @@ LABELS: dict[str, LabelSpec] = {
             "Passage", "One section of a document, embedded on its own",
             required=("text", "ordinal", SEARCH_TEXT),
             indexed=("ordinal",),
+        ),
+        # Added under D-2. A `Lesson` had no edge to anything but its own
+        # sections, so the academy sat in the graph as eight islands: you could
+        # find a lesson by searching for it and could not ask what else covers
+        # the same ground, which is most of what a reader wants after the first
+        # answer.
+        #
+        # **Shared, and that is the whole point.** A topic is one node many
+        # documents point at, so `(:Lesson)-[:BELONGS_TO]->(:Topic {id:"practice"})`
+        # answers "what else should I read" as a traversal rather than a second
+        # search. `BELONGS_TO` is reused rather than invented: `BusinessEntity`
+        # and `Requirement` already use it for exactly this shape.
+        #
+        # **Deliberately NOT `BusinessArea`.** That is "one business domain
+        # grouping entities and requirements" — what a product is about. A topic
+        # here is what a document about *this system* is about, and the two are
+        # not the same kind of thing. Sharing one label would smooth over the
+        # distinction the `BusinessEntity` comment above refuses to smooth over.
+        #
+        # **A topic is authored, never inferred.** It is read from the document's
+        # own frontmatter, and a document that declares none gets no edge. The
+        # alternative — deriving a topic from a title or from the prose — is the
+        # guess S-13 exists to prevent, and it would read as somebody's statement
+        # about the material while being Métis's opinion of it.
+        #
+        # Writer: `model_sources.lessons`. Reader: `related_lessons` in
+        # `mbt.graph_loader`, and the `ask` route that uses it.
+        LabelSpec(
+            "Topic", "A subject shared by documents that cover the same ground",
+            indexed=("name",),
         ),
         # ------------------------------------------------------------------
         # The intent spine (§4.1's comparison, made structural)
@@ -1145,6 +1175,9 @@ ALLOWED_RELATIONSHIPS: tuple[RelationshipSpec, ...] = (
                      "Ordered traversal — makes coverage computable",
                      properties=("sequence", "is_validated")),
     RelationshipSpec("Scenario", "PRODUCES", "TestCase", "The rendered artefact"),
+    RelationshipSpec("Lesson", "BELONGS_TO", "Topic",
+                     "The subject it covers, shared with every other document "
+                     "that covers it"),
     RelationshipSpec("BusinessEntity", "BELONGS_TO", "BusinessArea",
                      "Which domain this noun lives in"),
     RelationshipSpec("Requirement", "BELONGS_TO", "BusinessArea",

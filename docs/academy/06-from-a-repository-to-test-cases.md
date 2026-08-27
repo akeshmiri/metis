@@ -1,3 +1,6 @@
+---
+topics: practice
+---
 # 6 · From a repository to test cases
 
 The whole path, on the corpus in `demo_project/` — a Records service written to

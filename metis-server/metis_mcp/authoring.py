@@ -241,6 +241,87 @@ _ROUTES = (
       "overview", "explain"), "journey_walkthrough"),
 )
 
+# Questions about Métis ITSELF, answered from the academy rather than from a
+# product model. `ask` used to route only to the four product tools, so a
+# question the academy answers in full came back "no tool answers this" — the
+# corpus was landed, indexed and unreachable through the surface it was landed
+# for. These are checked LAST: a question mentioning both a product noun and one
+# of these should go to the product tool, because that is the more specific
+# answer.
+# Terms that name THIS system, not a product it models. Bare interrogatives are
+# deliberately absent: an earlier version matched "what is" and "why does", and
+# "what is the meaning of this" — a question with no answer anywhere — routed to
+# the academy instead of being reported as unroutable. A word earns a place here
+# by being one somebody would only use when asking about Métis.
+_ACADEMY_WORDS = (
+    "metis", "métis", "g1", "g2", "quarantine", "ontology", "lesson", "academy",
+    "lifecycle_state", "valid_from", "valid_to", "provenance", "specialisation",
+    "the two gates", "approval gate", "landed", "landing",
+)
+
+
+def _ask_academy(question: str):
+    """The academy's answer to a question about Métis itself, or `None`.
+
+    **Why this exists at all.** `ask` routed only to the four product tools, so
+    a question the academy answers in full came back "no tool answers this" —
+    the corpus was landed, indexed, and unreachable through the surface it was
+    landed for.
+
+    **Why it returns an answer instead of raising, and where that differs.** The
+    other routes raise `GraphNotConfigured` straight through to the caller:
+    `server.py` registers these five with a bare `mcp.tool()(fn)` and no wrapper,
+    while every tool defined in `server.py` itself catches it and returns
+    `_NOT_CONFIGURED`. So the agent surface answers one way for `get_model` and
+    another for `auth_facts`, which was true before this route existed and is a
+    pre-existing inconsistency rather than one introduced here.
+
+    This route takes the `server.py` side of it, because "the academy lives in a
+    graph you have not configured" is a fact worth stating and a traceback is
+    not. Making the other four agree is a change to their contract and belongs
+    with whoever owns that decision.
+    """
+    from metis_mcp.mbt.graph_loader import related_by_topic, search_knowledge
+    from metis_mcp.mbt.graph_session import GraphNotConfigured, session
+
+    try:
+        with session() as s:
+            hits = [h for h in search_knowledge(s, question, limit=5)
+                    if h.get("label") == "Lesson"]
+            if not hits:
+                return None
+            best = hits[0]
+            related = related_by_topic(s, best["id"])
+    except GraphNotConfigured as e:
+        return {
+            "ok": False,
+            "question": question,
+            "reason": (f"this reads as a question about Métis itself, which the "
+                       f"academy answers — and the academy lives in the graph, "
+                       f"which is not reachable: {e}"),
+            "remedy": "metis lessons, once a graph is configured",
+            "tools": ["call_recipe", "auth_facts", "payload_shape",
+                      "journey_walkthrough"],
+        }
+
+    return {
+        "ok": True,
+        "question": question,
+        "answered_by": "academy",
+        "answer": {
+            "lesson": best["id"],
+            "title": best.get("name", ""),
+            # Which SECTION ranked, where chunked retrieval found one. A reader
+            # handed a whole lesson still has to find the paragraph.
+            "matched_passage": best.get("matched_passage", ""),
+            "body": best.get("body", ""),
+            "topics": related["topics"],
+            "read_next": [r["name"] for r in related["related"]],
+        },
+        "rule": ("the academy is authored, not recovered: this is what somebody "
+                 "wrote about Métis, not a fact extracted from a running system"),
+    }
+
 
 def ask(question: str, journey: str = "") -> dict:
     """Route a question to the tools above and return what they said.
@@ -284,6 +365,11 @@ def ask(question: str, journey: str = "") -> dict:
                 "rule": ("everything above came from the graph. Any sentence you "
                          "add that is not in it is not something Métis recovered"),
             }
+    if any(w in text for w in _ACADEMY_WORDS):
+        academy = _ask_academy(question)
+        if academy is not None:
+            return academy
+
     return {
         "ok": False,
         "question": question,

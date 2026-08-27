@@ -1,3 +1,6 @@
+---
+topics: practice
+---
 # 5 · The two gates, and why there are only two
 
 Métis stops for a human twice. Everything else runs unattended, and the two

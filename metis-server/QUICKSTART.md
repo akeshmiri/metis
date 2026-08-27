@@ -19,7 +19,7 @@ wherever an absolute interpreter path is needed.
 uv run python -m pytest -q
 ```
 
-77 test files — **no Neo4j, no model calls, no config file.** The engine is
+78 test files — **no Neo4j, no model calls, no config file.** The engine is
 deliberately database-free: models, criteria, path generation, coverage and
 validation are all pure. If this does not pass, stop here.
 

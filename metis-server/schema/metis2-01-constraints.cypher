@@ -588,6 +588,14 @@ CREATE INDEX test_case_lifecycle_state_lookup IF NOT EXISTS FOR (n:TestCase) ON 
 CREATE INDEX test_case_source_episode_id_lookup IF NOT EXISTS FOR (n:TestCase) ON (n.source_episode_id);
 //   TestCase.level ∈ {unit, integration, api_functional, web_functional, e2e, performance} — enforced by ontology.validation, not by Neo4j
 
+// Topic — A subject shared by documents that cover the same ground
+CREATE CONSTRAINT topic_id_unique IF NOT EXISTS FOR (n:Topic) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT topic_source_episode_id_required IF NOT EXISTS FOR (n:Topic) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT topic_name_required IF NOT EXISTS FOR (n:Topic) REQUIRE n.name IS NOT NULL;
+CREATE INDEX topic_name_lookup IF NOT EXISTS FOR (n:Topic) ON (n.name);
+CREATE INDEX topic_lifecycle_state_lookup IF NOT EXISTS FOR (n:Topic) ON (n.lifecycle_state);
+CREATE INDEX topic_source_episode_id_lookup IF NOT EXISTS FOR (n:Topic) ON (n.source_episode_id);
+
 // Transition — One interaction: trigger, guard, source and target state
 CREATE CONSTRAINT transition_id_unique IF NOT EXISTS FOR (n:Transition) REQUIRE n.id IS UNIQUE;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT transition_source_episode_id_required IF NOT EXISTS FOR (n:Transition) REQUIRE n.source_episode_id IS NOT NULL;

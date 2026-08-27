@@ -62,6 +62,48 @@ def _title_of(body: str, fallback: str) -> str:
     return fallback.replace("-", " ").capitalize()
 
 
+def parse_frontmatter(body: str) -> tuple[dict, str]:
+    """`(fields, remaining_text)` from a leading `---` block.
+
+    A deliberately small reader: `key: value` lines only, no nesting, no lists,
+    no YAML. The academy needs one field, and importing a parser to read it
+    would add a dependency to the runtime for a format nobody asked for.
+
+    A document with no frontmatter is normal and returns `({}, body)` — the
+    absence is not an error, it means nothing was declared.
+    """
+    if not body.startswith("---\n"):
+        return {}, body
+    end = body.find("\n---", 4)
+    if end == -1:
+        # An unterminated block is the author's typo, and treating the whole
+        # document as frontmatter would silently land an empty lesson.
+        return {}, body
+    fields = {}
+    for line in body[4:end].splitlines():
+        key, sep, value = line.partition(":")
+        if sep and key.strip():
+            fields[key.strip().lower()] = value.strip()
+    return fields, body[end + len("\n---"):].lstrip("\n")
+
+
+def topics_of(fields: dict) -> list[str]:
+    """The topics a document DECLARES, in order, de-duplicated.
+
+    Never derived from the title or the prose. A lesson that declares none has
+    none — see the `Topic` LabelSpec for why inferring one would be a guess
+    wearing somebody else's authority.
+    """
+    raw = fields.get("topics") or fields.get("topic") or ""
+    seen, out = set(), []
+    for part in raw.replace(",", " ").split():
+        slug = part.strip().lower()
+        if slug and slug not in seen:
+            seen.add(slug)
+            out.append(slug)
+    return out
+
+
 def read_lessons(directory: str | Path) -> list[dict]:
     """Every numbered lesson in reading order.
 
@@ -80,13 +122,18 @@ def read_lessons(directory: str | Path) -> list[dict]:
         if not match:
             continue
         ordinal, slug = match.group(1), match.group(2)
-        body = path.read_text()
+        raw = path.read_text()
+        fields, body = parse_frontmatter(raw)
         lessons.append({
             "ordinal": int(ordinal),
             "slug": slug,
             "path": path.name,
             "title": _title_of(body, slug),
+            # The frontmatter is stripped: it is metadata about the document,
+            # not part of it, and leaving it in would put `topics: practice`
+            # into the text a reader is shown and the vector that ranks it.
             "text": body,
+            "topics": topics_of(fields),
         })
     if not lessons:
         raise LessonsRefused(
@@ -181,6 +228,21 @@ def plan_lessons(directory: str | Path, *, job_id: str = "manual",
             # S-4. The academy is not exempt from the rule it teaches.
             "lifecycle_state": QUARANTINE,
         })
+
+        # One shared Topic node per declared subject, so two lessons on the
+        # same ground point at the SAME node and "what else covers this" is a
+        # traversal rather than a second search. `add_node` is a MERGE by id, so
+        # the eighth lesson declaring `practice` reuses the node the fifth made.
+        for topic in lesson["topics"]:
+            # The episode is whichever landing run first created it. A shared
+            # node cannot carry one provenance per document pointing at it, and
+            # the per-document provenance is on the edge's endpoints anyway.
+            if add_node("Topic", {"id": f"topic:{topic}", "name": topic,
+                                  "source_episode_id": episode_id}):
+                plan.edges.append(PlannedEdge(
+                    from_label="Lesson", from_id=lesson_id(lesson["path"]),
+                    rel_type="BELONGS_TO",
+                    to_label="Topic", to_id=f"topic:{topic}"))
 
         # One Passage per `##` section, each carrying its own vector.
         #

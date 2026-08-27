@@ -655,6 +655,49 @@ class SearchIndexMissing(RuntimeError):
     """The full-text index has not been created in this database."""
 
 
+RELATED_BY_TOPIC_CYPHER = """
+MATCH (d {id: $id})-[:BELONGS_TO]->(t:Topic)<-[:BELONGS_TO]-(other)
+WHERE other.id <> $id
+RETURN DISTINCT other.id AS id, labels(other)[0] AS label,
+       coalesce(other.name, '') AS name,
+       collect(DISTINCT t.name) AS topics
+ORDER BY id
+"""
+
+TOPICS_OF_CYPHER = """
+MATCH (d {id: $id})-[:BELONGS_TO]->(t:Topic)
+RETURN t.name AS name ORDER BY name
+"""
+
+
+def related_by_topic(session, document_id: str) -> dict:
+    """What else covers the ground this document covers.
+
+    **The reader half of `Topic`'s D-1 bar.** A lesson used to have no edge to
+    anything but its own sections, so "what else should I read" could only be
+    answered by searching again with different words and hoping. This is a
+    traversal: one hop out to the shared node, one hop back.
+
+    Returns the topics as well as the documents, because a reader who gets three
+    lessons back should be able to see WHY those three — a list with no shared
+    term in it reads as a recommendation, which is exactly what this is not.
+
+    A document with no topics comes back empty rather than falling back to
+    similarity. "Nothing declares the same subject" is a different answer from
+    "here are some documents that look alike", and only the first is a fact.
+    """
+    topics = [row["name"] for row in
+              session.run(TOPICS_OF_CYPHER, {"id": document_id})]
+    if not topics:
+        return {"ok": True, "id": document_id, "topics": [], "related": [],
+                "note": "this document declares no topic, so nothing shares one "
+                        "with it. Topics are authored in the document's own "
+                        "frontmatter and never inferred"}
+    related = [dict(row) for row in
+               session.run(RELATED_BY_TOPIC_CYPHER, {"id": document_id})]
+    return {"ok": True, "id": document_id, "topics": topics, "related": related}
+
+
 PASSAGE_PARENT_CYPHER = """
 UNWIND $ids AS pid
 MATCH (parent)-[:CONTAINS]->(p:Passage {id: pid})

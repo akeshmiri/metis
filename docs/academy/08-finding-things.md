@@ -1,3 +1,6 @@
+---
+topics: practice
+---
 # 8 · Finding things, and which surface to ask
 
 ## Three surfaces, one engine

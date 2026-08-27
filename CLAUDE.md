@@ -38,7 +38,7 @@ design-shaped that is not the spec, the guide or a lesson is history.
 
 ## Facts that decide how you work here
 
-- **The ontology is 63 labels and it is closed.** `metis_mcp/ontology/labels.py`
+- **The ontology is 64 labels and it is closed.** `metis_mcp/ontology/labels.py`
   is the single source: `LABELS`, `ALLOWED_RELATIONSHIPS`, and `STAGED_OUT` (the
   deliberately-excluded labels, each with the trigger that would bring it back).
   The Cypher schema is **generated** from it. Adding a label or relationship is
@@ -134,13 +134,13 @@ Two habits that follow from this:
 cd metis-server
 uv venv                        # uv is installed; use it, not python3 -m venv
 uv pip install -e ".[test]"    # the extra is what brings pytest
-uv run python -m pytest -q     # 1,688 tests in 77 test files. No service, no
+uv run python -m pytest -q     # 1,702 tests in 78 test files. No service, no
                                # network -- but 136 of them need Joern 4.0.604
                                # and a JDK, and conftest.py FAILS rather than
                                # skips without them (deliberately: it is the
                                # only behavioural test the five query packs
                                # have). Without Joern installed you get
-                               # "~1,552 passed, 136 errors", all of them
+                               # "~1,566 passed, 136 errors", all of them
                                # from the missing engine.
                                #
                                # Two macOS prerequisites, both now DIAGNOSED by
@@ -155,7 +155,7 @@ uv run python -m pytest -q     # 1,688 tests in 77 test files. No service, no
 # The engine-free half, which is what you can run with no Joern:
 uv run python -m pytest -q --ignore=test_extraction.py --ignore=test_recipe.py \
     --ignore=test_connectivity.py --ignore=test_data_layer.py \
-    --ignore=test_data_cli.py      # 1,552 pass, 0 errors
+    --ignore=test_data_cli.py      # 1,566 pass, 0 errors
 ```
 
 CI runs these as two jobs on the same triggers — `test` (engine-free) and
@@ -209,9 +209,16 @@ with no implementation, and a default install loads no model.
   product, and Neo4j cannot join across databases in one session — so a separate
   academy database would put the lessons somewhere `search_knowledge` could
   never see them beside a criterion. Separation is by label and by episode. What
-  is still open is the loop this was for: a lesson that reads badly through
-  `ask` should become a finding about the tools, and nothing yet turns it into
-  one. `docs/academy/retrieval-questions.tsv` is the start of that.
+  `ask` reaches them: a question naming this system rather than a product is
+  answered from the academy, with the topics it belongs to and what to read
+  next. `retrieval-bench --land` turns a ranking miss into an advisory
+  `Finding`, so a lesson that reads badly through `ask` becomes a finding about
+  the tools — the loop this was for, closed.
+
+  **Lessons are linked, not isolated.** `Topic` is a shared node many documents
+  point at (`Lesson-[:BELONGS_TO]->Topic`), so "what else covers this" is a
+  traversal rather than a second search. A topic is read from the document's own
+  frontmatter and **never inferred** — a title is not a topic.
 - **Component-level vs system-level acceptance criteria** — an OpenAPI document
   gives the component level mechanically; the system level needs the
   preconditions that produce a given set of parameters, and those are not

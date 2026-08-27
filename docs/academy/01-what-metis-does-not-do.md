@@ -1,3 +1,6 @@
+---
+topics: concepts
+---
 # 1 · What Métis does not do
 
 The fastest way to be wrong about this system is to assume it does one of the
