@@ -39,6 +39,16 @@ docker run --rm -v "$REPO":/src:ro "$IMAGE" bash -c "
   tar -C /src --exclude=.git --exclude=.venv --exclude=build \
       --exclude=__pycache__ --exclude='*.egg-info' -cf - . | tar -C /c -xf -
 
+  # Stage the overlay. Without this the two regeneration checks below compare
+  # the regenerated file against the CLONE's HEAD, so any not-yet-committed
+  # change to a generated file reports FAIL for having been made at all. The
+  # question CI asks is whether regenerating changes anything, and that is only
+  # what git diff means once the working tree is the baseline.
+  #
+  # (No double quotes in these comments: the whole block is bash -c \"...\",
+  # so one would end the string and silently truncate the run.)
+  cd /c && git add -A >/dev/null 2>&1
+
   cd /c/metis-server
   rm -rf .venv build metis_mcp_server.egg-info
   uv venv --python 3.13 -q
@@ -52,12 +62,13 @@ docker run --rm -v "$REPO":/src:ro "$IMAGE" bash -c "
 
   echo '--- Generated schema is current ---'
   uv run python -m metis_mcp.ontology.schema --write >/dev/null 2>&1
-  git diff --exit-code -- schema/ >/dev/null && echo PASS || { echo FAIL; exit 1; }
+  git diff --exit-code -- schema/ >/dev/null \
+    && echo PASS || { echo FAIL; git --no-pager diff --stat -- schema/; exit 1; }
 
   echo '--- Generated agent surfaces are current ---'
   uv run python -c 'from metis_mcp.agent_generator import write; write()' >/dev/null 2>&1
   git diff --exit-code -- ../.github/agents ../plugins/metis/agents >/dev/null \
-    && echo PASS || { echo FAIL; exit 1; }
+    && echo PASS || { echo FAIL; git --no-pager diff --stat -- ../.github/agents ../plugins/metis/agents; exit 1; }
 "
 echo "==> done. The extraction job needs Joern and is not reproduced here;"
 echo "    run it natively:  uv run python -m pytest -q test_extraction.py ..."

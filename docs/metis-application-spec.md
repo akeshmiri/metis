@@ -1852,10 +1852,10 @@ a bug in the fourth, not a variant reading.
 **D-3 — nothing is destructively overwritten.** Supersession creates a new
 version; the prior one remains reconstructable (M-15).
 
-### 8.2 Labels — sixty-two, and closed
+### 8.2 Labels — sixty-three, and closed
 
 The count is pinned by `test_ontology.py`
-(`assert len(KNOWN_LABELS) == 62`), so this table and
+(`assert len(KNOWN_LABELS) == 63`), so this table and
 `metis_mcp/ontology/labels.py` cannot drift apart without a test failing. D-1
 governs additions: name the writer and name the reader, or stage it in §8.7.
 
@@ -1901,6 +1901,7 @@ defects have come from, so the rule is that they cannot disagree, and
 `test_ontology.py` asserts it rather than trusting it.
 
 | 51 | **`Lesson`** | One authored academy lesson about Métis itself — the only label whose subject is this system (D-2; see `docs/academy/PROPOSAL-landing-the-academy.md`) | `model_sources.lessons` / search |
+| 52 | **`Passage`** | One section of a document, embedded on its own — searched, never shown, and rolled up to the document that contains it. Added under D-2 on a measurement: per-section vectors scored 32/36 against 26/36 for whole-document ones, because a Neo4j vector index carries one vector per node and per-section similarity is not expressible as a property | `model_sources.lessons` / both search paths |
 | 57 | **`NeedReview`** | Marker: a human still owes a decision on this node | Landing, finding writer |
 
 **The evidence layer.** The nine below hold the processed intake the control-flow

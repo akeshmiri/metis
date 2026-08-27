@@ -1,7 +1,7 @@
 """
 The ontology (application spec §8.2, §8.3).
 
-Sixty-two labels in eight layers: a **control-flow** model (State, Transition and
+Sixty-three labels in eight layers: a **control-flow** model (State, Transition and
 friends), the **evidence** layer it is derived from (Endpoint, Parameter, Class,
 Field, Method, DeclaredOutcome, Check, ExceptionMapping, Route), a small
 **business** layer (BusinessArea, BusinessEntity) giving the nouns a criterion
@@ -21,7 +21,7 @@ The remaining two -- the catalogue in §8.2/§8.3 of the specification, and this
 docstring -- are human-readable and are checked against this module by
 test_ontology.py.
 
-Why sixty-two, and why that number should worry you: see D-1 and the note in
+Why sixty-three, and why that number should worry you: see D-1 and the note in
 `test_ontology`. A label is included only when something writes it AND something
 reads it -- the second half is the one that is easy to skip, and a writer alone
 is how an ontology accretes. §8.7 lists the deliberately-excluded labels with
@@ -144,6 +144,10 @@ SEARCH_TARGETS = {
     # The reader half of D-1's bar for `Lesson`. One entry, and the academy is
     # searchable beside the product it teaches.
     "Lesson": ("name", "text", SEARCH_TEXT),
+    # A passage is searched, never shown: both search paths roll a hit up to the
+    # document that contains it, so the reader still gets a lesson. It is here
+    # because this table drives BOTH indexes, and the vector index is the point.
+    "Passage": ("name", "text", SEARCH_TEXT),
 }
 
 # The states in which a human still owes a decision. `Approved`, `Rejected` and
@@ -418,6 +422,44 @@ LABELS: dict[str, LabelSpec] = {
             required=("text", "ordinal", "path", SEARCH_TEXT),
             indexed=("ordinal", "lifecycle_state"),
             enums={"lifecycle_state": LIFECYCLE_STATES},
+        ),
+        # Added under D-2, on a measurement rather than a hunch.
+        #
+        # **The argument.** A document embedded as ONE vector answers questions
+        # about its subject and loses questions about its sections: the rest of
+        # the text dilutes the part that matches. Measured over the academy's 36
+        # retrieval questions, same model and same corpus, changing only the unit
+        # that carries a vector:
+        #
+        #     whole-document vectors   26/36 top-1
+        #     per-section vectors      32/36 top-1
+        #
+        # The clearest case is `why is a selector a property and not a node` --
+        # a VERBATIM `##` heading in lesson 04, which lesson 03 nonetheless won.
+        # That is not a model failing to understand a question; it is a vector
+        # that is not about the question. Chunking was worth roughly twice what
+        # enabling semantic search was worth at all (+3), so this is the larger
+        # half of the only lever that moves ranking.
+        #
+        # **The case against, since D-2 asks for it.** It is a second node per
+        # section -- 8 lessons became 46 passages -- and a node with no
+        # independent meaning: nobody asks to see a passage, and it exists only
+        # to be matched. That is exactly the argument `Field` was STAGED OUT on
+        # (a property of its type, not a node). The difference is the index: a
+        # Neo4j vector index carries ONE vector per node, so per-section
+        # similarity is not expressible as a property. `Field` had an alternative
+        # shape and this has none.
+        #
+        # Writer: `model_sources.lessons`. Reader: both search paths in
+        # `mbt.graph_loader`, which roll a passage up to its parent so the answer
+        # shape does not change.
+        #
+        # No validity window (D-15), for the same reason as `Lesson`: it is part
+        # of a document about this system, not a claim about a product.
+        LabelSpec(
+            "Passage", "One section of a document, embedded on its own",
+            required=("text", "ordinal", SEARCH_TEXT),
+            indexed=("ordinal",),
         ),
         # ------------------------------------------------------------------
         # The intent spine (§4.1's comparison, made structural)
@@ -1090,6 +1132,11 @@ ALLOWED_RELATIONSHIPS: tuple[RelationshipSpec, ...] = (
     # The join to behaviour, mirroring `Transition-[:DERIVED_FROM]->Endpoint`.
     RelationshipSpec("Transition", "DERIVED_FROM", "Action",
                      "The control this interaction was recovered from"),
+    # The only edge a Passage has. It is reached from its document and never
+    # searched for on its own, which is what keeps a node with no independent
+    # meaning from becoming one the reader has to know about.
+    RelationshipSpec("Lesson", "CONTAINS", "Passage",
+                     "Its sections, each carrying its own vector"),
     RelationshipSpec("Component", "CONTAINS", "State", "Membership of this component version"),
     RelationshipSpec("Component", "CONTAINS", "Transition", "Membership of this component version"),
     RelationshipSpec("Scenario", "GENERATED_FROM", "Component",

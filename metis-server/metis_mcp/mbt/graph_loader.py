@@ -655,6 +655,57 @@ class SearchIndexMissing(RuntimeError):
     """The full-text index has not been created in this database."""
 
 
+PASSAGE_PARENT_CYPHER = """
+UNWIND $ids AS pid
+MATCH (parent)-[:CONTAINS]->(p:Passage {id: pid})
+RETURN pid AS passage_id, parent.id AS id, labels(parent)[0] AS label,
+       coalesce(parent.name, '') AS name,
+       coalesce(parent.description, parent.text, '') AS body,
+       coalesce(parent.lifecycle_state, '') AS lifecycle_state
+"""
+
+
+def roll_up_passages(session, rows: list[dict]) -> list[dict]:
+    """Replace each `Passage` hit with the document that contains it.
+
+    **A passage is searched and never shown.** It exists so that similarity is
+    computed against one section rather than a whole document — which is worth
+    six of thirty-six questions — but nobody asks to see one, and a result list
+    mixing documents with fragments of documents would make the caller learn
+    about a node that is an implementation detail of ranking.
+
+    Rank is preserved and duplicates collapse to their best position: a lesson
+    whose third section matched at rank 1 IS the rank-1 answer, and its other
+    sections matching further down add nothing.
+
+    A passage whose parent is missing is dropped rather than shown bare. That is
+    a landing defect (`CONTAINS` is the only edge it has), and the honest place
+    to see it is the count of what landed, not a search result.
+    """
+    passage_ids = [r["id"] for r in rows if r.get("label") == "Passage"]
+    if not passage_ids:
+        return rows
+
+    parents = {row["passage_id"]: dict(row)
+               for row in session.run(PASSAGE_PARENT_CYPHER, {"ids": passage_ids})}
+
+    out: list[dict] = []
+    seen: set[str] = set()
+    for row in rows:
+        if row.get("label") == "Passage":
+            parent = parents.get(row["id"])
+            if parent is None:
+                continue
+            row = {k: v for k, v in parent.items() if k != "passage_id"}
+            # Carried through so a caller can still say WHY this ranked.
+            row["matched_passage"] = parent["passage_id"]
+        if row["id"] in seen:
+            continue
+        seen.add(row["id"])
+        out.append(row)
+    return out
+
+
 def search_knowledge(session, query: str, limit: int = 20) -> list[dict]:
     """Entities, requirements and criteria matching a term.
 
@@ -669,8 +720,11 @@ def search_knowledge(session, query: str, limit: int = 20) -> list[dict]:
     try:
         rows = session.run(SEARCH_CYPHER, {"index": SEARCH_INDEX,
                                            "query": lucene_escape(query),
-                                           "limit": limit})
-        return [dict(row) for row in rows]
+                                           # Over-fetch: passages collapse into
+                                           # their parents, so N hits can be
+                                           # fewer than N answers.
+                                           "limit": limit * 3})
+        return roll_up_passages(session, [dict(row) for row in rows])[:limit]
     except Exception as exc:                       # noqa: BLE001 - re-raised below
         # **Reported, never silently degraded.** Falling back to `CONTAINS` here
         # would leave search working badly with no signal, which is the failure
@@ -844,5 +898,9 @@ def hybrid_search(session, query: str, provider=None, limit: int = 20):
             "index": vector_index_for(label), "k": limit, "vector": vector})
         semantic.extend(dict(r) for r in rows)
     semantic.sort(key=lambda r: (-r["score"], r["label"], r["id"]))
+    # Rolled up AFTER sorting by score, so a document is ranked by its BEST
+    # section rather than by whichever section the index happened to return
+    # first — which is the whole reason passages carry vectors at all.
+    semantic = roll_up_passages(session, semantic)
 
     return retrieval.fuse(keyword, semantic, limit=limit)

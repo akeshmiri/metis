@@ -141,6 +141,7 @@ CREATE INDEX rel_c_o_n_s_t_r_a_i_n_e_d__b_y_t_valid IF NOT EXISTS FOR ()-[x:CONS
 //   (Action)-[:ON_EVENT]->(Event)  — The interaction that invokes this action
 //   (Navigation)-[:NAVIGATES_TO]->(Page)  — Where this control goes
 //   (Transition)-[:DERIVED_FROM]->(Action)  — The control this interaction was recovered from
+//   (Lesson)-[:CONTAINS]->(Passage)  — Its sections, each carrying its own vector
 //   (Component)-[:CONTAINS]->(State)  — Membership of this component version
 //   (Component)-[:CONTAINS]->(Transition)  — Membership of this component version
 //   (Scenario)-[:GENERATED_FROM]->(Component)  — The exact version this path covers

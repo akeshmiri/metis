@@ -439,6 +439,8 @@ def test_changed_files_are_relative_to_the_analysed_directory():
     """
     import subprocess
 
+    import pytest
+
     from code_analysis.engine import changed_files
 
     # `changed_files` answers an unanswerable range with `[]` rather than
@@ -452,8 +454,30 @@ def test_changed_files_are_relative_to_the_analysed_directory():
         "commit range. In CI set `fetch-depth: 2` on actions/checkout; locally "
         "run `git fetch --deepen=1`")
 
-    changed = changed_files(".", "HEAD~1")
-    assert changed, "expected some change in the last commit"
+    # NOT `HEAD~1`: whether the previous commit happened to touch `metis-server`
+    # is not a property of this code. A commit that changed only `docs/` made
+    # `changed` empty and failed this test with a message about relative paths —
+    # the same shape of misleading failure as the shallow-clone case above.
+    #
+    # A range that reaches a commit which certainly touched this directory is
+    # what the assertion actually needs, so it asks git for one.
+    # Walk back until a range actually contains changes under this directory,
+    # bounded by what the checkout has. Two separate things make a naive
+    # `HEAD~1` wrong, and each produced a failure whose message was about
+    # relative paths: a SHALLOW clone has no `HEAD~1` at all, and a commit that
+    # touched only `docs/` yields an empty set from a range that exists.
+    changed = []
+    for depth in range(1, 6):
+        probe = subprocess.run(["git", "rev-parse", f"HEAD~{depth}"],
+                               capture_output=True, text=True)
+        if probe.returncode != 0:
+            break                      # ran out of history
+        changed = changed_files(".", f"HEAD~{depth}")
+        if changed:
+            break
+    if not changed:
+        pytest.skip("no range within reach changes metis-server/ — a shallow "
+                    "clone, or recent commits touched only docs")
     assert not [p for p in changed if p.startswith("metis-server/")], (
         "paths came back relative to the repository root, not to the analysed "
         "directory — they will not match any anchor")

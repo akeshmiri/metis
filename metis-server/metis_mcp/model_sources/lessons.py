@@ -113,11 +113,37 @@ def lesson_id(path: str) -> str:
     return "lesson:" + path.removesuffix(".md")
 
 
+def sections_of(text: str) -> list[tuple[str, str]]:
+    """`(heading, body)` per `##` section, body including its own heading.
+
+    The heading is kept IN the body as well as beside it: it is often the most
+    answer-shaped sentence in the section — `Why a selector is a property and
+    not a node` is a question and its own answer — and a vector built from the
+    prose alone loses it.
+
+    Text before the first `##` (the title and any preamble) becomes the first
+    section, so nothing in the document is unreachable by similarity.
+    """
+    import re
+
+    parts = re.split(r"\n(?=## )", text)
+    out: list[tuple[str, str]] = []
+    for part in parts:
+        body = part.strip()
+        if not body:
+            continue
+        first = body.splitlines()[0].strip()
+        heading = first.lstrip("# ").strip() or "(preamble)"
+        out.append((heading, body))
+    return out
+
+
 def plan_lessons(directory: str | Path, *, job_id: str = "manual",
                  proposed_by: str = "academy",
                  t_recorded: str | None = None):
     """`Episode` + one `Lesson` per file. Pure: no session, no writes."""
-    from metis_mcp.model_sources.landing import LandingPlan, PlannedNode
+    from metis_mcp.model_sources.landing import (
+        LandingPlan, PlannedEdge, PlannedNode)
     from metis_mcp.ontology.validation import validate
 
     lessons = read_lessons(directory)
@@ -155,5 +181,26 @@ def plan_lessons(directory: str | Path, *, job_id: str = "manual",
             # S-4. The academy is not exempt from the rule it teaches.
             "lifecycle_state": QUARANTINE,
         })
+
+        # One Passage per `##` section, each carrying its own vector.
+        #
+        # The lesson keeps its own full text: a question about the document as a
+        # whole should still match the document, and dropping that in favour of
+        # sections alone would trade one dilution for the opposite one.
+        parent = lesson_id(lesson["path"])
+        for ordinal, (heading, body) in enumerate(sections_of(lesson["text"]), start=1):
+            passage_id = f"{parent}#{ordinal:02d}"
+            if add_node("Passage", {
+                "id": passage_id,
+                "source_episode_id": episode_id,
+                "name": heading,
+                "text": body,
+                "ordinal": ordinal,
+                "search_text": search_text_for(heading, body),
+            }):
+                plan.edges.append(PlannedEdge(
+                    from_label="Lesson", from_id=parent,
+                    rel_type="CONTAINS",
+                    to_label="Passage", to_id=passage_id))
 
     return plan

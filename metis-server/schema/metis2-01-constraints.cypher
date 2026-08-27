@@ -421,6 +421,17 @@ CREATE INDEX parameter_lifecycle_state_lookup IF NOT EXISTS FOR (n:Parameter) ON
 CREATE INDEX parameter_source_episode_id_lookup IF NOT EXISTS FOR (n:Parameter) ON (n.source_episode_id);
 //   Parameter.location ∈ {path, query, header, body, form, cookie} — enforced by ontology.validation, not by Neo4j
 
+// Passage — One section of a document, embedded on its own
+CREATE CONSTRAINT passage_id_unique IF NOT EXISTS FOR (n:Passage) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT passage_source_episode_id_required IF NOT EXISTS FOR (n:Passage) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT passage_name_required IF NOT EXISTS FOR (n:Passage) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT passage_text_required IF NOT EXISTS FOR (n:Passage) REQUIRE n.text IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT passage_ordinal_required IF NOT EXISTS FOR (n:Passage) REQUIRE n.ordinal IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT passage_search_text_required IF NOT EXISTS FOR (n:Passage) REQUIRE n.search_text IS NOT NULL;
+CREATE INDEX passage_ordinal_lookup IF NOT EXISTS FOR (n:Passage) ON (n.ordinal);
+CREATE INDEX passage_lifecycle_state_lookup IF NOT EXISTS FOR (n:Passage) ON (n.lifecycle_state);
+CREATE INDEX passage_source_episode_id_lookup IF NOT EXISTS FOR (n:Passage) ON (n.source_episode_id);
+
 // Postgres — A query sent to PostgreSQL
 CREATE CONSTRAINT postgres_id_unique IF NOT EXISTS FOR (n:Postgres) REQUIRE n.id IS UNIQUE;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT postgres_source_episode_id_required IF NOT EXISTS FOR (n:Postgres) REQUIRE n.source_episode_id IS NOT NULL;
@@ -670,7 +681,7 @@ CREATE INDEX zephyr_item_source_episode_id_lookup IF NOT EXISTS FOR (n:ZephyrIte
 // matching: `CONTAINS` cannot rank, cannot tokenise, and cannot tell a
 // title match from a body match.
 CREATE FULLTEXT INDEX metis_search IF NOT EXISTS
-FOR (n:AcceptanceCriterion|BusinessEntity|Intent|Lesson|Requirement|Specification)
+FOR (n:AcceptanceCriterion|BusinessEntity|Intent|Lesson|Passage|Requirement|Specification)
 ON EACH [n.description, n.name, n.search_text, n.statement, n.text]
 // The `english` analyzer, not the default `standard` one. Measured: with
 // the default, searching `lock` returned NOTHING for a criterion whose
@@ -707,6 +718,13 @@ OPTIONS {indexConfig: {
 }};
 CREATE VECTOR INDEX metis_vector_lesson IF NOT EXISTS
 FOR (n:Lesson)
+ON (n.embedding)
+OPTIONS {indexConfig: {
+  `vector.dimensions`: 1536,
+  `vector.similarity_function`: 'cosine'
+}};
+CREATE VECTOR INDEX metis_vector_passage IF NOT EXISTS
+FOR (n:Passage)
 ON (n.embedding)
 OPTIONS {indexConfig: {
   `vector.dimensions`: 1536,

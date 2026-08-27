@@ -180,6 +180,78 @@ def fuse(keyword: Sequence[dict], semantic: Sequence[dict],
     return hits
 
 
+def load_provider(spec: str) -> EmbeddingProvider:
+    """`package.module:Attribute` -> an `EmbeddingProvider`.
+
+    **Why a dotted path and not a setting naming a bundled model.** None is
+    bundled (see `EmbeddingProvider`), so the only honest way to accept one is
+    to let a deployment name something it installed itself. This imports what it
+    is told and checks the shape; it never falls back to a default, because a
+    provider that silently was not the one you asked for produces rankings you
+    cannot account for.
+
+    The attribute may be a class (instantiated with no arguments) or an instance.
+    """
+    import importlib
+
+    if ":" not in spec:
+        raise RetrievalRefused(
+            f"{spec!r} is not `package.module:Attribute` — name the module and "
+            f"the provider in it, e.g. `myco.embeddings:OpenAIProvider`")
+    module_name, _, attribute = spec.partition(":")
+    try:
+        module = importlib.import_module(module_name)
+    except ImportError as e:
+        raise RetrievalRefused(
+            f"cannot import {module_name!r}: {e}. A provider is supplied by the "
+            f"deployment and must be importable from this interpreter") from e
+    try:
+        candidate = getattr(module, attribute)
+    except AttributeError as e:
+        raise RetrievalRefused(
+            f"{module_name!r} has no {attribute!r}") from e
+
+    provider = candidate() if isinstance(candidate, type) else candidate
+
+    # Checked here rather than at first use: a provider missing `model` fails
+    # inside `require_matching_model` with a message about the corpus, which
+    # sends the reader to the graph for a defect in their own class.
+    missing = [m for m in ("model", "dimensions", "embed") if not hasattr(provider, m)]
+    if missing:
+        raise RetrievalRefused(
+            f"{spec} is not an EmbeddingProvider: no {', '.join(missing)}. "
+            f"It needs `model` (str), `dimensions` (int) and `embed(text)`")
+    if not callable(provider.embed):
+        raise RetrievalRefused(f"{spec}.embed is not callable")
+    return provider
+
+
+def check_vector(vector, *, dimensions: int, what: str = "vector") -> list[float]:
+    """A vector that is safe to store, or a refusal.
+
+    **A NaN does not error; it just never ranks.** A poisoned vector leaves the
+    node present, indexed and permanently unreachable by similarity, and the
+    symptom is "semantic search does not seem to help" rather than a failure.
+    Measured on a hand-rolled provider that reinterpreted hash bytes as floats:
+    3 NaNs in 1536, and the only visible effect was that two identical texts
+    compared unequal.
+    """
+    import math
+
+    values = [float(x) for x in vector]
+    if len(values) != dimensions:
+        raise RetrievalRefused(
+            f"{what}: {len(values)} dimensions, index expects {dimensions}. "
+            f"The width is fixed when the index is created")
+    bad = [i for i, x in enumerate(values) if not math.isfinite(x)]
+    if bad:
+        raise RetrievalRefused(
+            f"{what}: {len(bad)} non-finite value(s) at {bad[:5]} — refusing to "
+            f"store. Such a node is indexed and never ranks, which reads as poor "
+            f"retrieval rather than as bad data")
+    return values
+
+
 def require_matching_model(provider: EmbeddingProvider, written_with: set[str]) -> None:
     """Refuse a query whose model disagrees with what wrote the vectors.
 

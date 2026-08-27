@@ -6,12 +6,12 @@
 
 ```
 usage: metis-mbt [-h]
-                 {paths,render,report,payload,knowledge,feature,glossary,spec-requirement,intent,data,guide,page-object,spec-build,feature-derive,intake,entity,structure,review,override,coverage-gap,validate,drift,publish,ac-mine,doctor,init,analyse,frameworks,ui,reconcile,divergence,spec,sources,land,findings,persist,workflow,backfill-validity,retrieval-bench,lessons} ...
+                 {paths,render,report,payload,knowledge,feature,glossary,spec-requirement,intent,data,guide,page-object,spec-build,feature-derive,intake,entity,structure,review,override,coverage-gap,validate,drift,publish,ac-mine,doctor,init,analyse,frameworks,ui,reconcile,divergence,spec,sources,land,findings,persist,workflow,backfill-validity,retrieval-bench,embed,lessons} ...
 
 CLI for the MBT engine (application spec §9.4, first slice).
 
 positional arguments:
-  {paths,render,report,payload,knowledge,feature,glossary,spec-requirement,intent,data,guide,page-object,spec-build,feature-derive,intake,entity,structure,review,override,coverage-gap,validate,drift,publish,ac-mine,doctor,init,analyse,frameworks,ui,reconcile,divergence,spec,sources,land,findings,persist,workflow,backfill-validity,retrieval-bench,lessons}
+  {paths,render,report,payload,knowledge,feature,glossary,spec-requirement,intent,data,guide,page-object,spec-build,feature-derive,intake,entity,structure,review,override,coverage-gap,validate,drift,publish,ac-mine,doctor,init,analyse,frameworks,ui,reconcile,divergence,spec,sources,land,findings,persist,workflow,backfill-validity,retrieval-bench,embed,lessons}
     paths               generate covering paths
     render              render paths as test cases
     report              coverage report
@@ -58,6 +58,7 @@ positional arguments:
                         requiring one
     retrieval-bench     measure search against questions whose answers are
                         known
+    embed               populate `embedding` so semantic search has vectors
     lessons             land the authored academy (docs/academy/) as Lesson
                         nodes
 

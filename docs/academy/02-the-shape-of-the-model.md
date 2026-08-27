@@ -47,7 +47,7 @@ reports success.
 
 ## The ontology is closed
 
-62 labels, and `metis_mcp/ontology/labels.py` is the single source: `LABELS`,
+63 labels, and `metis_mcp/ontology/labels.py` is the single source: `LABELS`,
 `ALLOWED_RELATIONSHIPS`, and `STAGED_OUT` — the deliberately-excluded labels,
 each recorded with the trigger that would bring it back. An absence with a
 reason is a decision; an absence without one is an oversight.

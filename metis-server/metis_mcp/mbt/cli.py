@@ -1897,7 +1897,8 @@ def cmd_retrieval_bench(args) -> int:
     """
     from metis_mcp.mbt.graph_loader import hybrid_search, search_knowledge
     from metis_mcp.mbt.graph_session import session
-    from metis_mcp.retrieval import RetrievalRefused, load_questions, score
+    from metis_mcp.retrieval import (
+        RetrievalRefused, load_provider, load_questions, score)
 
     try:
         questions = load_questions(args.questions)
@@ -1905,21 +1906,40 @@ def cmd_retrieval_bench(args) -> int:
         print(f"REFUSED: {args.questions}: {e}")
         return 1
 
+    # `--hybrid` used to pass `provider=None` unconditionally, so the flag could
+    # never do semantic search at all: it printed "(hybrid)" over numbers a
+    # keyword query had produced. The mode reported below is now the mode that
+    # actually ran.
+    provider = None
+    if args.provider:
+        try:
+            provider = load_provider(args.provider)
+        except RetrievalRefused as e:
+            print(f"REFUSED: {e}")
+            return 1
+
     rankings: dict[str, list[str]] = {}
     with session() as s:
         for question in questions:
             if args.hybrid:
-                # No provider is bundled, so this is keyword-only unless a
-                # deployment supplies one — reported rather than implied.
-                hits = hybrid_search(s, question, provider=None, limit=args.limit)
+                hits = hybrid_search(s, question, provider=provider,
+                                     limit=args.limit)
                 rankings[question] = [h.id for h in hits]
             else:
                 rows = search_knowledge(s, question, limit=args.limit)
                 rankings[question] = [r["id"] for r in rows]
 
     report = score(rankings, questions)
-    print(f"Retrieval over {len(questions)} question(s) "
-          f"({'hybrid' if args.hybrid else 'keyword'}):\n")
+    if not args.hybrid:
+        mode = "keyword"
+    elif provider is None:
+        # Named for what it DID, not for what was asked for. Someone comparing
+        # two runs must not read "hybrid" over a keyword-only result and
+        # conclude semantic search made no difference.
+        mode = "hybrid requested, keyword only — no --provider given"
+    else:
+        mode = f"hybrid, {provider.model}"
+    print(f"Retrieval over {len(questions)} question(s) ({mode}):\n")
     print(report.describe())
 
     # Opt-in, because a measurement and a record of a measurement are different
@@ -1941,6 +1961,101 @@ def cmd_retrieval_bench(args) -> int:
         print(f"\nBELOW THRESHOLD: {report.top1} top-1, wanted at least "
               f"{args.min_top1}")
         return 1
+    return 0
+
+
+def cmd_embed(args) -> int:
+    """Populate `embedding` on searchable nodes, so semantic search has vectors.
+
+    **Why this had to exist before `--hybrid` meant anything.** Every other half
+    was already built — one vector index per searchable label, RRF fusion, and a
+    refusal when the query model disagrees with what wrote the corpus. Nothing
+    wrote the property. The indexes were live and empty, so semantic search
+    ranked nothing and `--hybrid` returned keyword results, which is precisely
+    the silent-success shape this codebase hunts for.
+
+    **All or nothing per run, and re-embedding is explicit.** A partially
+    embedded corpus is refused at query time (`require_matching_model`) because
+    half of it would be silently unreachable, so a run that stops halfway leaves
+    the graph in a state the reader refuses to use. `--model-change` is required
+    to overwrite vectors written by a different model: doing it implicitly is how
+    a corpus ends up with two models in it and nothing says so.
+    """
+    from metis_mcp.mbt.graph_loader import embedding_models
+    from metis_mcp.mbt.graph_session import session
+    from metis_mcp.ontology.labels import SEARCH_TARGETS, VECTOR_DIMENSIONS
+    from metis_mcp.retrieval import RetrievalRefused, check_vector, load_provider
+
+    try:
+        provider = load_provider(args.provider)
+    except RetrievalRefused as e:
+        print(f"REFUSED: {e}")
+        return 1
+
+    if provider.dimensions != VECTOR_DIMENSIONS:
+        print(f"REFUSED: {provider.model} produces {provider.dimensions}-dim "
+              f"vectors and the indexes are {VECTOR_DIMENSIONS}-dim. The width is "
+              f"fixed when an index is created: change VECTOR_DIMENSIONS in "
+              f"ontology/labels.py, regenerate the schema, and DROP/recreate the "
+              f"vector indexes — they are not altered in place.")
+        return 1
+
+    labels = sorted(SEARCH_TARGETS) if not args.label else [args.label]
+    if args.label and args.label not in SEARCH_TARGETS:
+        print(f"REFUSED: {args.label!r} is not searchable; one of "
+              f"{', '.join(sorted(SEARCH_TARGETS))}")
+        return 1
+
+    with session() as s:
+        written_with = embedding_models(s)
+        stale = {m for m in written_with if m != provider.model}
+        if stale and not args.model_change:
+            print(f"REFUSED: the corpus carries {sorted(stale)} and this would "
+                  f"write {provider.model!r}. Two models in one corpus are not "
+                  f"comparable and every query is refused. Re-run with "
+                  f"--model-change to re-embed everything.")
+            return 1
+
+        total = 0
+        for label in labels:
+            rows = list(s.run(
+                f"MATCH (n:{label}) WHERE n.search_text IS NOT NULL "
+                f"RETURN n.id AS id, n.name AS name, n.text AS text"))
+            if not rows:
+                print(f"  {label}: nothing to embed")
+                continue
+            texts = [f"{r['name'] or ''}\n\n{r['text'] or ''}".strip() for r in rows]
+            # One call per label rather than per node where the provider offers
+            # it: a network provider charges per request, and a local one pays
+            # its startup cost once.
+            if hasattr(provider, "embed_many"):
+                vectors = provider.embed_many(texts)
+            else:
+                vectors = [provider.embed(text) for text in texts]
+
+            checked = []
+            for row, vector in zip(rows, vectors):
+                try:
+                    checked.append(check_vector(vector,
+                                                dimensions=VECTOR_DIMENSIONS,
+                                                what=row["id"]))
+                except RetrievalRefused as e:
+                    print(f"REFUSED: {e}")
+                    print("  nothing was written for this label — a partly "
+                          "embedded corpus is refused at query time anyway")
+                    return 1
+
+            for row, vector in zip(rows, checked):
+                s.run("MATCH (n {id:$id}) SET n.embedding=$v, n.embedding_model=$m",
+                      id=row["id"], v=vector, m=provider.model)
+            print(f"  {label}: {len(rows)} embedded")
+            total += len(rows)
+
+    print(f"\n{total} node(s) now carry {provider.model} vectors "
+          f"({VECTOR_DIMENSIONS}-dim).")
+    if total:
+        print("Semantic search is live: metis retrieval-bench --hybrid "
+              f"--provider {args.provider}")
     return 0
 
 
@@ -3373,7 +3488,11 @@ def main(argv: list[str] | None = None) -> int:
     bench_p.add_argument("--questions", default="../docs/academy/retrieval-questions.tsv")
     bench_p.add_argument("--limit", type=int, default=20)
     bench_p.add_argument("--hybrid", action="store_true",
-                         help="fuse keyword with semantic (needs a provider)")
+                         help="fuse keyword with semantic (needs --provider)")
+    bench_p.add_argument("--provider", default="",
+                         help="`package.module:Attribute` naming an "
+                              "EmbeddingProvider the deployment installed; none "
+                              "is bundled")
     bench_p.add_argument("--min-top1", dest="min_top1", type=int, default=0,
                          help="exit non-zero below this, to gate a change")
     bench_p.add_argument("--land", action="store_true",
@@ -3382,6 +3501,18 @@ def main(argv: list[str] | None = None) -> int:
     bench_p.add_argument("--about-label", dest="about_label", default="Lesson",
                          help="the label the expected ids belong to")
     bench_p.set_defaults(handler=cmd_retrieval_bench)
+
+    embed_p = sub.add_parser(
+        "embed", help="populate `embedding` so semantic search has vectors")
+    embed_p.add_argument("--provider", required=True,
+                         help="`package.module:Attribute` naming an "
+                              "EmbeddingProvider; none is bundled")
+    embed_p.add_argument("--label", default="",
+                         help="one searchable label (default: all of them)")
+    embed_p.add_argument("--model-change", dest="model_change",
+                         action="store_true",
+                         help="re-embed a corpus written by a different model")
+    embed_p.set_defaults(handler=cmd_embed)
 
     lessons_p = sub.add_parser(
         "lessons", help="land the authored academy (docs/academy/) as Lesson nodes")
