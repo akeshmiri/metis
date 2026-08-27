@@ -134,14 +134,18 @@ Two habits that follow from this:
 cd metis-server
 uv venv                        # uv is installed; use it, not python3 -m venv
 uv pip install -e ".[test]"    # the extra is what brings pytest
-uv run python -m pytest -q     # 1,702 tests in 78 test files. No service, no
-                               # network -- but 136 of them need Joern 4.0.604
+uv run python -m pytest -q     # No service, no network -- but a subset needs
+                               # Joern 4.0.604
                                # and a JDK, and conftest.py FAILS rather than
                                # skips without them (deliberately: it is the
                                # only behavioural test the five query packs
-                               # have). Without Joern installed you get
-                               # "~1,566 passed, 136 errors", all of them
-                               # from the missing engine.
+                               # have). Without Joern installed those error
+                               # rather than skip, and the rest still pass.
+                               #
+                               # No counts here on purpose: they are derivable
+                               # (`pytest --collect-only -q`) and drifted four
+                               # times in one session. What is NOT derivable is
+                               # below -- the prerequisites and the ignore list.
                                #
                                # Two macOS prerequisites, both now DIAGNOSED by
                                # `metis doctor` rather than left to be guessed:
@@ -155,7 +159,7 @@ uv run python -m pytest -q     # 1,702 tests in 78 test files. No service, no
 # The engine-free half, which is what you can run with no Joern:
 uv run python -m pytest -q --ignore=test_extraction.py --ignore=test_recipe.py \
     --ignore=test_connectivity.py --ignore=test_data_layer.py \
-    --ignore=test_data_cli.py      # 1,566 pass, 0 errors
+    --ignore=test_data_cli.py      # 0 errors, no Joern needed
 ```
 
 CI runs these as two jobs on the same triggers — `test` (engine-free) and

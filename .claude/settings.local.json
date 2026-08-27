@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python3 -c \"import ast; ast.parse\\(open\\('demo_data/generate_demo_data.py'\\).read\\(\\)\\)\")"
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('demo_data/generate_demo_data.py'\\).read\\(\\)\\)\")",
+      "Bash(npm -g config get prefix)",
+      "Bash(ls -d \"$\\(npm -g config get prefix \\)/lib/node_modules/@anthropic-ai/claude-code\")",
+      "Read(//Users/akeshmiri/.claude/**)",
+      "Read(//Users/akeshmiri/**)"
     ]
   }
 }
