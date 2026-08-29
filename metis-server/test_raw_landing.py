@@ -354,3 +354,87 @@ if __name__ == "__main__":
             print(f"ERROR {t.__name__}: {type(e).__name__}: {e}")
     print(f"\n{len(tests) - failures}/{len(tests)} passed")
     sys.exit(1 if failures else 0)
+
+
+# --------------------------------------------------------------------------
+# SecurityScheme (ONT: the sixty-fifth label)
+# --------------------------------------------------------------------------
+#
+# **What it replaced and why.** Declared security rode as three parallel arrays
+# on the `Endpoint` — `security_schemes`, `security_expressions`,
+# `security_roles` — documented as positional. A scheme with two roles has no
+# positional representation: `@DemoSecured({"records:write", "records:admin"})`
+# produced `schemes=2, roles=3` on a real endpoint, and 4 of 12 endpoints in the
+# demo corpus were misaligned. `authoring.auth_facts` handed that broken
+# correspondence to callers, who could not tell which role belonged to which
+# scheme.
+
+def _secured(*facts):
+    """A structural report whose one endpoint declares `facts` as its security."""
+    from code_analysis.contract import SecurityFact
+
+    return _structural(endpoints=[
+        EndpointFact(id="e1", http_method="DELETE", path="/record/{id}",
+                     handler_method_id="c.RecordController.save:R(D)", anchor=A,
+                     security=tuple(SecurityFact(**f) for f in facts))])
+
+
+def _schemes(plan):
+    return [n for n in plan.nodes if n.label == "SecurityScheme"]
+
+
+def test_a_scheme_with_two_roles_keeps_them_together():
+    """The case the parallel arrays could not express at all."""
+    plan = plan_raw_landing(_secured(
+        {"scheme": "role", "expression": '@DemoSecured({ "records:write", "records:admin" })',
+         "roles": ("records:write", "records:admin")},
+        {"scheme": "role", "expression": "hasRole(RECORDS)", "roles": ("RECORDS",)}),
+        journey="records", repo=REPO)
+
+    schemes = _schemes(plan)
+    assert len(schemes) == 2, "two declarations, two nodes"
+    by_roles = {tuple(n.properties["roles"]): n.properties["expression"]
+                for n in schemes}
+    assert by_roles[("records:admin", "records:write")].startswith("@DemoSecured")
+    assert by_roles[("RECORDS",)] == "hasRole(RECORDS)"
+
+
+def test_two_declarations_of_the_same_scheme_do_not_merge():
+    """Keyed on the DECLARATION, not the scheme. Keyed on `role` alone, a
+    class-level `hasRole` and a method-level annotation would MERGE onto one
+    node and one of them would be silently overwritten — the mistake
+    `outcome_id` documents, in a smaller place."""
+    plan = plan_raw_landing(_secured(
+        {"scheme": "role", "expression": "hasRole(A)", "roles": ("A",)},
+        {"scheme": "role", "expression": "hasRole(B)", "roles": ("B",)}),
+        journey="records", repo=REPO)
+    ids = {n.properties["id"] for n in _schemes(plan)}
+    assert len(ids) == 2
+
+
+def test_the_endpoint_points_at_its_schemes():
+    plan = plan_raw_landing(_secured(
+        {"scheme": "authenticated", "expression": "authenticated()"}),
+        journey="records", repo=REPO)
+    edges = [e for e in plan.edges if e.rel_type == "SECURED_BY"]
+    assert len(edges) == 1
+    assert edges[0].to_label == "SecurityScheme"
+
+
+def test_no_declared_security_writes_no_node():
+    """Absent means nothing was DECLARED, never 'it is open' — a filter chain or
+    a gateway enforces invisibly to extraction, and writing an empty node would
+    turn the first claim into the second."""
+    plan = plan_raw_landing(_secured(), journey="records", repo=REPO)
+    assert not _schemes(plan)
+
+
+def test_the_parallel_arrays_are_gone_from_the_endpoint():
+    """The old shape must not linger beside the new one — two representations
+    with nothing checking they agree is the failure this replaced."""
+    plan = plan_raw_landing(_secured(
+        {"scheme": "role", "expression": "hasRole(A)", "roles": ("A",)}),
+        journey="records", repo=REPO)
+    endpoint = next(n for n in plan.nodes if n.label == "Endpoint")
+    assert not {"security_schemes", "security_expressions", "security_roles"} \
+        & set(endpoint.properties)

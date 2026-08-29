@@ -84,19 +84,19 @@ def currently_valid(*aliases: str) -> str:
 
 STATES_CYPHER = """
 MATCH (s:State)
-WHERE $journey IN s.functional_areas AND s.surface = $surface
+WHERE $journey IN s.functional_areas AND s.b_surface = $surface
 RETURN s.id             AS id,
        s.name           AS name,
-       s.surface        AS surface,
-       s.is_initial     AS is_initial,
+       s.b_surface        AS surface,
+       s.b_is_initial     AS is_initial,
        s.lifecycle_state AS lifecycle_state,
-       s.name_tier      AS name_tier,
+       s.x_name_tier      AS name_tier,
        // Written by landing since the Web surface was added, and never read
        // back. `condition` is what a state MEANS ("no metric exists") where its
        // name says only what it is called, so a spec rendered from a
        // graph-loaded model fell back to the code convention for every Given.
-       s.condition      AS condition,
-       s.page           AS page
+       s.p_condition      AS condition,
+       s.p_page           AS page
 ORDER BY s.id
 """
 
@@ -109,7 +109,7 @@ ORDER BY s.id
 CHECKS_CYPHER = """
 MATCH (t:Transition|ApiCall|UiAction)-[:DERIVED_FROM]->(:DeclaredOutcome)
       -[:GUARDED_BY]->(c:Check)
-WHERE $journey IN t.functional_areas AND t.surface = $surface
+WHERE $journey IN t.functional_areas AND t.b_surface = $surface
 RETURN t.id             AS transition,
        c.expression     AS expression,
        c.order          AS order,
@@ -120,35 +120,35 @@ ORDER BY t.id, c.order, c.expression
 
 AVAILABLE_CYPHER = """
 MATCH (s:State)
-WHERE s.functional_areas IS NOT NULL AND s.surface IS NOT NULL
+WHERE s.functional_areas IS NOT NULL AND s.b_surface IS NOT NULL
 UNWIND s.functional_areas AS journey
-RETURN DISTINCT journey AS journey, s.surface AS surface
+RETURN DISTINCT journey AS journey, s.b_surface AS surface
 ORDER BY journey, surface
 """
 
 TRANSITIONS_CYPHER = """
 MATCH (src:State)-[:WHEN]->(t:Transition|ApiCall|UiAction)-[:THEN]->(tgt:State)
-WHERE $journey IN t.functional_areas AND t.surface = $surface
+WHERE $journey IN t.functional_areas AND t.b_surface = $surface
 RETURN t.id                    AS id,
        src.id                  AS source,
-       t.trigger               AS trigger,
+       t.c_trigger               AS trigger,
        tgt.id                  AS target,
-       t.guard_expression      AS guard,
-       t.implementation_status AS implementation_status,
+       t.b_guard_expression      AS guard,
+       t.b_implementation_status AS implementation_status,
        t.lifecycle_state       AS lifecycle_state,
-       t.outcome_status        AS outcome_status,
-       t.guard_anchor          AS guard_anchor,
-       t.source_state_unresolved AS source_state_unresolved,
-       t.inputs_json           AS inputs_json,
-       t.security_json         AS security_json,
-       t.outcome_source        AS outcome_source,
-       t.guard_claim           AS guard_claim,
+       t.c_outcome_status        AS outcome_status,
+       t.x_guard_anchor          AS guard_anchor,
+       t.x_source_state_unresolved AS source_state_unresolved,
+       t.c_inputs           AS inputs_json,
+       t.c_security         AS security_json,
+       t.x_outcome_source        AS outcome_source,
+       t.x_guard_claim           AS guard_claim,
        t.data_requirements     AS data_requirements,
-       t.response_body         AS response_body,
-       t.media_types           AS media_types,
-       t.name_tier             AS name_tier,
-       t.guard_wording         AS guard_wording,
-       t.guard_tier            AS guard_tier
+       t.c_response_body         AS response_body,
+       t.c_media_types           AS media_types,
+       t.x_name_tier             AS name_tier,
+       t.x_guard_wording         AS guard_wording,
+       t.x_guard_tier            AS guard_tier
 ORDER BY t.id
 """
 
@@ -176,8 +176,8 @@ INHERITED_GUARDS_CYPHER = """
 MATCH (ui:Transition|ApiCall|UiAction)-[r:INVOKES]->(api:Transition|ApiCall|UiAction)
 WHERE $journey IN ui.functional_areas
   AND r.confirmed_by IS NOT NULL AND r.confirmed_by <> ''
-  AND api.guard_expression IS NOT NULL AND api.guard_expression <> ''
-RETURN ui.id AS ui_transition, api.guard_expression AS guard
+  AND api.b_guard_expression IS NOT NULL AND api.b_guard_expression <> ''
+RETURN ui.id AS ui_transition, api.b_guard_expression AS guard
 ORDER BY ui.id
 """
 
@@ -207,7 +207,7 @@ ORDER BY ui.id, api.id
 # broken deterministically instead of arbitrarily.
 COMPONENT_CYPHER = f"""
 MATCH (c:{label_expression("Component")})
-WHERE c.journey = $journey AND c.surface = $surface
+WHERE c.journey = $journey AND c.b_surface = $surface
 RETURN c.id AS id, c.component AS component, c.version AS version,
        c.commit_sha AS commit_sha
 ORDER BY c.version DESC, c.id
@@ -224,7 +224,7 @@ LIMIT 1
 # would return only the unclassified ones.
 VALIDATING_CRITERIA_CYPHER = f"""
 MATCH (ac:AcceptanceCriterion)-[:VALIDATES]->(t:{label_expression("Transition")})
-WHERE $journey IN t.functional_areas AND t.surface = $surface
+WHERE $journey IN t.functional_areas AND t.b_surface = $surface
   AND {currently_valid("ac")}
 RETURN t.id AS transition_id, ac.id AS criterion_id
 ORDER BY t.id, ac.id
@@ -501,7 +501,7 @@ def load_entity_criteria(session, entity_id: str) -> list[dict]:
 
 SPEC_DOCUMENT_CYPHER = f"""
 MATCH (d:SpecDocument)-[:DESCRIBES]->(c:{label_expression("Component")})
-WHERE c.journey = $journey AND c.surface = $surface
+WHERE c.journey = $journey AND c.b_surface = $surface
 RETURN d.id AS id, d.name AS name, d.body_markdown AS body_markdown,
        d.content_hash AS content_hash, d.rendered_at AS rendered_at,
        d.lifecycle_state AS lifecycle_state,

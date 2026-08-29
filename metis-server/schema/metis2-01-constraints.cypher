@@ -45,13 +45,14 @@ CREATE INDEX action_source_episode_id_lookup IF NOT EXISTS FOR (n:Action) ON (n.
 CREATE CONSTRAINT api_call_id_unique IF NOT EXISTS FOR (n:ApiCall) REQUIRE n.id IS UNIQUE;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT api_call_source_episode_id_required IF NOT EXISTS FOR (n:ApiCall) REQUIRE n.source_episode_id IS NOT NULL;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT api_call_name_required IF NOT EXISTS FOR (n:ApiCall) REQUIRE n.name IS NOT NULL;
-// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT api_call_trigger_required IF NOT EXISTS FOR (n:ApiCall) REQUIRE n.trigger IS NOT NULL;
-// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT api_call_guard_expression_required IF NOT EXISTS FOR (n:ApiCall) REQUIRE n.guard_expression IS NOT NULL;
-// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT api_call_implementation_status_required IF NOT EXISTS FOR (n:ApiCall) REQUIRE n.implementation_status IS NOT NULL;
-// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT api_call_surface_required IF NOT EXISTS FOR (n:ApiCall) REQUIRE n.surface IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT api_call_c_trigger_required IF NOT EXISTS FOR (n:ApiCall) REQUIRE n.c_trigger IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT api_call_b_guard_expression_required IF NOT EXISTS FOR (n:ApiCall) REQUIRE n.b_guard_expression IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT api_call_b_implementation_status_required IF NOT EXISTS FOR (n:ApiCall) REQUIRE n.b_implementation_status IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT api_call_b_surface_required IF NOT EXISTS FOR (n:ApiCall) REQUIRE n.b_surface IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT api_call_model_id_required IF NOT EXISTS FOR (n:ApiCall) REQUIRE n.model_id IS NOT NULL;
 CREATE INDEX api_call_lifecycle_state_lookup IF NOT EXISTS FOR (n:ApiCall) ON (n.lifecycle_state);
 CREATE INDEX api_call_source_episode_id_lookup IF NOT EXISTS FOR (n:ApiCall) ON (n.source_episode_id);
-//   ApiCall.surface ∈ {api} — enforced by ontology.validation, not by Neo4j
+//   ApiCall.b_surface ∈ {api} — enforced by ontology.validation, not by Neo4j
 
 // BusinessArea — One business domain grouping entities and requirements
 CREATE CONSTRAINT business_area_id_unique IF NOT EXISTS FOR (n:BusinessArea) REQUIRE n.id IS UNIQUE;
@@ -400,7 +401,7 @@ CREATE INDEX page_component_lookup IF NOT EXISTS FOR (n:Page) ON (n.component);
 CREATE INDEX page_surface_lookup IF NOT EXISTS FOR (n:Page) ON (n.surface);
 CREATE INDEX page_lifecycle_state_lookup IF NOT EXISTS FOR (n:Page) ON (n.lifecycle_state);
 CREATE INDEX page_source_episode_id_lookup IF NOT EXISTS FOR (n:Page) ON (n.source_episode_id);
-//   Page.surface ∈ {ui} — enforced by ontology.validation, not by Neo4j
+//   Page.b_surface ∈ {ui} — enforced by ontology.validation, not by Neo4j
 
 // Pagination — A table's paging control
 CREATE CONSTRAINT pagination_id_unique IF NOT EXISTS FOR (n:Pagination) REQUIRE n.id IS UNIQUE;
@@ -479,7 +480,7 @@ CREATE CONSTRAINT rest_server_id_unique IF NOT EXISTS FOR (n:RestServer) REQUIRE
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT rest_server_component_required IF NOT EXISTS FOR (n:RestServer) REQUIRE n.component IS NOT NULL;
 CREATE INDEX rest_server_lifecycle_state_lookup IF NOT EXISTS FOR (n:RestServer) ON (n.lifecycle_state);
 CREATE INDEX rest_server_source_episode_id_lookup IF NOT EXISTS FOR (n:RestServer) ON (n.source_episode_id);
-//   RestServer.surface ∈ {api} — enforced by ontology.validation, not by Neo4j
+//   RestServer.b_surface ∈ {api} — enforced by ontology.validation, not by Neo4j
 
 // Route — One frontend route: the path that renders a page
 CREATE CONSTRAINT route_id_unique IF NOT EXISTS FOR (n:Route) REQUIRE n.id IS UNIQUE;
@@ -515,6 +516,17 @@ CREATE CONSTRAINT schema_id_unique IF NOT EXISTS FOR (n:Schema) REQUIRE n.id IS 
 CREATE INDEX schema_name_lookup IF NOT EXISTS FOR (n:Schema) ON (n.name);
 CREATE INDEX schema_lifecycle_state_lookup IF NOT EXISTS FOR (n:Schema) ON (n.lifecycle_state);
 CREATE INDEX schema_source_episode_id_lookup IF NOT EXISTS FOR (n:Schema) ON (n.source_episode_id);
+
+// SecurityScheme — One declared security requirement on an endpoint: the scheme, the declaration verbatim, and the roles it demands
+CREATE CONSTRAINT security_scheme_id_unique IF NOT EXISTS FOR (n:SecurityScheme) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT security_scheme_source_episode_id_required IF NOT EXISTS FOR (n:SecurityScheme) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT security_scheme_name_required IF NOT EXISTS FOR (n:SecurityScheme) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT security_scheme_scheme_required IF NOT EXISTS FOR (n:SecurityScheme) REQUIRE n.scheme IS NOT NULL;
+CREATE INDEX security_scheme_scheme_lookup IF NOT EXISTS FOR (n:SecurityScheme) ON (n.scheme);
+CREATE INDEX security_scheme_source_lookup IF NOT EXISTS FOR (n:SecurityScheme) ON (n.source);
+CREATE INDEX security_scheme_lifecycle_state_lookup IF NOT EXISTS FOR (n:SecurityScheme) ON (n.lifecycle_state);
+CREATE INDEX security_scheme_source_episode_id_lookup IF NOT EXISTS FOR (n:SecurityScheme) ON (n.source_episode_id);
+//   SecurityScheme.source ∈ {annotation, filter-chain, } — enforced by ontology.validation, not by Neo4j
 
 // Sort — A table's ordering control
 CREATE CONSTRAINT sort_id_unique IF NOT EXISTS FOR (n:Sort) REQUIRE n.id IS UNIQUE;
@@ -556,13 +568,15 @@ CREATE INDEX specification_source_episode_id_lookup IF NOT EXISTS FOR (n:Specifi
 CREATE CONSTRAINT state_id_unique IF NOT EXISTS FOR (n:State) REQUIRE n.id IS UNIQUE;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT state_source_episode_id_required IF NOT EXISTS FOR (n:State) REQUIRE n.source_episode_id IS NOT NULL;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT state_name_required IF NOT EXISTS FOR (n:State) REQUIRE n.name IS NOT NULL;
-// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT state_surface_required IF NOT EXISTS FOR (n:State) REQUIRE n.surface IS NOT NULL;
-CREATE INDEX state_surface_lookup IF NOT EXISTS FOR (n:State) ON (n.surface);
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT state_b_surface_required IF NOT EXISTS FOR (n:State) REQUIRE n.b_surface IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT state_model_id_required IF NOT EXISTS FOR (n:State) REQUIRE n.model_id IS NOT NULL;
+CREATE INDEX state_b_surface_lookup IF NOT EXISTS FOR (n:State) ON (n.b_surface);
 CREATE INDEX state_lifecycle_state_lookup IF NOT EXISTS FOR (n:State) ON (n.lifecycle_state);
 CREATE INDEX state_functional_areas_lookup IF NOT EXISTS FOR (n:State) ON (n.functional_areas);
-CREATE INDEX state_name_tier_lookup IF NOT EXISTS FOR (n:State) ON (n.name_tier);
+CREATE INDEX state_x_name_tier_lookup IF NOT EXISTS FOR (n:State) ON (n.x_name_tier);
+CREATE INDEX state_model_id_lookup IF NOT EXISTS FOR (n:State) ON (n.model_id);
 CREATE INDEX state_source_episode_id_lookup IF NOT EXISTS FOR (n:State) ON (n.source_episode_id);
-//   State.surface ∈ {ui, api} — enforced by ontology.validation, not by Neo4j
+//   State.b_surface ∈ {ui, api} — enforced by ontology.validation, not by Neo4j
 //   State.lifecycle_state ∈ {Quarantine, Approved, Disputed, Rejected, Deprecated} — enforced by ontology.validation, not by Neo4j
 
 // Table — A stored relation
@@ -600,41 +614,43 @@ CREATE INDEX topic_source_episode_id_lookup IF NOT EXISTS FOR (n:Topic) ON (n.so
 CREATE CONSTRAINT transition_id_unique IF NOT EXISTS FOR (n:Transition) REQUIRE n.id IS UNIQUE;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT transition_source_episode_id_required IF NOT EXISTS FOR (n:Transition) REQUIRE n.source_episode_id IS NOT NULL;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT transition_name_required IF NOT EXISTS FOR (n:Transition) REQUIRE n.name IS NOT NULL;
-// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT transition_trigger_required IF NOT EXISTS FOR (n:Transition) REQUIRE n.trigger IS NOT NULL;
-// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT transition_guard_expression_required IF NOT EXISTS FOR (n:Transition) REQUIRE n.guard_expression IS NOT NULL;
-// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT transition_implementation_status_required IF NOT EXISTS FOR (n:Transition) REQUIRE n.implementation_status IS NOT NULL;
-// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT transition_surface_required IF NOT EXISTS FOR (n:Transition) REQUIRE n.surface IS NOT NULL;
-CREATE INDEX transition_surface_lookup IF NOT EXISTS FOR (n:Transition) ON (n.surface);
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT transition_c_trigger_required IF NOT EXISTS FOR (n:Transition) REQUIRE n.c_trigger IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT transition_b_guard_expression_required IF NOT EXISTS FOR (n:Transition) REQUIRE n.b_guard_expression IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT transition_b_implementation_status_required IF NOT EXISTS FOR (n:Transition) REQUIRE n.b_implementation_status IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT transition_b_surface_required IF NOT EXISTS FOR (n:Transition) REQUIRE n.b_surface IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT transition_model_id_required IF NOT EXISTS FOR (n:Transition) REQUIRE n.model_id IS NOT NULL;
+CREATE INDEX transition_b_surface_lookup IF NOT EXISTS FOR (n:Transition) ON (n.b_surface);
 CREATE INDEX transition_lifecycle_state_lookup IF NOT EXISTS FOR (n:Transition) ON (n.lifecycle_state);
-CREATE INDEX transition_implementation_status_lookup IF NOT EXISTS FOR (n:Transition) ON (n.implementation_status);
-CREATE INDEX transition_extraction_method_lookup IF NOT EXISTS FOR (n:Transition) ON (n.extraction_method);
+CREATE INDEX transition_b_implementation_status_lookup IF NOT EXISTS FOR (n:Transition) ON (n.b_implementation_status);
+CREATE INDEX transition_x_extraction_method_lookup IF NOT EXISTS FOR (n:Transition) ON (n.x_extraction_method);
 CREATE INDEX transition_functional_areas_lookup IF NOT EXISTS FOR (n:Transition) ON (n.functional_areas);
-CREATE INDEX transition_source_state_unresolved_lookup IF NOT EXISTS FOR (n:Transition) ON (n.source_state_unresolved);
-CREATE INDEX transition_outcome_status_lookup IF NOT EXISTS FOR (n:Transition) ON (n.outcome_status);
-CREATE INDEX transition_requires_body_lookup IF NOT EXISTS FOR (n:Transition) ON (n.requires_body);
-CREATE INDEX transition_outcome_source_lookup IF NOT EXISTS FOR (n:Transition) ON (n.outcome_source);
-CREATE INDEX transition_guard_claim_lookup IF NOT EXISTS FOR (n:Transition) ON (n.guard_claim);
-CREATE INDEX transition_response_body_lookup IF NOT EXISTS FOR (n:Transition) ON (n.response_body);
-CREATE INDEX transition_name_tier_lookup IF NOT EXISTS FOR (n:Transition) ON (n.name_tier);
-CREATE INDEX transition_guard_tier_lookup IF NOT EXISTS FOR (n:Transition) ON (n.guard_tier);
+CREATE INDEX transition_model_id_lookup IF NOT EXISTS FOR (n:Transition) ON (n.model_id);
+CREATE INDEX transition_x_source_state_unresolved_lookup IF NOT EXISTS FOR (n:Transition) ON (n.x_source_state_unresolved);
+CREATE INDEX transition_c_outcome_status_lookup IF NOT EXISTS FOR (n:Transition) ON (n.c_outcome_status);
+CREATE INDEX transition_x_outcome_source_lookup IF NOT EXISTS FOR (n:Transition) ON (n.x_outcome_source);
+CREATE INDEX transition_x_guard_claim_lookup IF NOT EXISTS FOR (n:Transition) ON (n.x_guard_claim);
+CREATE INDEX transition_c_response_body_lookup IF NOT EXISTS FOR (n:Transition) ON (n.c_response_body);
+CREATE INDEX transition_x_name_tier_lookup IF NOT EXISTS FOR (n:Transition) ON (n.x_name_tier);
+CREATE INDEX transition_x_guard_tier_lookup IF NOT EXISTS FOR (n:Transition) ON (n.x_guard_tier);
 CREATE INDEX transition_source_episode_id_lookup IF NOT EXISTS FOR (n:Transition) ON (n.source_episode_id);
-//   Transition.surface ∈ {ui, api} — enforced by ontology.validation, not by Neo4j
-//   Transition.implementation_status ∈ {implemented, planned} — enforced by ontology.validation, not by Neo4j
-//   Transition.extraction_method ∈ {hand_authored, static_analysis, ac_mined, declared_contract} — enforced by ontology.validation, not by Neo4j
+//   Transition.b_surface ∈ {ui, api} — enforced by ontology.validation, not by Neo4j
+//   Transition.b_implementation_status ∈ {implemented, planned} — enforced by ontology.validation, not by Neo4j
+//   Transition.x_extraction_method ∈ {hand_authored, static_analysis, ac_mined, declared_contract} — enforced by ontology.validation, not by Neo4j
 //   Transition.lifecycle_state ∈ {Quarantine, Approved, Disputed, Rejected, Deprecated} — enforced by ontology.validation, not by Neo4j
-//   Transition.outcome_source ∈ {constructed, declared} — enforced by ontology.validation, not by Neo4j
+//   Transition.x_outcome_source ∈ {constructed, declared} — enforced by ontology.validation, not by Neo4j
 
 // UiAction — A Transition on the ui surface: one interaction or observation
 CREATE CONSTRAINT ui_action_id_unique IF NOT EXISTS FOR (n:UiAction) REQUIRE n.id IS UNIQUE;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT ui_action_source_episode_id_required IF NOT EXISTS FOR (n:UiAction) REQUIRE n.source_episode_id IS NOT NULL;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT ui_action_name_required IF NOT EXISTS FOR (n:UiAction) REQUIRE n.name IS NOT NULL;
-// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT ui_action_trigger_required IF NOT EXISTS FOR (n:UiAction) REQUIRE n.trigger IS NOT NULL;
-// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT ui_action_guard_expression_required IF NOT EXISTS FOR (n:UiAction) REQUIRE n.guard_expression IS NOT NULL;
-// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT ui_action_implementation_status_required IF NOT EXISTS FOR (n:UiAction) REQUIRE n.implementation_status IS NOT NULL;
-// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT ui_action_surface_required IF NOT EXISTS FOR (n:UiAction) REQUIRE n.surface IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT ui_action_c_trigger_required IF NOT EXISTS FOR (n:UiAction) REQUIRE n.c_trigger IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT ui_action_b_guard_expression_required IF NOT EXISTS FOR (n:UiAction) REQUIRE n.b_guard_expression IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT ui_action_b_implementation_status_required IF NOT EXISTS FOR (n:UiAction) REQUIRE n.b_implementation_status IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT ui_action_b_surface_required IF NOT EXISTS FOR (n:UiAction) REQUIRE n.b_surface IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT ui_action_model_id_required IF NOT EXISTS FOR (n:UiAction) REQUIRE n.model_id IS NOT NULL;
 CREATE INDEX ui_action_lifecycle_state_lookup IF NOT EXISTS FOR (n:UiAction) ON (n.lifecycle_state);
 CREATE INDEX ui_action_source_episode_id_lookup IF NOT EXISTS FOR (n:UiAction) ON (n.source_episode_id);
-//   UiAction.surface ∈ {ui} — enforced by ontology.validation, not by Neo4j
+//   UiAction.b_surface ∈ {ui} — enforced by ontology.validation, not by Neo4j
 
 // UiElement — One thing on a page whose type has not been established
 CREATE CONSTRAINT ui_element_id_unique IF NOT EXISTS FOR (n:UiElement) REQUIRE n.id IS UNIQUE;
@@ -673,7 +689,7 @@ CREATE CONSTRAINT web_server_id_unique IF NOT EXISTS FOR (n:WebServer) REQUIRE n
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT web_server_component_required IF NOT EXISTS FOR (n:WebServer) REQUIRE n.component IS NOT NULL;
 CREATE INDEX web_server_lifecycle_state_lookup IF NOT EXISTS FOR (n:WebServer) ON (n.lifecycle_state);
 CREATE INDEX web_server_source_episode_id_lookup IF NOT EXISTS FOR (n:WebServer) ON (n.source_episode_id);
-//   WebServer.surface ∈ {ui} — enforced by ontology.validation, not by Neo4j
+//   WebServer.b_surface ∈ {ui} — enforced by ontology.validation, not by Neo4j
 
 // ZephyrItem — Evidence anchor for one Zephyr Scale item
 CREATE CONSTRAINT zephyr_item_id_unique IF NOT EXISTS FOR (n:ZephyrItem) REQUIRE n.id IS UNIQUE;

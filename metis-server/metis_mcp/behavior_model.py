@@ -399,10 +399,10 @@ def check_guard_completeness(session, state_machine_id: str | None = None) -> li
     rows = session.run(
         """
                 MATCH (s:State)-[:WHEN]->(t:Transition|ApiCall|UiAction)
-                WHERE t.trigger IS NOT NULL AND t.guard_expression IS NOT NULL
+                WHERE t.c_trigger IS NOT NULL AND t.b_guard_expression IS NOT NULL
                     AND ($state_machine_id IS NULL OR t.state_machine_id = $state_machine_id)
-        RETURN s.id AS from_state, t.trigger AS trigger, t.id AS transition_id,
-               t.guard_expression AS guard
+        RETURN s.id AS from_state, t.c_trigger AS trigger, t.id AS transition_id,
+               t.b_guard_expression AS guard
                 """,
                 state_machine_id=state_machine_id,
         ).data()
@@ -445,13 +445,13 @@ def check_determinism(session, state_id: str,
         """
                 MATCH (s:State {id: $state_id})-[:WHEN]->(t1:Transition|ApiCall|UiAction)
         MATCH (s)-[:WHEN]->(t2:Transition|ApiCall|UiAction)
-                WHERE t1.id < t2.id AND t1.trigger = t2.trigger
+                WHERE t1.id < t2.id AND t1.c_trigger = t2.c_trigger
                     AND ($state_machine_id IS NULL OR (
                             t1.state_machine_id = $state_machine_id
                             AND t2.state_machine_id = $state_machine_id
                     ))
-        RETURN t1.id AS t1_id, t2.id AS t2_id, t1.trigger AS trigger_id,
-               t1.guard_expression AS g1_expr, t2.guard_expression AS g2_expr
+        RETURN t1.id AS t1_id, t2.id AS t2_id, t1.c_trigger AS trigger_id,
+               t1.b_guard_expression AS g1_expr, t2.b_guard_expression AS g2_expr
         """,
         state_id=state_id, state_machine_id=state_machine_id,
     ).data()
@@ -501,7 +501,7 @@ def check_completeness(session, state_machine_id: str | None = None) -> list[Com
                 WHERE ($state_machine_id IS NULL OR s.state_machine_id = $state_machine_id)
                     AND NOT EXISTS {
                         MATCH (s)-[:WHEN]->(t:Transition|ApiCall|UiAction)
-                        WHERE t.trigger = trigger
+                        WHERE t.c_trigger = trigger
                             AND ($state_machine_id IS NULL OR t.state_machine_id = $state_machine_id)
         }
         RETURN s.id AS state_id, trigger AS trigger_id

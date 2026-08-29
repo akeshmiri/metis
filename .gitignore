@@ -59,3 +59,14 @@ metis-server/.metis/runs/
 # actually reuses under the target repo's .metis/cache/ instead.
 workspace/
 .DS_Store
+
+# Generated automation artefacts and anything else scratch. `metis generate
+# --out tmp/testcases/<model>` writes here.
+#
+# **Not committed, deliberately.** A generated suite is derived from an approved
+# model the same way the database is derived from `graph/` — regenerate it and
+# you have it back, and committing one invites a hand-edit that the next
+# regeneration silently discards. The emitters say so in every file header ("Do
+# not hand-edit: regenerate after the model changes"), and a tracked copy would
+# make that instruction unenforceable.
+tmp/

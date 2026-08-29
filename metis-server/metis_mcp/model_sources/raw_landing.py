@@ -84,6 +84,17 @@ def parameter_id(repo: str, endpoint: str, name: str, location: str) -> str:
     return f"prm:{_ident(repo, endpoint, name, location)}"
 
 
+def security_id(repo: str, endpoint: str, scheme: str, expression: str) -> str:
+    """Keyed on the DECLARATION, not on the scheme.
+
+    One endpoint may carry two `role` schemes — a class-level `hasRole(RECORDS)`
+    and a method-level `@DemoSecured(...)` — and keying on the scheme alone would
+    MERGE them onto one node, silently overwriting one declaration with the
+    other. That is the mistake `outcome_id` documents below, in a smaller place.
+    """
+    return f"sec:{_ident(repo, endpoint, scheme, expression)}"
+
+
 def outcome_id(repo: str, raw_id: str, guards: tuple = (), sense: str = "") -> str:
     """Keyed on the guard as well as the pack's id.
 
@@ -325,24 +336,25 @@ def _typed_constraints(member, prefix: str = "") -> dict:
     return out
 
 
-def _security_props(facts) -> dict:
-    """Declared security, flattened onto the Endpoint.
+def _security_node(fact) -> dict:
+    """One declared security requirement, as a node's properties.
 
-    Parallel arrays rather than prefixed keys, because unlike a field these have
-    no natural name to key on — a scheme and its roles are positional. Absent
-    when nothing was declared, which is a different claim from "open".
+    **Was three parallel arrays on the Endpoint**, documented as positional. A
+    scheme with two roles cannot be positional: `@DemoSecured({"records:write",
+    "records:admin"})` produced `schemes=2, roles=3` on a real endpoint, and a
+    third of the corpus was misaligned — so `auth_facts` handed callers a
+    correspondence they could not decode.
+
+    `roles` is an array ON this node, which is legal precisely because a scheme
+    owns its roles. Absent when nothing was declared, which stays a different
+    claim from "open" (see `recipe.NO_SECURITY_NOTE`).
     """
-    schemes = [getattr(f, "scheme", "") for f in facts]
-    if not any(schemes):
-        return {}
-    roles: list[str] = []
-    for f in facts:
-        roles.extend(getattr(f, "roles", ()) or ())
-    out = {"security_schemes": schemes,
-           "security_expressions": [getattr(f, "expression", "") for f in facts]}
-    if roles:
-        out["security_roles"] = sorted(set(roles))
-    return out
+    return _present(
+        scheme=getattr(fact, "scheme", ""),
+        expression=getattr(fact, "expression", ""),
+        roles=sorted(getattr(fact, "roles", ()) or ()),
+        source=getattr(fact, "source", ""),
+    )
 
 
 def _field_properties(members) -> dict:
@@ -667,18 +679,28 @@ def _plan_endpoints(plan, add_node, add_edge, base, report, repo,
             "response_body": getattr(endpoint, "response_body", ""),
             "consumes": list(getattr(endpoint, "consumes", ()) or ()),
             "produces": list(getattr(endpoint, "produces", ()) or ()),
-            # **The pack recovers this and landing dropped it.** Zero endpoints
-            # declare security on the pilot service, which is itself the answer
-            # to "how do I authenticate" there — its auth travels as header
-            # parameters — but a service using `@PreAuthorize` lost the fact
-            # silently, and a recipe cannot state what never arrived.
-            #
-            # Absent means **nothing was declared**, never "it is open": security
-            # enforced in a filter chain or at a gateway is invisible to
-            # extraction, and the two claims are not the same.
-            **_security_props(getattr(endpoint, "security", ()) or ()),
             **_anchor_props(getattr(endpoint, "anchor", None)),
         })
+
+        # **Declared security, as nodes.** Absent means nothing was DECLARED,
+        # never "it is open": security enforced in a filter chain or at a gateway
+        # is invisible to extraction, and the two claims are not the same (see
+        # `recipe.NO_SECURITY_NOTE`).
+        #
+        # One node per declaration rather than three parallel arrays on the
+        # endpoint — a scheme with two roles has no positional representation,
+        # and a third of the corpus was already misaligned.
+        for security in getattr(endpoint, "security", ()) or ():
+            scheme = getattr(security, "scheme", "")
+            if not scheme:
+                continue
+            sid = security_id(repo, eid, scheme,
+                              getattr(security, "expression", ""))
+            add_node("SecurityScheme", {
+                **base(sid, scheme),
+                **_security_node(security),
+            })
+            add_edge("Endpoint", eid, "SECURED_BY", "SecurityScheme", sid)
 
         for parameter in getattr(endpoint, "parameters", ()) or ():
             pid = parameter_id(repo, eid, parameter.name, parameter.location)

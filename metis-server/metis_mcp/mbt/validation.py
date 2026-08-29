@@ -41,6 +41,7 @@ OBSERVABILITY = "observability"
 AC_COVERAGE = "ac_coverage"
 CALLABILITY = "callability"
 AC_ATOMICITY = "ac_atomicity"
+GUARD_POLARITY = "guard_polarity"
 
 # Severities. `UNVERIFIABLE` is deliberately not a synonym for either of the
 # others: "this is wrong" and "this cannot be shown to be right" are different
@@ -408,6 +409,49 @@ def check_callability(model: Model) -> list[Finding]:
     return findings
 
 
+def check_guard_polarity(model: Model) -> list[Finding]:
+    """A rejection guarded on an exception must not be guarded on its ABSENCE.
+
+    **The defect this exists for.** `synthesis` built every rejection's guard as
+    `NOT (<expression>)`, which is right where the expression is a condition that
+    must hold — `NOT (payload_valid)`, `NOT (request_accepted)`. An expression
+    recovered from an `@ExceptionHandler` already names the failure, so negating
+    it swapped the pair: the 422 carried `NOT (SummaryUnavailableException is
+    thrown)` and the 200 carried the bare `is thrown`.
+
+    A generated case then told a tester to arrange a VALID request and assert
+    422. It would fail against correct code and be filed as a service bug —
+    which is exactly the confidently-wrong test the gates exist to prevent, and
+    it passed both of them: M-18 checks determinism and reachability, G1 asks a
+    human to approve elements. Neither asks whether a guard's polarity matches
+    its outcome.
+
+    **Blocking, unlike the recall checks.** This is not "we could not recover
+    it"; it is a statement that contradicts its own evidence. Proceeding does not
+    risk a thin test, it produces a wrong one.
+    """
+    findings = []
+    for t in sorted(_implemented(model), key=lambda x: x.id):
+        guard = (t.guard or "").strip()
+        if "is thrown" not in guard:
+            continue
+        negated = guard.upper().startswith("NOT (")
+        # A rejection status with a negated throw-guard is the inverted pair.
+        rejection = t.outcome_status is not None and t.outcome_status >= 400
+        if negated and rejection:
+            findings.append(Finding(
+                check=GUARD_POLARITY, severity=BLOCKING, element_ids=(t.id,),
+                detail=f"{t.trigger} returns {t.outcome_status} guarded on "
+                       f"{guard!r} — a rejection conditioned on the exception NOT "
+                       f"being thrown. A case built from this arranges a valid "
+                       f"request and asserts a failure",
+                remedy="the expression already names the failure; the guard is "
+                       "it as it stands, not its negation "
+                       "(`synthesis.Rejection.states_failure`)",
+            ))
+    return findings
+
+
 # --------------------------------------------------------------------------
 # The gate
 # --------------------------------------------------------------------------
@@ -425,6 +469,7 @@ def validate(model: Model, validated_transition_ids: set[str] | None = None,
     result.findings.extend(check_determinism(model, inherited))
     result.findings.extend(check_guard_completeness(model, inherited))
     result.findings.extend(check_callability(model))
+    result.findings.extend(check_guard_polarity(model))
     result.findings.extend(check_ac_atomicity(model))
     result.findings.extend(check_reachability(model))
     if include_ac_coverage:

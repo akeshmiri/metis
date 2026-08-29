@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 from metis_mcp.mbt.model import APPROVED, Model, State, Transition
@@ -71,6 +71,23 @@ def source_fingerprint(model: Model) -> str:
         parts.append(
             f"T|{_bare(t.id, model.id)}|{_bare(t.source, model.id)}|{t.trigger}"
             f"|{_bare(t.target, model.id)}|{t.guard}|{t.implementation_status}"
+            # **What a generated test asserts is evidence.** These six fields were
+            # the whole hash while `outcome_status` already reached `.statusCode()`
+            # in an emitted artefact — so a re-extraction changing 201 to 200 moved
+            # the fingerprint not at all, and an approval recorded against the old
+            # response was applied silently to the new one. E-8/N-14's rule stops
+            # holding exactly on the fields generation asserts, so those fields
+            # have to be inside the evidence.
+            #
+            # `rendering.contract` names them: every fact with
+            # `affects_artefact=True`, checked by `test_generation_contract`.
+            f"|{t.outcome_status}|{t.response_body}|{','.join(t.media_types)}"
+            f"|{json.dumps(list(t.inputs), sort_keys=True, default=str)}"
+            # The ordered conditions, not the joined guard. If check 1
+            # short-circuits, no fixture reaches check 3 without satisfying check
+            # 1 first — so a reordering changes what a fixture must satisfy while
+            # `guard` reads identically.
+            f"|{json.dumps([asdict(c) for c in t.checks], sort_keys=True)}"
         )
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
 
@@ -162,26 +179,39 @@ def overlay(model: Model, state: ReviewState) -> OverlayResult:
         return OverlayResult(model=model, stale=True,
                              recorded_fingerprint=recorded, current_fingerprint=current)
 
+    # `replace`, never a re-construction naming fields one by one. This loop built
+    # a fresh `State`/`Transition` from an enumerated list, so every field it did
+    # not name fell back to the dataclass default and was lost the moment a
+    # decision was applied: `outcome_status=200` came back `None` and `inputs`
+    # came back empty.
+    #
+    # **That was invisible until the approval evidence widened.** The six fields
+    # the enumeration happened to name were exactly the six `source_fingerprint`
+    # hashed, so the mutilation never moved the hash. Now that the fingerprint
+    # covers what a generated test asserts, `review apply` would record a hash
+    # taken from a mutilated model and `generate` would compute it from an intact
+    # one — they could never match, and every approval would be stale forever.
+    #
+    # `replace` preserves every field by construction, including ones added
+    # later, which an enumeration cannot promise. `rendering/contract.py` names
+    # the fields that must survive; `test_generation_contract` asserts they do.
     applied = 0
     for sid, element in state.states.items():
         existing = model.states.get(sid)
         if existing is None:
             continue
-        model.states[sid] = State(
-            id=existing.id, name=element.name or existing.name, surface=existing.surface,
-            is_initial=existing.is_initial, lifecycle_state=element.lifecycle_state,
-        )
+        model.states[sid] = replace(
+            existing, name=element.name or existing.name,
+            lifecycle_state=element.lifecycle_state)
         applied += 1
     for tid, element in state.transitions.items():
         existing = model.transitions.get(tid)
         if existing is None:
             continue
-        model.transitions[tid] = Transition(
-            id=existing.id, source=existing.source, trigger=existing.trigger,
-            target=existing.target, guard=existing.guard,
-            implementation_status=existing.implementation_status,
-            lifecycle_state=element.lifecycle_state,
-        )
+        # A transition's `name` is display data (D-8) and the review file records
+        # it as null; only the decision is applied here.
+        model.transitions[tid] = replace(
+            existing, lifecycle_state=element.lifecycle_state)
         applied += 1
 
     return OverlayResult(model=model, stale=False, recorded_fingerprint=recorded,

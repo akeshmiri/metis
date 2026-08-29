@@ -1,7 +1,7 @@
 """
 The ontology (application spec §8.2, §8.3).
 
-Sixty-four labels in eight layers: a **control-flow** model (State, Transition and
+Sixty-five labels in eight layers: a **control-flow** model (State, Transition and
 friends), the **evidence** layer it is derived from (Endpoint, Parameter, Class,
 Field, Method, DeclaredOutcome, Check, ExceptionMapping, Route), a small
 **business** layer (BusinessArea, BusinessEntity) giving the nouns a criterion
@@ -21,7 +21,7 @@ The remaining two -- the catalogue in §8.2/§8.3 of the specification, and this
 docstring -- are human-readable and are checked against this module by
 test_ontology.py.
 
-Why sixty-four, and why that number should worry you: see D-1 and the note in
+Why sixty-five, and why that number should worry you: see D-1 and the note in
 `test_ontology`. A label is included only when something writes it AND something
 reads it -- the second half is the one that is easy to skip, and a writer alone
 is how an ontology accretes. §8.7 lists the deliberately-excluded labels with
@@ -360,7 +360,7 @@ LABELS: dict[str, LabelSpec] = {
         LabelSpec(
             "RestServer", "A Component serving an API surface",
             specialises="Component",
-            enums={"surface": ("api",)},
+            enums={"b_surface": ("api",)},
             # Specialisations of `Component`, not new roots. A root would have to
             # restate `version`, `commit_sha` and `journey` -- which P-16 depends
             # on ("which version does this coverage figure refer to") -- and
@@ -374,7 +374,7 @@ LABELS: dict[str, LabelSpec] = {
         LabelSpec(
             "WebServer", "A Component serving a web surface",
             specialises="Component",
-            enums={"surface": ("ui",)},
+            enums={"b_surface": ("ui",)},
         ),
         # ---- Rendered documents (§18) ----
         #
@@ -548,40 +548,59 @@ LABELS: dict[str, LabelSpec] = {
         ),
         LabelSpec(
             "State", "One observable situation on one surface (spec M-3)",
-            required=("surface",),
-            enums={"surface": ("ui", "api"), "lifecycle_state": LIFECYCLE_STATES},
-            indexed=("surface", "lifecycle_state", "functional_areas", "name_tier"),
+            # `model_id` is REQUIRED and indexed. It duplicates the first half of
+            # the namespaced id (`{model_id}::{element_id}`) on purpose: "every
+            # element of this model" was a `STARTS WITH` on the id, which no
+            # index serves. Required rather than optional because `landing` is
+            # the only writer of these (asserted in `test_independence.py`), so a
+            # second writer that omitted it would be refused at the gate rather
+            # than quietly producing elements that belong to no model.
+            # **Property names carry a prefix naming what each is FOR** — `b_`
+            # the behaviour, `p_` the page, `c_` the call on a transition. A node
+            # shows its properties in one alphabetical table, so the prefix is
+            # what makes the concerns visible where somebody reads them.
+            # `rendering.contract.graph_name` is the rule and
+            # `test_generation_contract` asserts these names match it.
+            required=("b_surface", "model_id"),
+            enums={"b_surface": ("ui", "api"), "lifecycle_state": LIFECYCLE_STATES},
+            indexed=("b_surface", "lifecycle_state", "functional_areas", "x_name_tier",
+                     "model_id"),
         ),
         LabelSpec(
             "Transition", "One interaction: trigger, guard, source and target state",
-            required=("trigger", "guard_expression", "implementation_status", "surface"),
-            may_be_empty=("guard_expression",),
+            # See `State`. `graph_transition_id` namespaces a transition id the
+            # same way, so this is the same trade there: a duplicated prefix in
+            # exchange for an indexed lookup instead of a string scan.
+            # See `State` on the prefixes.
+            required=("c_trigger", "b_guard_expression", "b_implementation_status",
+                      "b_surface", "model_id"),
+            may_be_empty=("b_guard_expression",),
             enums={
-                "surface": ("ui", "api"),
-                "implementation_status": ("implemented", "planned"),
-                "extraction_method": ("hand_authored", "static_analysis",
+                "b_surface": ("ui", "api"),
+                "b_implementation_status": ("implemented", "planned"),
+                "x_extraction_method": ("hand_authored", "static_analysis",
                                      "ac_mined", "declared_contract"),
                 "lifecycle_state": LIFECYCLE_STATES,
                 # Whether the outcome was seen being BUILT or only DECLARED on an
                 # annotation. Both are real user paths; only one of them was
                 # observed, and a reviewer approves them differently.
-                "outcome_source": ("constructed", "declared"),
+                "x_outcome_source": ("constructed", "declared"),
             },
-            indexed=("surface", "lifecycle_state", "implementation_status",
-                     "extraction_method", "functional_areas",
-                     "source_state_unresolved", "outcome_status", "requires_body",
+            indexed=("b_surface", "lifecycle_state", "b_implementation_status",
+                     "x_extraction_method", "functional_areas", "model_id",
+                     "x_source_state_unresolved", "c_outcome_status",
                      # "show me every path whose precondition is still vague" has
                      # to be one query, or the weaker rejections are invisible
                      # rather than reviewable.
-                     "outcome_source", "guard_claim",
+                     "x_outcome_source", "x_guard_claim",
                      # "which endpoints return this DTO" is one query, which is
                      # what makes the expected response usable for generation
                      # rather than just displayable.
-                     "response_body",
+                     "c_response_body",
                      # X-8, and the reason it is indexed: "show me everything
                      # still in the implementation's words" has to be one query,
                      # or the cascade has no worklist to drive it.
-                     "name_tier", "guard_tier"),
+                     "x_name_tier", "x_guard_tier"),
             # Three additions, and one shape decision worth stating.
             #
             # `guard_anchor` (§8.5) is `file:line@commit` for the guard's own
@@ -602,7 +621,7 @@ LABELS: dict[str, LabelSpec] = {
         LabelSpec(
             "ApiCall", "A Transition on the api surface: one call and its outcome",
             specialises="Transition",
-            enums={"surface": ("api",)},
+            enums={"b_surface": ("api",)},
             # Written **instead of** `:Transition`, not alongside it --
             # `landing.plan_landing` calls `add_node(transition_label, ...)` with
             # no `also`, so the node carries this label only. That leaves the
@@ -618,7 +637,7 @@ LABELS: dict[str, LabelSpec] = {
         LabelSpec(
             "UiAction", "A Transition on the ui surface: one interaction or observation",
             specialises="Transition",
-            enums={"surface": ("ui",)},
+            enums={"b_surface": ("ui",)},
             # A `UiAction` either **starts** an API flow (`TRIGGERS`) or
             # **observes** one of its outcomes (`INVOKES`). It never becomes the
             # API transition: the Web flow continues on its own, and a failing
@@ -645,7 +664,7 @@ LABELS: dict[str, LabelSpec] = {
             "Page", "One screen of a web surface; its states are the conditions it shows",
             required=("component",),
             indexed=("component", "surface"),
-            enums={"surface": ("ui",)},
+            enums={"b_surface": ("ui",)},
             # D-1 demands a writer and a reader, and both are real.
             #
             # **Writer:** `code_analysis/react_ui_synthesis.py`, from the 9 real
@@ -979,6 +998,36 @@ LABELS: dict[str, LabelSpec] = {
             # disclosed heuristic, and a reviewer weighs them differently.
         ),
         LabelSpec(
+            "SecurityScheme",
+            "One declared security requirement on an endpoint: the scheme, the "
+            "declaration verbatim, and the roles it demands",
+            required=("scheme",),
+            enums={"source": ("annotation", "filter-chain", "")},
+            indexed=("scheme", "source"),
+            # **Why this is a node and not properties on the Endpoint.** It was
+            # three parallel arrays — `security_schemes`, `security_expressions`,
+            # `security_roles` — documented as positional. A scheme with TWO
+            # roles cannot be positional: `@DemoSecured({"records:write",
+            # "records:admin"})` made `schemes=2, roles=3` on a real endpoint,
+            # and 4 of 12 endpoints were misaligned. `auth_facts` handed that
+            # broken correspondence to callers, who could not tell which role
+            # belonged to which scheme.
+            #
+            # This is `Passage`'s test rather than convenience: every rung of the
+            # shape ladder fails. Neo4j has no nested property; prefixed flat
+            # keys need a name to key on and a scheme has none; parallel arrays
+            # cannot express one-to-many. A node is the only shape left.
+            #
+            # D-1's reader is not speculative: `recipe.build` puts the scheme in
+            # the curl, `authoring.auth_facts` reports it, and
+            # `payload._act_detail` carries it to the `// auth required:` line in
+            # every generated test.
+            #
+            # `roles` stays an ARRAY ON THIS NODE — rung one of the ladder, legal
+            # because a scheme owns its roles. See `STAGED_OUT["Role"]` for when
+            # that stops being enough.
+        ),
+        LabelSpec(
             "Check", "One condition evaluated on a path — a guard's own evidence",
             required=("expression",),
             indexed=("dimension_class", "order"),
@@ -1178,6 +1227,14 @@ ALLOWED_RELATIONSHIPS: tuple[RelationshipSpec, ...] = (
     RelationshipSpec("Lesson", "BELONGS_TO", "Topic",
                      "The subject it covers, shared with every other document "
                      "that covers it"),
+    # A topic hierarchy, rather than a second label for the collection itself.
+    # A corpus IS a subject -- the broadest one its documents share -- so
+    # `topic:concepts -> topic:academy` reads the same way `Lesson -> Topic`
+    # does, one level up. Adding a `Corpus` label instead would mean two node
+    # kinds that group documents by subject, differing only in how broad they
+    # are, and every reader would have to know which one it was looking at.
+    RelationshipSpec("Topic", "BELONGS_TO", "Topic",
+                     "The broader subject this one sits under"),
     RelationshipSpec("BusinessEntity", "BELONGS_TO", "BusinessArea",
                      "Which domain this noun lives in"),
     RelationshipSpec("Requirement", "BELONGS_TO", "BusinessArea",
@@ -1191,6 +1248,10 @@ ALLOWED_RELATIONSHIPS: tuple[RelationshipSpec, ...] = (
     # ---- inside the evidence layer -----------------------------------------
     RelationshipSpec("Component", "EXPOSES", "Endpoint",
                      "The entry points this deployable presents"),
+    RelationshipSpec("Endpoint", "SECURED_BY", "SecurityScheme",
+                     "A declared security requirement a caller must satisfy. "
+                     "Replaces the parallel `security_*` arrays, which could not "
+                     "express a scheme with more than one role"),
     RelationshipSpec("Endpoint", "ACCEPTS", "Parameter", "What a caller must send"),
     RelationshipSpec("Parameter", "OF_TYPE", "Class",
                      "The payload schema — the same node as the declared type"),
@@ -1272,6 +1333,12 @@ STAGED_OUT: dict[str, str] = {
     # What a test-designer asks is "what values does this type accept", which is
     # one question about one node — so a scalar field is now `f_<name>_*` on its
     # type and a complex one is a `Class-[:OF_TYPE]->Class` edge.
+    # A role is an array entry on its `SecurityScheme`. Promoting it would make
+    # "what else requires `records:admin`" a traversal rather than a scan — a
+    # plausible question that nobody is actually asking, which is exactly the bar
+    # `Parameter` had to clear before it was promoted out of `inputs_json`.
+    "Role": "something asks what ELSE requires a given role — a shared identity "
+            "across endpoints, rather than a string repeated on each scheme",
     "Field": "a field needs an identity of its own — a per-field review state, "
              "or an edge that must point at one field rather than at its type",
     # Declared with neither a writer nor a reader -- `test_ontology` already

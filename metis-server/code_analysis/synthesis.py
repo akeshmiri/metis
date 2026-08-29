@@ -173,9 +173,18 @@ class Rejection:
     trigger: str
     status: int
     # `payload_valid` where the cause was traced, `request_accepted` where only
-    # the annotation is known. The transition's guard is its negation.
+    # the annotation is known — for both, the transition's guard is its NEGATION.
+    #
+    # A third form states the failure directly: `SummaryUnavailableException is
+    # thrown`, recovered from an `@ExceptionHandler`. Negating that produced
+    # `NOT (X is thrown)` on the REJECTION and the bare `X is thrown` on the
+    # success — the two guards swapped, so a generated 422 case told a tester to
+    # arrange a VALID request and expect a rejection. `states_failure` says which
+    # form this is, rather than leaving the caller to sniff the string.
     expression: str
     claim: str
+    # Whether `expression` already names the failure (see the note above it).
+    states_failure: bool = False
     anchor: str = ""
     constraints: tuple[str, ...] = ()
     inputs: tuple = ()
@@ -185,6 +194,25 @@ class Rejection:
     # handler its success is. Without it every rejection in a model collapsed
     # back onto one shared `Rejected400`.
     endpoint: dict | None = None
+
+    @property
+    def success_guard(self) -> str:
+        """What must be true to reach the SUCCESS outcome (GD-2/GD-4)."""
+        return f"NOT ({self.expression})" if self.states_failure else self.expression
+
+    @property
+    def rejection_guard(self) -> str:
+        """What must be true to reach the REJECTION.
+
+        **Complements `success_guard` by construction.** The two used to be built
+        independently — the success prefixed with `expression`, the rejection
+        with `NOT (expression)` — which is right only while the expression is a
+        condition that must hold. For one recovered from an `@ExceptionHandler`
+        the expression already names the failure, so both were inverted and the
+        pair swapped: 200 on "the exception is thrown", 422 on "it is not".
+        Deriving them from one place makes that state unreachable.
+        """
+        return self.expression if self.states_failure else f"NOT ({self.expression})"
     # `(type_name, field_name)` per constrained field, and the ExceptionMapping
     # node id where the cause was traced. Both are evidence a derived rejection
     # points AT, rather than quotes.
@@ -374,10 +402,15 @@ def _plan_rejections(behaviour: ExtractionReport, endpoint_by_handler: dict,
         scoped_bodies = {b for _, _, b in scoped_cause.get(endpoint_id, ()) if b}
         rejection_body = scoped_bodies.pop() if len(scoped_bodies) == 1 else ""
         scoped_ref = ""
+        # Only the single-cause exception branch below states the failure; a
+        # validation predicate and the generic fallback are both conditions that
+        # must HOLD, so their guard is the negation.
+        states_failure = False
         if not recovery.has_validation and causes:
             if len(causes) == 1:
                 cause = next(iter(causes))
                 expression = f"{cause} is thrown"
+                states_failure = True
                 advice = next(a for c, a, _ in scoped_cause[endpoint_id]
                               if c == cause)
                 from metis_mcp.model_sources.raw_landing import mapping_id
@@ -405,6 +438,7 @@ def _plan_rejections(behaviour: ExtractionReport, endpoint_by_handler: dict,
             endpoint_id=endpoint_id,
             trigger=f"{endpoint['http_method']} {endpoint['path']}",
             status=status, expression=expression,
+            states_failure=states_failure,
             claim=claim, anchor=anchor, constraints=recovery.constraints,
             inputs=tuple(endpoint.get("parameters", ())),
             security=tuple(endpoint.get("security", ())),
@@ -543,8 +577,8 @@ def synthesise(behaviour: ExtractionReport, endpoints: list[dict],
         # (N-14) and buy nothing.
         rejection = rejections.get(endpoint_id)
         if rejection is not None:
-            guard = (f"{rejection.expression} AND {guard}" if guard
-                     else rejection.expression)
+            guard = (f"{rejection.success_guard} AND {guard}" if guard
+                     else rejection.success_guard)
             guard_anchor = ", ".join(
                 a for a in (rejection.anchor, guard_anchor) if a)
 
@@ -575,7 +609,7 @@ def synthesise(behaviour: ExtractionReport, endpoints: list[dict],
         transitions[tid] = Transition(
             id=tid, source=start_of(rejection.trigger), trigger=rejection.trigger,
             target=target,
-            guard=f"NOT ({rejection.expression})",
+            guard=rejection.rejection_guard,
             implementation_status=IMPLEMENTED, lifecycle_state=QUARANTINE,
             guard_anchor=rejection.anchor, outcome_status=rejection.status,
             inputs=rejection.inputs, security=rejection.security,

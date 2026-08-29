@@ -1,0 +1,17 @@
+# Selectors and values the model cannot recover  —  metis.fixtures/1
+#
+# Authored on purpose. `js-ui` extracts a selector where the source names one
+# literally and refuses to guess otherwise, so what is here is the half a person
+# has to decide. A field with no entry stays reported as unrecovered; it is
+# never filled with something plausible.
+version: metis.fixtures/1
+
+selectors:
+  # `exportButton` is reached by walking the DOM in demo_project/records-page,
+  # so nothing in the source names it — see that project's README.
+  exportButton: "[data-testid=export-button]"
+
+values:
+  # Keyed by the CONDITION the payload states, which is what the author read.
+  "title length 3..40": "Quarterly report"
+  "credentials_valid AND NOT account_locked": "alice / correct-horse"

@@ -253,7 +253,7 @@ def _boundary_coverage(model: Model) -> CriterionResult:
     silently skipped, which would let a criterion quietly shrink its own
     requirements (P-3).
     """
-    from metis_mcp.mbt.techniques import analyse_guard
+    from metis_mcp.mbt.techniques import analyse_constraints, analyse_guard
 
     result = CriterionResult(name=BOUNDARY_COVERAGE)
     for t in model.generatable_transitions():
@@ -275,6 +275,31 @@ def _boundary_coverage(model: Model) -> CriterionResult:
                 kind="partition", key=f"{t.id}::partition::{partition.condition}",
                 validated_transition_id=t.id,
                 data_note=f"{partition.condition} (equivalence partition)"))
+
+        # **GD-3's variants.** The declared constraints an input must violate to
+        # reach a rejection — `@Size(max=64)` on a payload field. These are why
+        # 164 constrained fields stay TEST DATA rather than becoming 164
+        # transitions: the technique turns each into cases without adding a model
+        # element (P-1a). The model carried them and `techniques` read only the
+        # guard, so the constraints were landed, loaded, and consumed by nothing.
+        #
+        # A constraint arrives as bare annotation text, so it names no field —
+        # `length = 65` is stated and which field's length is not. That is a
+        # recovery limit, not something to guess at (M-9); `inputs` carries the
+        # field names beside it.
+        declared = analyse_constraints(getattr(t, "data_requirements", ()) or ())
+        for boundary in declared.boundaries:
+            result.targets.append(CoverageTarget(
+                kind="boundary", key=f"{t.id}::constraint::{boundary.condition}",
+                validated_transition_id=t.id,
+                data_note=f"{boundary.condition} ({boundary.position} the boundary "
+                          f"of {boundary.source_guard})"))
+        for partition in declared.partitions:
+            result.targets.append(CoverageTarget(
+                kind="partition", key=f"{t.id}::constraint::{partition.condition}",
+                validated_transition_id=t.id,
+                data_note=f"{partition.condition} (declared constraint "
+                          f"{partition.source_guard})"))
 
         for atom, why in analysis.unanalysable:
             result.unsatisfiable.append((f"{t.id}::{atom}::boundary", why))

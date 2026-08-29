@@ -88,15 +88,17 @@ def test_documents_declaring_the_same_topic_point_at_ONE_node():
     plan = _plan()
     ids = [n.properties["id"] for n in plan.nodes if n.label == "Topic"]
     assert len(set(ids)) < len(ids), "every lesson minted its own topic node"
-    assert set(ids) == {"topic:concepts", "topic:practice"}
+    # Plus the corpus root the declared topics sit under.
+    assert set(ids) == {"topic:metis", "topic:concepts", "topic:practice"}
 
 
 def test_every_lesson_gets_an_edge_to_what_it_declared():
     plan = _plan()
-    edges = [e for e in plan.edges if e.rel_type == "BELONGS_TO"]
+    lesson_edges = [e for e in plan.edges
+                    if e.rel_type == "BELONGS_TO" and e.from_label == "Lesson"]
     lessons = [n for n in plan.nodes if n.label == "Lesson"]
-    assert len(edges) == len(lessons)
-    assert {e.to_label for e in edges} == {"Topic"}
+    assert len(lesson_edges) == len(lessons)
+    assert {e.to_label for e in lesson_edges} == {"Topic"}
 
 
 def test_the_plan_passes_the_ontology_gate():
@@ -148,3 +150,70 @@ def test_a_product_question_is_not_captured_by_the_academy():
                      "what does the payload look like",
                      "which header carries the token"):
         assert not any(w in question for w in _ACADEMY_WORDS), question
+
+
+# ---------------------------------------------------------------------------
+# The corpus root
+# ---------------------------------------------------------------------------
+
+def test_the_corpus_gets_a_root_topic_that_its_subjects_sit_under():
+    """"What is in the academy" should be one hop, and a second corpus landed
+    later must not mix into it."""
+    plan = _plan()
+    up = {(e.from_id, e.to_id) for e in plan.edges
+          if e.rel_type == "BELONGS_TO" and e.from_label == "Topic"}
+    assert up == {("topic:concepts", "topic:metis"),
+                  ("topic:practice", "topic:metis")}
+
+
+def test_a_lesson_reaches_the_root_THROUGH_its_subjects_not_directly():
+    """If a lesson pointed at the root as well, `related_by_topic` on any lesson
+    would return every document in the corpus — which is not "what else covers
+    this ground", it is "everything"."""
+    plan = _plan()
+    lesson_targets = {e.to_id for e in plan.edges
+                      if e.rel_type == "BELONGS_TO" and e.from_label == "Lesson"}
+    assert "topic:metis" not in lesson_targets
+
+
+def test_the_root_is_named_after_the_SYSTEM_not_the_folder():
+    """An academy is about something, and the root should say what.
+
+    The folder is `academy`; the root is `metis`. Two corpora in folders both
+    called `academy` document different systems and must not merge into one
+    root, and the same corpus moved to another folder must not split into two.
+    """
+    from metis_mcp.model_sources.lessons import system_of
+
+    assert system_of("../docs/academy") == "metis"
+
+
+def test_an_undeclared_system_is_refused_rather_than_guessed():
+    """The folder name is real information about where files sit and none at all
+    about what they document. Same rule as `topics_of`: authored, never
+    inferred — and more important here, because the whole corpus hangs off it."""
+    import shutil
+    import tempfile
+    from pathlib import Path as P
+
+    from metis_mcp.model_sources.lessons import SystemNotDeclared, plan_lessons
+
+    d = P(tempfile.mkdtemp()) / "academy"
+    shutil.copytree("../docs/academy", d)
+    readme = d / "README.md"
+    readme.write_text(readme.read_text().split("---\n", 2)[-1])
+
+    try:
+        plan_lessons(d)
+    except SystemNotDeclared as e:
+        assert "system:" in str(e)
+    else:
+        raise AssertionError("landed a corpus that names no system")
+
+
+def test_the_root_does_not_point_at_itself():
+    """A topic whose own name matches the corpus would otherwise make a
+    self-edge, and `(t)-[:BELONGS_TO]->(t)` is a cycle every traversal has to
+    special-case."""
+    plan = _plan()
+    assert not [e for e in plan.edges if e.from_id == e.to_id]

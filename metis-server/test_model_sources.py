@@ -129,7 +129,7 @@ def test_extraction_methods_match_the_ontology_enum():
     can only report provenance the graph can actually store."""
     from metis_mcp.model_sources.base import DECLARED_CONTRACT
     from metis_mcp.ontology import LABELS
-    allowed = LABELS["Transition"].enums["extraction_method"]
+    allowed = LABELS["Transition"].enums["x_extraction_method"]
     assert set(allowed) == {HAND_AUTHORED, STATIC_ANALYSIS, AC_MINED, DECLARED_CONTRACT}
 
 
@@ -348,3 +348,58 @@ def test_matching_any_transition_needs_the_label_expression():
     expression = label_expression("Transition")
     for label in ("Transition", "ApiCall", "UiAction"):
         assert label in expression, f"{label} would not match {expression}"
+
+
+# --------------------------------------------------------------------------
+# What a source could not model reaches the graph
+# --------------------------------------------------------------------------
+#
+# `react_ui_synthesis` detects the real limit precisely — "no 'loading' state
+# recovered; its ['error','ready'] state(s) have no recovered entry", because
+# `setStatus(record ? "ready" : "error")` is a ternary and not a control
+# structure the pack can traverse. That reason was PRINTED by `metis land` and
+# persisted nowhere, so M-18 later reported the same states as "unreachable — a
+# dead state, or a transition into it is missing", sending a reader to look for
+# a modelling mistake instead of a recall limit.
+
+def _landed_findings(skipped):
+    from metis_mcp.mbt.model import Model, State, Transition
+    from metis_mcp.model_sources.base import SourceResult
+    from metis_mcp.model_sources.landing import plan_landing
+
+    model = Model(
+        id="probe-ui",
+        states={"A": State(id="A", name="A", surface="ui", is_initial=True),
+                "B": State(id="B", name="B", surface="ui")},
+        transitions={"t": Transition(id="t", source="A", target="B",
+                                     trigger="click go", guard="")})
+    plan = plan_landing(
+        SourceResult(model=model, extraction_method="static_analysis",
+                     source_connector="react-ui", skipped=list(skipped)),
+        journey="probe")
+    assert not plan.errors, plan.errors
+    return [n for n in plan.nodes if n.label == "Finding"]
+
+
+def test_what_a_source_could_not_model_lands_as_a_finding():
+    findings = _landed_findings([
+        ("SummaryPage.summary", "SummaryPage.summary: no 'loading' state recovered")])
+    assert len(findings) == 1
+    assert findings[0].properties["finding_type"] == "unmodelled"
+    assert findings[0].properties["resolution"] == "open"
+    assert "no 'loading' state recovered" in findings[0].properties["detail"]
+
+
+def test_the_reason_is_not_stuttered_when_it_already_names_the_element():
+    """`react-ui` splits its own message to produce an element id, and passes
+    the whole message as both for a finding. Prefixing again reads badly."""
+    one = _landed_findings([("A.page", "A.page: no entry recovered")])[0]
+    assert one.properties["detail"] == "A.page: no entry recovered"
+    same = _landed_findings([("whole message", "whole message")])[0]
+    assert same.properties["detail"] == "whole message"
+
+
+def test_nothing_skipped_lands_no_finding():
+    """Silence where there is nothing to report — a Finding per landing would
+    train a reader to ignore the label."""
+    assert not _landed_findings([])

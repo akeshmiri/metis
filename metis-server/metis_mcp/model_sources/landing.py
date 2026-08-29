@@ -262,6 +262,11 @@ def _content_key(result: SourceResult) -> str:
     for sid in model.state_ids():
         s = model.states[sid]
         parts.append(f"S|{s.id}|{s.name}|{s.surface}|{s.is_initial}")
+    # Property names carry a prefix naming what each is FOR: `c_` the call,
+    # `b_` the behaviour, `p_` the page. A node shows its properties in one
+    # alphabetical table, so the prefix is what makes the grouping visible where
+    # somebody actually reads it. `rendering.contract.graph_name` is the rule;
+    # `test_generation_contract` asserts these keys match it.
     for tid in model.transition_ids():
         t = model.transitions[tid]
         parts.append(f"T|{t.id}|{t.source}|{t.trigger}|{t.target}|{t.guard}|"
@@ -355,11 +360,19 @@ def plan_landing(result: SourceResult, journey: str,
         state = model.states[sid]
         add_node("State", {
             "id": graph_state_id(sid), "source_episode_id": episode_id, "name": state.name,
-            "surface": state.surface, "is_initial": state.is_initial,
+            # The model this element belongs to, as its own property.
+            #
+            # It is already the first half of the id (`{model_id}::{element_id}`,
+            # see `namespaced_id`), so this adds no information — it adds
+            # QUERYABILITY. "Every element of this model" was a string operation
+            # on the id (`STARTS WITH 'records-api::'`), which no index serves
+            # and which breaks on any id containing `::` for another reason.
+            "model_id": model.id,
+            "b_surface": state.surface, "b_is_initial": state.is_initial,
             "lifecycle_state": QUARANTINE, "functional_areas": [journey],
-            "page": getattr(state, "page", ""),
-            "condition": getattr(state, "condition", ""),
-            "name_tier": getattr(state, "name_tier", ""),
+            "p_page": getattr(state, "page", ""),
+            "p_condition": getattr(state, "condition", ""),
+            "x_name_tier": getattr(state, "name_tier", ""),
         })
         page = getattr(state, "page", "")
         if page:
@@ -374,29 +387,37 @@ def plan_landing(result: SourceResult, journey: str,
         transition = model.transitions[tid]
         add_node(transition_label, {
             "id": graph_transition_id(model, tid), "source_episode_id": episode_id,
+            # See the note on State above. Same reason: `graph_transition_id`
+            # namespaces this too, so the value is a duplicate of the id's
+            # prefix and what it buys is an indexed lookup rather than a
+            # `STARTS WITH` scan.
+            "model_id": model.id,
             # D-8: `name` is display data, not identity. It used to be the id --
             # a Java signature with a return type in it -- so every review screen
             # and every report showed a reviewer the implementation instead of
             # the behaviour they were being asked to decide about.
             "name": transition_display_name(transition, model.states),
-            "trigger": transition.trigger,
-            "guard_expression": transition.guard,
-            "implementation_status": transition.implementation_status,
-            "surface": surface,
-            "extraction_method": result.extraction_method,
+            "c_trigger": transition.trigger,
+            "b_guard_expression": transition.guard,
+            "b_implementation_status": transition.implementation_status,
+            "b_surface": surface,
+            "x_extraction_method": result.extraction_method,
             "lifecycle_state": QUARANTINE, "functional_areas": [journey],
-            "guard_anchor": transition.guard_anchor,
-            "source_state_unresolved": transition.source_state_unresolved,
-            "outcome_status": transition.outcome_status,
+            "x_guard_anchor": transition.guard_anchor,
+            "x_source_state_unresolved": transition.source_state_unresolved,
+            "c_outcome_status": transition.outcome_status,
             # See labels.py: structure cannot be a Neo4j property, so the detail
             # is JSON and the two facts worth filtering on are their own columns.
-            "inputs_json": json.dumps(list(transition.inputs), sort_keys=True),
-            "security_json": json.dumps(list(transition.security), sort_keys=True),
-            "input_count": len(transition.inputs),
-            "requires_body": any(
-                (p or {}).get("location") == "body" for p in transition.inputs),
-            "outcome_source": getattr(transition, "outcome_source", "") or "constructed",
-            "guard_claim": getattr(transition, "guard_claim", ""),
+            "c_inputs": json.dumps(list(transition.inputs), sort_keys=True),
+            "c_security": json.dumps(list(transition.security), sort_keys=True),
+            # `c_input_count` and `c_requires_body` were lifted out of the
+            # inputs blob "to carry the parts worth filtering on". Nothing ever
+            # filtered on them — no reader anywhere in the tree, and
+            # `validation.check_callability` computes the same predicate in
+            # Python over an in-memory model. Two properties on every transition
+            # to answer a question nobody asked.
+            "x_outcome_source": getattr(transition, "outcome_source", "") or "constructed",
+            "x_guard_claim": getattr(transition, "guard_claim", ""),
             # GD-3's variants. A list of strings IS a legal Neo4j property, so
             # unlike `inputs` these need no JSON envelope -- and a reviewer
             # reading the rejection sees the constraints it is about.
@@ -404,8 +425,8 @@ def plan_landing(result: SourceResult, journey: str,
             # The expected response. Empty `response_body` means NO body (a 204,
             # or a `ResponseEntity<Void>`), which is a fact a test can assert --
             # not a recovery failure.
-            "response_body": getattr(transition, "response_body", ""),
-            "media_types": list(getattr(transition, "media_types", ()) or ()),
+            "c_response_body": getattr(transition, "response_body", ""),
+            "c_media_types": list(getattr(transition, "media_types", ()) or ()),
             # X-8. The guard in business language, and which tier said it --
             # `verbatim` means nothing has translated it yet, which is the
             # worklist a reviewer or an acceptance criterion works through.
@@ -414,11 +435,11 @@ def plan_landing(result: SourceResult, journey: str,
             # and 17 login-example transitions therefore carried no tier at all
             # -- which makes "show me everything still in implementation
             # language" quietly answer for part of the graph.
-            "guard_wording": (getattr(transition, "guard_wording", "")
+            "x_guard_wording": (getattr(transition, "guard_wording", "")
                               or _wording(transition).text),
-            "guard_tier": (getattr(transition, "guard_tier", "")
+            "x_guard_tier": (getattr(transition, "guard_tier", "")
                            or _wording(transition).tier),
-            "name_tier": getattr(transition, "name_tier", ""),
+            "x_name_tier": getattr(transition, "name_tier", ""),
         })
         add_edge("State", graph_state_id(transition.source), "WHEN",
                  transition_label, graph_transition_id(model, tid))
@@ -434,6 +455,40 @@ def plan_landing(result: SourceResult, journey: str,
             if rel:
                 add_edge(transition_label, graph_transition_id(model, tid), rel,
                          label, node_id)
+
+    # **What the source could not model, carried into the graph.** These were
+    # printed by `metis land` and nothing else — the reason scrolled past in a
+    # terminal and was gone, so a state the extraction could not connect arrived
+    # in the graph with no record of why.
+    #
+    # The cost of that is concrete: `react_ui_synthesis` reports
+    # "RecordDetailPage.page: no 'loading' state recovered; its ['error','ready']
+    # state(s) have no recovered entry" — a precise, actionable recall gap. It
+    # went nowhere, and M-18 later reported the same states as "unreachable — a
+    # dead state, or a transition into it is missing", which sends a reader
+    # looking for a modelling mistake instead of a ternary the pack cannot read.
+    #
+    # X-5a's rule is that what is not landed is counted and reported. This is the
+    # other half: what IS landed but unusable says so too.
+    for element_id, reason in getattr(result, "skipped", ()) or ():
+        finding_id = "finding:" + hashlib.sha256(
+            f"unmodelled|{model.id}|{element_id}|{reason}".encode()).hexdigest()[:16]
+        if add_node("Finding", {
+            "id": finding_id, "source_episode_id": episode_id,
+            "name": "unmodelled", "finding_type": "unmodelled",
+            "severity": "advisory",
+            # Some sources already carry the element id inside the reason —
+            # `react-ui` splits its own message to produce one, and passes the
+            # whole message as both for a finding. Prefixing again stutters.
+            "detail": (reason if reason == element_id
+                       or reason.startswith(f"{element_id}:")
+                       else f"{element_id}: {reason}"),
+            "remedy": "the source could not model this; recover it upstream or "
+                      "author the missing element",
+            "resolution": "open", "lifecycle_state": QUARANTINE,
+        }):
+            add_edge("Finding", finding_id, "ABOUT",
+                     component_label_for(surface), model.id)
 
     return plan
 

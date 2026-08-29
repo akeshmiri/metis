@@ -6,16 +6,17 @@
 
 ```
 usage: metis-mbt [-h]
-                 {paths,render,report,payload,knowledge,feature,glossary,spec-requirement,intent,data,guide,page-object,spec-build,feature-derive,intake,entity,structure,review,override,coverage-gap,validate,drift,publish,ac-mine,doctor,init,analyse,frameworks,ui,reconcile,divergence,spec,sources,land,findings,persist,workflow,backfill-validity,retrieval-bench,embed,lessons} ...
+                 {paths,render,report,payload,generate,knowledge,feature,glossary,spec-requirement,intent,data,guide,page-object,spec-build,feature-derive,intake,entity,structure,review,override,coverage-gap,validate,drift,publish,ac-mine,doctor,init,analyse,properties,frameworks,ui,reconcile,divergence,spec,sources,land,findings,persist,workflow,backfill-validity,retrieval-bench,embed,lessons} ...
 
 CLI for the MBT engine (application spec §9.4, first slice).
 
 positional arguments:
-  {paths,render,report,payload,knowledge,feature,glossary,spec-requirement,intent,data,guide,page-object,spec-build,feature-derive,intake,entity,structure,review,override,coverage-gap,validate,drift,publish,ac-mine,doctor,init,analyse,frameworks,ui,reconcile,divergence,spec,sources,land,findings,persist,workflow,backfill-validity,retrieval-bench,embed,lessons}
+  {paths,render,report,payload,generate,knowledge,feature,glossary,spec-requirement,intent,data,guide,page-object,spec-build,feature-derive,intake,entity,structure,review,override,coverage-gap,validate,drift,publish,ac-mine,doctor,init,analyse,properties,frameworks,ui,reconcile,divergence,spec,sources,land,findings,persist,workflow,backfill-validity,retrieval-bench,embed,lessons}
     paths               generate covering paths
     render              render paths as test cases
     report              coverage report
     payload             machine-readable automation payload
+    generate            automation artefacts for a declared runner
     knowledge           the knowledge-centre file (§4.5): check it, compare it
     feature             the specification as Gherkin (one Requirement, one
                         Feature)
@@ -44,6 +45,8 @@ positional arguments:
     doctor              is this machine ready to extract? (run this first)
     init                scaffold .metis/project.json inside a repository
     analyse             repository -> approval gate, in one command
+    properties          what each node property is for — the call, or the
+                        behaviour
     frameworks          what extraction is declared to support (X-4)
     ui                  serve the review UI (spec §9.3)
     reconcile           match acceptance criteria to transitions (spec §3.3)

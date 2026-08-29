@@ -12,7 +12,7 @@ the same engine serves hand-authored, AC-mined and code-extracted models alike.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import MISSING, asdict, dataclass, field, fields
 
 # Transition.implementation_status values. `planned` behaviour is excluded from
 # coverage because it is not a gap -- it does not exist yet (spec P-11).
@@ -304,3 +304,105 @@ class Model:
     @property
     def is_approved(self) -> bool:
         return not self.unapproved_elements()
+
+
+# --------------------------------------------------------------------------
+# The model-file codec
+# --------------------------------------------------------------------------
+#
+# **Why this exists.** Reading a model file was three independently
+# hand-maintained field lists — `mbt.cli.read_source`, `model_sources.sources`
+# and `mbt.cli.cmd_ac_mine`'s writer — each naming a subset and each dropping
+# whatever it forgot. Four separate defects came out of that in one sitting:
+# `response_body` dropped turned "no body" into a false assertion; `guard_wording`
+# dropped showed a reader the code's expression where the model held the sentence
+# a reviewer approved; `page` and `condition` dropped left a UI case with nothing
+# to check; `data_requirements` dropped silently shrank what a boundary-coverage
+# run covered. Each was patched field by field, which fixes the instance and
+# leaves the mechanism.
+#
+# Driven by `dataclasses.fields`, so a field added to `Transition` is carried
+# without anybody remembering to add it in three places — the discipline
+# `test_human_facts_survive` already applies to human facts, applied to the file
+# boundary.
+#
+# **`lifecycle_state` is deliberately NOT carried.** Everything a source emits
+# lands at Quarantine (S-4); lifecycle is a human fact and lives in the
+# review-state file (I-14). It is a keyword argument here so the rule stays
+# visible rather than being swallowed by "carry everything".
+
+# Fields whose JSON form is not their Python form.
+_PAIR_TUPLES = frozenset({"evidence"})      # [["Endpoint", "ep:..."]] -> ((..),)
+_CHECK_TUPLES = frozenset({"checks"})       # [{...}] -> (GuardCheck(...),)
+
+
+def _decode(name: str, declared: str, value):
+    """One field, from its JSON form to its dataclass form."""
+    if name in _PAIR_TUPLES:
+        return tuple(tuple(pair) for pair in value or ())
+    if name in _CHECK_TUPLES:
+        return tuple(v if isinstance(v, GuardCheck) else GuardCheck(**v)
+                     for v in value or ())
+    if declared == "tuple":
+        return tuple(value or ())
+    if declared == "bool":
+        return bool(value)
+    if declared == "int | None":
+        return None if value is None else int(value)
+    return value if value is not None else ""
+
+
+def _encode(name: str, value):
+    """One field, from its dataclass form to something `json.dumps` accepts."""
+    if name in _CHECK_TUPLES:
+        return [asdict(c) for c in value or ()]
+    if isinstance(value, tuple):
+        return [list(v) if isinstance(v, tuple) else v for v in value]
+    return value
+
+
+def _from_dict(cls, data: dict, *, lifecycle_state: str):
+    kwargs = {}
+    for f in fields(cls):
+        if f.name == "lifecycle_state":
+            kwargs[f.name] = lifecycle_state
+            continue
+        if f.name in data:
+            kwargs[f.name] = _decode(f.name, str(f.type), data[f.name])
+    return cls(**kwargs)
+
+
+def _to_dict(instance) -> dict:
+    """Every field that is not at its default, so a written file stays readable.
+
+    `lifecycle_state` is omitted: a model file holds machine facts, and writing a
+    lifecycle into one would invite a source to assert a decision (S-4).
+    """
+    out = {}
+    for f in fields(instance):
+        if f.name == "lifecycle_state":
+            continue
+        value = getattr(instance, f.name)
+        default = f.default if f.default is not MISSING else None
+        if f.default is MISSING or value != default:
+            out[f.name] = _encode(f.name, value)
+    return out
+
+
+def state_from_dict(data: dict, *, lifecycle_state: str = QUARANTINE) -> State:
+    """One `State` from its file form. `name` falls back to `id` (X-10)."""
+    return _from_dict(State, {"name": data.get("id", ""), **data},
+                      lifecycle_state=lifecycle_state)
+
+
+def transition_from_dict(data: dict, *, lifecycle_state: str = QUARANTINE) -> Transition:
+    """One `Transition` from its file form, carrying every declared field."""
+    return _from_dict(Transition, data, lifecycle_state=lifecycle_state)
+
+
+def state_to_dict(state: State) -> dict:
+    return _to_dict(state)
+
+
+def transition_to_dict(transition: Transition) -> dict:
+    return _to_dict(transition)

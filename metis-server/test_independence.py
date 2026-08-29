@@ -135,10 +135,6 @@ def test_no_skill_instruction_points_into_the_sibling_project():
     for path in REPO.rglob("*.md"):
         if any(part in SKIP for part in path.parts):
             continue
-        # Superseded material is kept for its reasoning and describes a world
-        # that no longer exists; each directory has a README saying so.
-        if "historical" in path.parts:
-            continue
         for line_no, line in enumerate(path.read_text(errors="ignore").splitlines(), 1):
             for pattern in _COUPLING_PATHS:
                 if pattern.search(line):

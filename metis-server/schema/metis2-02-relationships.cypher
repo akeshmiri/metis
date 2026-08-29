@@ -41,6 +41,7 @@ CREATE INDEX rel_p_r_o_d_u_c_e_s_t_valid IF NOT EXISTS FOR ()-[x:PRODUCES]-() ON
 CREATE INDEX rel_b_e_l_o_n_g_s__t_o_t_valid IF NOT EXISTS FOR ()-[x:BELONGS_TO]-() ON (x.t_valid);
 CREATE INDEX rel_r_e_f_e_r_e_n_c_e_s_t_valid IF NOT EXISTS FOR ()-[x:REFERENCES]-() ON (x.t_valid);
 CREATE INDEX rel_a_b_o_u_t_t_valid IF NOT EXISTS FOR ()-[x:ABOUT]-() ON (x.t_valid);
+CREATE INDEX rel_s_e_c_u_r_e_d__b_y_t_valid IF NOT EXISTS FOR ()-[x:SECURED_BY]-() ON (x.t_valid);
 CREATE INDEX rel_a_c_c_e_p_t_s_t_valid IF NOT EXISTS FOR ()-[x:ACCEPTS]-() ON (x.t_valid);
 CREATE INDEX rel_o_f__t_y_p_e_t_valid IF NOT EXISTS FOR ()-[x:OF_TYPE]-() ON (x.t_valid);
 CREATE INDEX rel_r_e_t_u_r_n_s_t_valid IF NOT EXISTS FOR ()-[x:RETURNS]-() ON (x.t_valid);
@@ -148,11 +149,13 @@ CREATE INDEX rel_c_o_n_s_t_r_a_i_n_e_d__b_y_t_valid IF NOT EXISTS FOR ()-[x:CONS
 //   (Scenario)-[:COVERS]->(Transition)  {sequence, is_validated}  — Ordered traversal — makes coverage computable
 //   (Scenario)-[:PRODUCES]->(TestCase)  — The rendered artefact
 //   (Lesson)-[:BELONGS_TO]->(Topic)  — The subject it covers, shared with every other document that covers it
+//   (Topic)-[:BELONGS_TO]->(Topic)  — The broader subject this one sits under
 //   (BusinessEntity)-[:BELONGS_TO]->(BusinessArea)  — Which domain this noun lives in
 //   (Requirement)-[:BELONGS_TO]->(BusinessArea)  — Which domain this requirement governs
 //   (AcceptanceCriterion)-[:REFERENCES]->(BusinessEntity)  — A business noun this criterion acts on or constrains
 //   (Finding)-[:ABOUT]->(*) [any label]  — What the finding concerns
 //   (Component)-[:EXPOSES]->(Endpoint)  — The entry points this deployable presents
+//   (Endpoint)-[:SECURED_BY]->(SecurityScheme)  — A declared security requirement a caller must satisfy. Replaces the parallel `security_*` arrays, which could not express a scheme with more than one role
 //   (Endpoint)-[:ACCEPTS]->(Parameter)  — What a caller must send
 //   (Parameter)-[:OF_TYPE]->(Class)  — The payload schema — the same node as the declared type
 //   (Endpoint)-[:RETURNS]->(Class)  — The declared response body type

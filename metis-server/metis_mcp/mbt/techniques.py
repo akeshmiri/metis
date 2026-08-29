@@ -225,3 +225,118 @@ def format_techniques(result: TechniqueResult) -> str:
               "  a value Métis invented. Solving these to a fixture is out of scope",
               "  (M-9, §12)."]
     return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------
+# Declared constraints (GD-3)
+# --------------------------------------------------------------------------
+#
+# `analyse_guard` reads a guard the code EVALUATES. These read a constraint the
+# code DECLARES -- `@Size(max=64)` on a payload field -- and they are the reason
+# 164 constrained fields stay test data rather than becoming 164 transitions: a
+# technique turns each into cases (P-1a) without adding a model element.
+#
+# **What is honestly missing, said once here rather than implied.** A constraint
+# arrives as bare annotation text (`code_analysis/synthesis.py:582` carries
+# `rejection.constraints`), so the FIELD it constrains is not in it. This states
+# `length = 65` and cannot state which field's length; `Transition.inputs` names
+# the fields separately and a tester reads both. Inventing the pairing would be
+# inventing data (M-9), so it is not attempted.
+
+FROM_CONSTRAINT = "declared_constraint"
+
+# The subject each annotation constrains. Naming it is what lets the emitted
+# condition read `length = 65` rather than an unattributed number.
+_SIZE_LIKE = {"Size": "length", "Length": "length"}
+_VALUE_LIKE = {"Min": "value", "Max": "value", "DecimalMin": "value",
+               "DecimalMax": "value", "Digits": "digits"}
+# Presence assertions: a two-way partition and no boundary. `@NotNull` has no
+# third point -- "one less than null" is not a value, and claiming a boundary
+# here would be the invention M-9 forbids.
+_PRESENCE = ("NotNull", "NotBlank", "NotEmpty", "Null")
+# Shape assertions: satisfied or not, with no orderable domain to bound.
+_SHAPE = ("Pattern", "Email", "URL", "Past", "Future", "PastOrPresent",
+          "FutureOrPresent", "Positive", "Negative", "PositiveOrZero",
+          "NegativeOrZero", "AssertTrue", "AssertFalse", "Valid")
+
+_ANNOTATION = re.compile(r"@(\w+)\s*(?:\((.*)\))?\s*$", re.DOTALL)
+_BOUND = re.compile(r"\b(min|max|value)\s*=\s*(-?\d+(?:\.\d+)?)", re.IGNORECASE)
+_BARE_NUMBER = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s*$")
+
+
+def _bounds_in(arguments: str) -> list[tuple[str, float]]:
+    """`(min=3, max=40)` -> `[("min", 3.0), ("max", 40.0)]`; `(64)` -> `[("value", 64.0)]`."""
+    found = [(name.lower(), float(number))
+             for name, number in _BOUND.findall(arguments or "")]
+    if found:
+        return found
+    bare = _BARE_NUMBER.match(arguments or "")
+    return [("value", float(bare.group(1)))] if bare else []
+
+
+def analyse_constraint(constraint: str) -> TechniqueResult:
+    """Partitions and boundaries for one declared constraint.
+
+    Fail-closed on anything unrecognised (M-17), exactly as `analyse_guard` is:
+    an annotation this does not know yields a two-way partition and **no boundary
+    claim**, and says so in `unanalysable`. Silence would let a criterion shrink
+    its own requirements (P-3).
+    """
+    result = TechniqueResult()
+    text = (constraint or "").strip()
+    if not text:
+        return result
+
+    match = _ANNOTATION.match(text)
+    if match is None:
+        result.partitions.append(Partition(
+            text, f"satisfies {text}", FROM_CONSTRAINT, text))
+        result.partitions.append(Partition(
+            text, f"violates {text}", FROM_CONSTRAINT, text))
+        result.unanalysable.append((text, "not a recognisable annotation — "
+                                          "partitioned two ways, no boundary"))
+        return result
+
+    name, arguments = match.group(1), match.group(2) or ""
+    subject = _SIZE_LIKE.get(name) or _VALUE_LIKE.get(name) or name
+
+    # Every constraint partitions two ways: the data satisfies it or violates it.
+    # That is true of all of them, and it is the half a rejection case needs.
+    result.partitions.append(Partition(
+        subject, f"satisfies @{name}", FROM_CONSTRAINT, text))
+    result.partitions.append(Partition(
+        subject, f"violates @{name}", FROM_CONSTRAINT, text))
+
+    if name in _PRESENCE:
+        result.unanalysable.append(
+            (text, "a presence assertion — no orderable domain, so no boundary"))
+        return result
+    if name in _SHAPE:
+        result.unanalysable.append(
+            (text, "a shape assertion — satisfied or not, with no boundary"))
+        return result
+
+    bounds = _bounds_in(arguments)
+    if not bounds:
+        result.unanalysable.append(
+            (text, f"@{name} declares no numeric bound to analyse"))
+        return result
+
+    for _which, number in bounds:
+        for position, offset in ((BELOW, -1), (AT, 0), (ABOVE, 1)):
+            value = number + offset
+            result.boundaries.append(Boundary(
+                variable=subject, position=position, value=value,
+                condition=f"{subject} = {_number(value)}", source_guard=text))
+    return result
+
+
+def analyse_constraints(constraints) -> TechniqueResult:
+    """Every declared constraint on one transition, folded into one result."""
+    combined = TechniqueResult()
+    for constraint in constraints or ():
+        one = analyse_constraint(constraint)
+        combined.partitions.extend(one.partitions)
+        combined.boundaries.extend(one.boundaries)
+        combined.unanalysable.extend(one.unanalysable)
+    return combined

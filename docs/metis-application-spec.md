@@ -1852,10 +1852,10 @@ a bug in the fourth, not a variant reading.
 **D-3 — nothing is destructively overwritten.** Supersession creates a new
 version; the prior one remains reconstructable (M-15).
 
-### 8.2 Labels — sixty-four, and closed
+### 8.2 Labels — sixty-five, and closed
 
 The count is pinned by `test_ontology.py`
-(`assert len(KNOWN_LABELS) == 64`), so this table and
+(`assert len(KNOWN_LABELS) == 65`), so this table and
 `metis_mcp/ontology/labels.py` cannot drift apart without a test failing. D-1
 governs additions: name the writer and name the reader, or stage it in §8.7.
 
@@ -1902,7 +1902,7 @@ defects have come from, so the rule is that they cannot disagree, and
 
 | 51 | **`Lesson`** | One authored academy lesson about Métis itself — the only label whose subject is this system (D-2; see `docs/academy/PROPOSAL-landing-the-academy.md`) | `model_sources.lessons` / search |
 | 52 | **`Passage`** | One section of a document, embedded on its own — searched, never shown, and rolled up to the document that contains it. Added under D-2 on a measurement: per-section vectors scored 32/36 against 26/36 for whole-document ones, because a Neo4j vector index carries one vector per node and per-section similarity is not expressible as a property | `model_sources.lessons` / both search paths |
-| 53 | **`Topic`** | A subject shared by documents that cover the same ground — one node many documents point at, so "what else covers this" is a traversal rather than a second search. Authored in a document's own frontmatter and never inferred; deliberately not `BusinessArea`, which is what a *product* is about | `model_sources.lessons` / `related_by_topic` |
+| 53 | **`Topic`** | A subject shared by documents that cover the same ground — one node many documents point at, so "what else covers this" is a traversal rather than a second search. Topics nest (`Topic-[:BELONGS_TO]->Topic`), and a corpus's root is named after the SYSTEM it documents — declared in the corpus index, refused when absent, because a folder name says where files sit and nothing about what they are about. Authored, never inferred; deliberately not `BusinessArea`, which is what a *product* is about | `model_sources.lessons` / `related_by_topic` |
 | 57 | **`NeedReview`** | Marker: a human still owes a decision on this node | Landing, finding writer |
 
 **The evidence layer.** The nine below hold the processed intake the control-flow
@@ -1914,6 +1914,7 @@ neighbours) come off §8.7's staging list under D-11 — see **D-12**.
 |---|---|---|---|
 | 14 | **`Endpoint`** | One HTTP entry point as recovered from code (Layer 2) | Raw landing (§5) |
 | 15 | **`Parameter`** | One input an endpoint reads: where it rides and what it must be | Raw landing |
+| 65 | **`SecurityScheme`** | One declared security requirement on an endpoint: the scheme, the declaration verbatim, and the roles it demands. **A node because a scheme with two roles has no positional representation** — the three parallel `security_*` arrays it replaces were misaligned on a third of a real corpus | Raw landing |
 | 16 | **`Class`** | One declared type: a controller, a service, or a payload schema | Raw landing |
 | 58 | **`Enum`** | A type whose instances are a closed set of named constants. **Specialises `Class` and is written instead of it** — an enum's `constants` ARE the equivalence partitions of any field of that type, so it needs no boundary analysis. Numbered 57 and sitting here for the same reason `NeedReview` is numbered 56 and sits above row 14: the ordinal is order of addition, the position is the layer | Raw landing |
 | 17 | **`Field`** | One field of a type, with the constraints declared on it | Raw landing |
@@ -2050,6 +2051,7 @@ to say which method serves a route. The count dropped is reported (X-5a).
 | From | Relationship | To | Meaning |
 |---|---|---|---|
 | `Component` | `EXPOSES` | `Endpoint` | The entry points this deployable presents |
+| `Endpoint` | `SECURED_BY` | `SecurityScheme` | A declared security requirement a caller must satisfy |
 | `Endpoint` | `ACCEPTS` | `Parameter` | What a caller must send |
 | `Parameter` | `OF_TYPE` | `Class` | The payload schema — the same node as the declared type |
 | `Endpoint` | `RETURNS` | `Class` | The declared response body type |
@@ -2582,11 +2584,15 @@ evidence that behaviour is *correct*. They are evidence that behaviour is
 
 ## 11. Non-functional requirements
 
-### 11.0 Platform (PLT-002, PLT-003, PLT-005)
+### 11.0 Platform (PLT-002, PLT-003, PLT-005, PLT-006, PLT-007)
 
-Three rules the code has cited from the beginning and this document never
-defined. Written here because a citation of a rule nobody wrote is a dangling
-reference that reads as authority.
+Five rules. The first three the code cited from the beginning and this document
+never defined — written here because a citation of a rule nobody wrote is a
+dangling reference that reads as authority. The last two govern how the graph is
+reached and how its schema is stated; one of them the code already meets, and
+one of them it does not. Which is which is said in the rule, because a rule
+stated as though it were satisfied is the same dangling reference in the other
+direction.
 
 **PLT-002 — a connection resolves in one order, and the order is stated.**
 Explicit arguments, then the environment, then a configuration file. No
@@ -2608,6 +2614,43 @@ configuration file that contains the secret is refused where it can be detected,
 and where a legacy file holds one it is read only if its permissions restrict it
 to its owner, and the run says on stderr that it did so. A world-readable secret
 read in silence is worse than either alternative.
+
+**PLT-006 — the graph is reached through Cypher over Bolt, behind one thin
+repository layer.**
+One protocol and one seam. No component opens its own driver, embeds its own
+connection policy, or reaches the database by any route but Cypher over Bolt;
+every query lives behind a repository whose job is to run Cypher and return
+rows, holding no domain logic of its own. The reason is not tidiness. A query
+written inside application logic is invisible to the ontology's guards — a label
+renamed in `labels.py` leaves it matching nothing, and matching nothing returns
+an empty result that reads as an empty database. Concentrating the queries makes
+that class of failure findable in one place, and makes "what does this system ask
+of the graph" answerable by reading a file rather than the whole tree.
+
+**The code does not meet this yet, and the distance is measured rather than
+estimated: 81 queries across 19 modules.** `mbt/graph_loader.py` holds 19,
+`mbt/finding_writer.py`, `mbt/graph_writer.py` and `model_sources/landing.py`
+nine each, `authoring.py` and `behavior_model.py` seven each, and a dozen more
+carry one or two. `mbt/graph_session.py` is already the single connection seam
+(PLT-002 resolves there and nowhere else), so the protocol half of this rule
+holds today; the repository half does not. Stated as a rule now because the
+direction is decided — every new query belongs behind the seam, and the existing
+ones move as the modules holding them are touched.
+
+**PLT-007 — the schema is declared, never written.**
+Constraints and indexes are generated from the ontology, not maintained beside
+it. `metis_mcp/ontology/labels.py` is the single declaration of the label set,
+the relationship catalogue and the indexed properties; `metis_mcp/ontology/schema.py`
+generates `schema/metis2-*.cypher` from it. A hand-edit to a generated file is
+the exact drift the generation exists to prevent.
+
+**The code meets this today**, and two tests keep it true:
+`test_generated_schema_covers_every_label` and the check that the committed
+schema matches what the generator produces — so an ontology change that forgets
+to regenerate fails rather than ships. This is the reason D-2's four-place rule
+costs two places and not four: the validator and the schema are generated from
+one source and are structurally incapable of disagreeing, leaving only the two
+prose places to be checked.
 
 ### 11.1 Scale — assumptions, flagged for confirmation
 
@@ -3400,21 +3443,23 @@ traced, every deferral given a named trigger.
 | ~~RD-1~~ | ~~The extraction engine is not named~~ | **✅ Closed** — Joern pinned (X-1a) |
 | ~~RD-2~~ | ~~No schema DDL — no constraint or index script~~ | **✅ Closed** — `metis_mcp/ontology/schema.py` generates `schema/metis2-*.cypher` from `labels.py`, Community and Enterprise. The generator cites RD-2 |
 | ~~RD-3~~ | ~~No module layout for the new code~~ | **✅ Closed** — thirteen packages under `metis_mcp/`, plus `code_analysis/` |
-| **RD-4** | **No work breakdown.** N-16 gives an order, not tasks or sequencing within stages | **Open.** The only artefact was `PLAN.md`, now `docs/historical/PLAN-v1.md` and unaudited. Least consequential of the seven: the order N-16 gives has proved sufficient |
+| **RD-17** | **Cypher is embedded in application logic, not behind a repository.** PLT-006 states the rule; the code does not meet it | **Open.** Measured: 81 queries across 19 modules — `mbt/graph_loader.py` 19, `mbt/finding_writer.py`/`mbt/graph_writer.py`/`model_sources/landing.py` 9 each. The connection half already holds (`mbt/graph_session.py` is the one seam, PLT-002). Consequence while open: a query naming a renamed label returns nothing and reads as an empty database, and nothing checks for it outside `test_ontology.py`'s Cypher scan |
+| **RD-4** | **No work breakdown.** N-16 gives an order, not tasks or sequencing within stages | **Open.** The only artefact was `PLAN.md`, deleted with the rest of the v1 material and never audited. Least consequential of the seven: the order N-16 gives has proved sufficient |
 | ~~RD-5~~ | ~~No test strategy for the new system~~ | **✅ Closed** — a suite that runs with no external dependency, in seconds, on any machine; §13's criteria each have an executing test. `metis-server/test_*.py` |
 | ~~RD-6~~ | ~~Framework configuration schemas (X-4, X-10b) sketched, not specified~~ | **✅ Closed** — `code_analysis/framework_config.py`, the `frameworks` CLI verb, `test_framework_config.py` |
 | ~~RD-7~~ | ~~Review UI specified by obligation, not design~~ | **✅ Closed** — `metis_mcp/review_ui/{server,view,evidence}.py`; a screen that cannot show its evidence blocks the decision (N-3) |
 
-Six of seven are closed. **This register used to appear twice** — here and again
-at §20.7 — and the two copies disagreed about RD-3, one listing it open and the
-other closed. There is one register, and it is this one.
+Six of the original seven are closed; RD-4 stays open and RD-17 joins it.
+**This register used to appear twice** — here and again at §20.7 — and the two
+copies disagreed about RD-3, one listing it open and the other closed. There is
+one register, and it is this one.
 ### 20.2 The migration itself — completed
 
 The plan that took Métis from the v1 engine to this one (the line-by-line reuse
 audit, RD-8's "not an incremental change", RD-9's re-ingest-don't-migrate, and
-RD-10…RD-16's Phase A/B/C cutover) **completed at commit `61814dc`** and has
-moved to
-[`docs/historical/migration-plan-v1-to-v2.md`](historical/migration-plan-v1-to-v2.md).
+RD-10…RD-16's Phase A/B/C cutover) **completed at commit `61814dc`**. The plan
+document was kept for a while and has since been deleted; `git show 61814dc` is
+where that history now lives.
 
 It is out of this document because a finished plan in a specification reads as
 an instruction. Its content had also gone stale in a way that matters: it

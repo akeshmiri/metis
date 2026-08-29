@@ -4,7 +4,7 @@
 
 *Generated from `metis_mcp/ontology/labels.py`.*
 
-64 labels, 118 relationships, 20 staged out.
+65 labels, 120 relationships, 21 staged out.
 
 The ontology is **closed**. Adding a label or a relationship is a reviewed change under D-2, not an edit — four places have to agree, and the Cypher schema is generated from `labels.py` so two of them cannot drift apart.
 
@@ -60,6 +60,7 @@ The ontology is **closed**. Adding a label or a relationship is a reviewed chang
 - `Row`
 - `Scenario`
 - `Schema`
+- `SecurityScheme`
 - `Sort`
 - `SpecDocument`
 - `Specification`
@@ -109,6 +110,7 @@ The ontology is **closed**. Adding a label or a relationship is a reviewed chang
 - `Endpoint` -[:HANDLED_BY]-> `Method`
 - `Endpoint` -[:IMPLEMENTS]-> `Specification`
 - `Endpoint` -[:RETURNS]-> `Class`
+- `Endpoint` -[:SECURED_BY]-> `SecurityScheme`
 - `EntityDocument` -[:CITES]-> `AcceptanceCriterion`
 - `EntityDocument` -[:DESCRIBES]-> `BusinessEntity`
 - `ExceptionMapping` -[:HANDLED_BY]-> `Method`
@@ -173,6 +175,7 @@ The ontology is **closed**. Adding a label or a relationship is a reviewed chang
 - `Specification` -[:SPECIFIES]-> `Requirement`
 - `State` -[:WHEN]-> `Transition`
 - `Table` -[:HAS_COLUMN]-> `Column`
+- `Topic` -[:BELONGS_TO]-> `Topic`
 - `Transition` -[:CONSTRAINED_BY]-> `Check`
 - `Transition` -[:DERIVED_FROM]-> `Action`
 - `Transition` -[:DERIVED_FROM]-> `DeclaredOutcome`
@@ -215,6 +218,7 @@ Deliberately excluded. Each names the trigger that would bring it back — an ab
 - **`Release`** — execution results are ingested and release reporting is required
 - **`Repository`** — impact analysis needs code structure in the graph, not just anchors
 - **`Revision`** — property-level history is designed AND something writes it — an integer `revision` property is what is used now
+- **`Role`** — something asks what ELSE requires a given role — a shared identity across endpoints, rather than a string repeated on each scheme
 - **`Run`** — two generation runs need comparing IN THE GRAPH — F-3's comparability half, which the run file cannot answer across scopes
 - **`TestCycle`** — execution results are ingested
 - **`TestDesign`** — a concrete need appears

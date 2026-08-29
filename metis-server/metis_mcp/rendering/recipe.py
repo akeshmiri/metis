@@ -119,10 +119,20 @@ def build(endpoint: dict, *, base_url: str = "", payload_types: tuple = (),
                 "because a body was recovered"))
         body = body_template(payload_types[0])
 
-    schemes = endpoint.get("security_schemes") or ()
-    security = {"declared": bool(schemes), "schemes": list(schemes),
-                "roles": list(endpoint.get("security_roles") or ())}
-    if not schemes:
+    # Each declaration keeps its own roles. Two parallel arrays could not say
+    # which role belonged to which scheme once a scheme had more than one.
+    declarations = [d for d in (endpoint.get("security") or ()) if d]
+    security = {
+        "declared": bool(declarations),
+        "schemes": [d.get("scheme", "") for d in declarations],
+        "declarations": [{"scheme": d.get("scheme", ""),
+                          "expression": d.get("expression", ""),
+                          "roles": list(d.get("roles") or ()),
+                          "source": d.get("source", "")}
+                         for d in declarations],
+        "roles": sorted({r for d in declarations for r in (d.get("roles") or ())}),
+    }
+    if not declarations:
         security["note"] = NO_SECURITY_NOTE
         # The honest alternative, and on the pilot service the real answer:
         # authentication may be travelling as an ordinary header parameter.
@@ -164,8 +174,25 @@ def as_curl(recipe: dict) -> str:
     notes = [f"# {what}: {why}" for what, why in recipe.get("unrecoverable", ())]
     for status, cause in recipe.get("rejections", ()):
         notes.append(f"# {status} when {cause}")
-    if not recipe["security"]["declared"]:
+    security = recipe["security"]
+    if not security["declared"]:
         notes.append("# " + NO_SECURITY_NOTE)
+    else:
+        # **The requirement, never the secret** (X-6e). A reader of this command
+        # needs to know a credential is wanted and which roles it must carry;
+        # what that credential IS is not a fact Métis holds, so the line states
+        # the demand and stops.
+        #
+        # Omitted entirely until `SecurityScheme` became a node: `as_curl` named
+        # security only when there was NONE, so a caller reading the curl for an
+        # endpoint requiring `records:admin` saw nothing at all about auth.
+        for declaration in security.get("declarations", ()):
+            roles = declaration.get("roles") or ()
+            demand = f" — roles {', '.join(roles)}" if roles else ""
+            notes.append(f"# auth: {declaration.get('scheme', 'required')}"
+                         f"{demand}   [{declaration.get('expression', '')}]")
+        notes.append("# supply the credential yourself; Métis states the "
+                     "requirement and never carries a secret")
     return out + ("\n" + "\n".join(notes) if notes else "")
 
 

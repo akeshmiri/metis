@@ -85,12 +85,13 @@ def test_a_specialisation_is_carried_alongside_transition_not_instead_of_it():
 
 
 def test_the_specialisation_narrows_the_surface():
-    base = {"id": "t", "source_episode_id": "e", "name": "n", "trigger": "GET /x",
-            "guard_expression": "", "implementation_status": IMPLEMENTED}
-    assert validate("ApiCall", {**base, "surface": "api"}).valid
-    assert not validate("ApiCall", {**base, "surface": "ui"}).valid
-    assert validate("UiAction", {**base, "surface": "ui"}).valid
-    assert not validate("UiAction", {**base, "surface": "api"}).valid
+    base = {"id": "t", "source_episode_id": "e", "name": "n", "c_trigger": "GET /x",
+            "b_guard_expression": "", "b_implementation_status": IMPLEMENTED,
+            "model_id": "m"}
+    assert validate("ApiCall", {**base, "b_surface": "api"}).valid
+    assert not validate("ApiCall", {**base, "b_surface": "ui"}).valid
+    assert validate("UiAction", {**base, "b_surface": "ui"}).valid
+    assert not validate("UiAction", {**base, "b_surface": "api"}).valid
 
 
 def test_the_two_edges_are_separate_and_directional():

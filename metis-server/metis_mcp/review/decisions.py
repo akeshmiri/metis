@@ -22,7 +22,7 @@ Three rules make this a real gate rather than a formality:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 
 from metis_mcp.mbt.model import (
@@ -361,11 +361,18 @@ def _apply_one(model: Model, item: ReviewItem, target: str) -> str | None:
         if state is None:
             return None
         before = state.lifecycle_state
-        # State is frozen; replace it. A naming decision applies here too.
-        model.states[item.id] = type(state)(
-            id=state.id, name=item.name or state.name, surface=state.surface,
-            is_initial=state.is_initial, lifecycle_state=target,
-        )
+        # State is frozen; `replace` it. A naming decision applies here too.
+        #
+        # **Never a re-construction naming fields one by one** — see the same
+        # note in `review/state.py:overlay`. Enumerating the fields dropped every
+        # one not named, so deciding on an element destroyed its recovered facts:
+        # `outcome_status=200` came back `None`. It was invisible while the
+        # approval fingerprint hashed exactly the fields the enumeration happened
+        # to name; widening it to cover what a generated test asserts made
+        # `review apply` record a hash taken from a mutilated model that no
+        # loader could reproduce, staling every approval permanently.
+        model.states[item.id] = replace(
+            state, name=item.name or state.name, lifecycle_state=target)
         return before
 
     if item.kind == "transition":
@@ -373,12 +380,7 @@ def _apply_one(model: Model, item: ReviewItem, target: str) -> str | None:
         if transition is None:
             return None
         before = transition.lifecycle_state
-        model.transitions[item.id] = type(transition)(
-            id=transition.id, source=transition.source, trigger=transition.trigger,
-            target=transition.target, guard=transition.guard,
-            implementation_status=transition.implementation_status,
-            lifecycle_state=target,
-        )
+        model.transitions[item.id] = replace(transition, lifecycle_state=target)
         return before
 
     return None

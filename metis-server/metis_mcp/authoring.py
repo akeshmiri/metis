@@ -85,10 +85,12 @@ def call_recipe(journey: str, route: str = "") -> dict:
         OPTIONAL MATCH (t:{_TRANSITION})-[:DERIVED_FROM]->(e)
         OPTIONAL MATCH (e)-[:ACCEPTS]->(p:Parameter)
         OPTIONAL MATCH (e)-[:ACCEPTS]->(:Parameter {{location:'body'}})-[:OF_TYPE]->(b)
+        OPTIONAL MATCH (e)-[:SECURED_BY]->(sec:SecurityScheme)
         WITH e, collect(DISTINCT properties(p)) AS params,
              collect(DISTINCT b.id) AS bodies,
-             collect(DISTINCT t.outcome_status) AS statuses
-        RETURN properties(e) AS endpoint, params, bodies, statuses
+             collect(DISTINCT t.c_outcome_status) AS statuses,
+             collect(DISTINCT properties(sec)) AS security
+        RETURN properties(e) AS endpoint, params, bodies, statuses, security
         ORDER BY e.path, e.http_method""")
 
     rejections = [(str(r["status"]), r["cause"]) for r in _rows(
@@ -102,6 +104,10 @@ def call_recipe(journey: str, route: str = "") -> dict:
         if route and route.strip() != wanted:
             continue
         endpoint["parameters"] = [p for p in row["params"] if p]
+        # Injected from the SECURED_BY traversal, as `parameters` is from
+        # ACCEPTS. It used to ride on the endpoint as parallel arrays that could
+        # not express a scheme with two roles.
+        endpoint["security"] = [x for x in row["security"] if x]
         bodies = tuple(filter(None, (_payload_for(b) for b in row["bodies"] if b)))
         built = _recipe.build(endpoint, base_url=_base_url(), payload_types=bodies,
                               outcomes=sorted(s for s in row["statuses"] if s),
@@ -134,11 +140,16 @@ def auth_facts(journey: str) -> dict:
     ordinary header parameters — so "nothing declared" and "open" are different
     claims and only the first is ever made.
     """
+    # One row per DECLARATION, so a scheme keeps its own roles. This used to
+    # return `security_schemes` and `security_roles` as two arrays off the
+    # endpoint — and they were positional, so a scheme with two roles made the
+    # correspondence undecodable. A third of the demo corpus was misaligned.
     declared = _rows(
-        "MATCH (e:Endpoint) WHERE e.security_schemes IS NOT NULL "
+        "MATCH (e:Endpoint)-[:SECURED_BY]->(s:SecurityScheme) "
         "RETURN e.path AS path, e.http_method AS verb, "
-        "e.security_schemes AS schemes, e.security_roles AS roles "
-        "ORDER BY e.path")
+        "s.scheme AS scheme, s.expression AS expression, "
+        "coalesce(s.roles, []) AS roles, s.source AS source "
+        "ORDER BY e.path, s.expression")
     headers = _rows(
         "MATCH (e:Endpoint)-[:ACCEPTS]->(p:Parameter {location:'header'}) "
         "RETURN p.name AS name, count(DISTINCT e) AS endpoints, "
@@ -174,10 +185,10 @@ def journey_walkthrough(journey: str) -> dict:
         OPTIONAL MATCH (src:State)-[:WHEN]->(t)
         OPTIONAL MATCH (t)-[:THEN]->(tgt:State)
         OPTIONAL MATCH (t)-[:DERIVED_FROM]->(m:ExceptionMapping)
-        RETURN t.trigger AS trigger, t.outcome_status AS status,
-               t.guard_expression AS guard, src.name AS from_state,
+        RETURN t.c_trigger AS trigger, t.c_outcome_status AS status,
+               t.b_guard_expression AS guard, src.name AS from_state,
                tgt.name AS to_state, collect(DISTINCT m.exception_type) AS causes
-        ORDER BY t.trigger, t.outcome_status""",
+        ORDER BY t.c_trigger, t.c_outcome_status""",
         j=journey, prefix=f"{journey}-")
     if not transitions:
         return {"ok": False, "reason": f"no transitions for journey {journey!r}"}

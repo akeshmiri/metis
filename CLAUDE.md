@@ -22,23 +22,32 @@ ontology, `structural_validation.py`, `layer8_heuristics.py`,
 `uif_intake.py`, `neo4j_test_support.py`, and every `metis_*` MCP tool
 (`metis_get_traceability`, `metis_check_coverage`, `metis_list_skills`, …).
 
-Superseded material lives in `docs/historical/` — the v1 ontology document, the
-hand-written Cypher, the completed v1→v2 migration plan, the fifteen v1 design
-notes (Constitution Amendments 1–5 and the memos around them), the v1 academy,
-and contracts for eighteen MCP tools that no longer exist. Kept for its
-reasoning, not as a description of anything current; each directory has a README
-saying what is stale in it.
+`docs/historical/` held that material — the v1 ontology, the hand-written
+Cypher, the completed v1→v2 migration plan, the v1 design notes and academy, and
+contracts for eighteen MCP tools. **It has been deleted.** Nothing in the tree
+describes the old engine any more, so a search that finds one of the names above
+has found a stale reference, not a file to read. `git show 61814dc` is where that
+history lives now.
 
-**`docs/` holds four things and the distinction between them is the point:**
+**`graph/` is the authored half of the knowledge graph** — models, intent,
+criteria, decisions and automation fixtures, each a file a person wrote. The
+database is built from it and is disposable. **Decisions are committed**
+(`graph/reviews/*.review.json`), and a model change lands in the same pull
+request as the decisions it invalidates; `review apply` refuses a decision whose
+model has moved, so the two halves have to travel together. What is *recovered*
+from code has no file there on purpose — its source is the service's own tree,
+and `demo_project/`/`demo_data/` stay beside the tests that assert on them.
+See `graph/README.md`.
+
+**`docs/` holds three things and the distinction between them is the point:**
 the application spec (authoritative), `guide/` (**generated** from `labels.py`,
 `intakes.json`, `stages.py` and the CLI parser — `metis guide --check` fails on
-a diff, so it cannot drift), `academy/` (**authored** reasoning, labelled as
-such because it is not checkable the same way), and `historical/`. Anything
-design-shaped that is not the spec, the guide or a lesson is history.
+a diff, so it cannot drift), and `academy/` (**authored** reasoning, labelled as
+such because it is not checkable the same way).
 
 ## Facts that decide how you work here
 
-- **The ontology is 64 labels and it is closed.** `metis_mcp/ontology/labels.py`
+- **The ontology is 65 labels and it is closed.** `metis_mcp/ontology/labels.py`
   is the single source: `LABELS`, `ALLOWED_RELATIONSHIPS`, and `STAGED_OUT` (the
   deliberately-excluded labels, each with the trigger that would bring it back).
   The Cypher schema is **generated** from it. Adding a label or relationship is

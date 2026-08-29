@@ -7,6 +7,7 @@ import sys
 
 from metis_mcp.mbt.model import IMPLEMENTED, PLANNED, Model, State, Transition
 from metis_mcp.mbt.validation import (
+    GUARD_POLARITY, check_guard_polarity,
     AC_ATOMICITY,
     ADVISORY,
     BLOCKING,
@@ -529,3 +530,61 @@ if __name__ == "__main__":
             print(f"ERROR {t.__name__}: {type(e).__name__}: {e}")
     print(f"\n{len(tests) - failures}/{len(tests)} passed")
     sys.exit(1 if failures else 0)
+
+
+# --------------------------------------------------------------------------
+# Guard polarity
+# --------------------------------------------------------------------------
+#
+# Found by walking a real model rather than by reading code: `GET /summary/{id}`
+# mapped 200 to "the exception IS thrown" and 422 to "it is NOT" — the pair
+# swapped. `synthesis` negated every rejection expression uniformly, which is
+# right for `payload_valid` and wrong for one that already names the failure.
+#
+# It passed M-18 and G1. Determinism and reachability were satisfied, and a
+# human approving elements is not asked whether a guard's polarity matches its
+# outcome. That is the gap this check closes.
+
+def _summary(status: int, guard: str) -> Model:
+    return Model(
+        id="records-api",
+        states={"A": State(id="A", name="Summary", surface="api", is_initial=True),
+                "B": State(id="B", name="Out", surface="api")},
+        transitions={"t": Transition(id="t", source="A", target="B",
+                                     trigger="GET /summary/{id}", guard=guard,
+                                     outcome_status=status)})
+
+
+def test_a_rejection_guarded_on_the_exception_not_being_thrown_is_blocking():
+    """The generated case would arrange a VALID request and assert 422 — it
+    fails against correct code and gets filed as a service bug."""
+    findings = check_guard_polarity(
+        _summary(422, "NOT (SummaryUnavailableException is thrown)"))
+    assert [f.severity for f in findings] == [BLOCKING]
+    assert "arranges a valid request" in findings[0].detail
+
+
+def test_the_corrected_polarity_passes():
+    assert not check_guard_polarity(
+        _summary(422, "SummaryUnavailableException is thrown"))
+
+
+def test_a_success_guarded_on_an_absent_exception_is_fine():
+    """`200 when NOT (X is thrown)` is the happy path stated correctly."""
+    assert not check_guard_polarity(
+        _summary(200, "NOT (SummaryUnavailableException is thrown)"))
+
+
+def test_a_negated_predicate_is_untouched():
+    """`NOT (payload_valid)` is the correct shape for a condition that must
+    HOLD — the check must not treat every negation as suspect."""
+    assert not check_guard_polarity(_summary(400, "NOT (payload_valid)"))
+
+
+def test_it_blocks_the_gate():
+    """Unlike the recall checks, this is not "we could not recover it" — it is a
+    statement contradicting its own evidence, so proceeding produces a wrong
+    test rather than a thin one."""
+    result = validate(_summary(422, "NOT (SummaryUnavailableException is thrown)"))
+    assert not result.is_valid()
+    assert any(f.check == GUARD_POLARITY for f in result.blocking)

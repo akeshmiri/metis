@@ -30,6 +30,7 @@ from metis_mcp.identity.keys import (
     state_key,
     transition_key,
 )
+from metis_mcp.rendering.contract import asserted_fields
 from metis_mcp.mbt.model import APPROVED, QUARANTINE, Model, State, Transition
 
 ADDED = "ADDED"
@@ -92,6 +93,22 @@ def _transition_detail(previous: Transition, candidate: Transition) -> tuple[str
     if previous.implementation_status != candidate.implementation_status:
         return (f"implementation_status: {previous.implementation_status} -> "
                 f"{candidate.implementation_status}"), True
+
+    # **What a generated test asserts is evidence** (E-8/N-14). This checked the
+    # guard and the implementation status and nothing else, so a re-extraction
+    # changing `outcome_status` 201 -> 200, or a response body from `RecordDto`
+    # to `Void`, revoked nothing — and the approval recorded against the old
+    # response was carried onto a transition that now asserts a different one.
+    #
+    # Driven from `rendering.contract` rather than a second hand-list, so the
+    # question "which facts are evidence" has one answer.
+    for field in asserted_fields("Transition"):
+        if field in ("guard", "implementation_status"):
+            continue                      # reported above, with better wording
+        before_value = getattr(previous, field, None)
+        after_value = getattr(candidate, field, None)
+        if before_value != after_value:
+            return f"{field} changed: {before_value!r} -> {after_value!r}", True
     return "", False
 
 

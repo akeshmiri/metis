@@ -105,25 +105,40 @@ def test_a_declared_base_url_is_used(demo_structural):
     assert not any(what == "base_url" for what, _ in built["unrecoverable"])
 
 
-def test_no_declared_security_says_so_and_does_not_say_open(demo_structural):
+def test_no_declared_security_says_so_and_does_not_say_open():
     """The distinction that matters: "nothing declared" is never "open".
 
-    Two caveats on what this actually exercises, both true and neither obvious:
+    Synthetic rather than drawn from the demo corpus, because every one of its
+    twelve endpoints declares something — so there is no real example of absence
+    to point at, and a test that needs one has to build it.
 
-    - Extraction CAN now read a Spring `HttpSecurity` filter chain
-      (`jvm-structural`'s `chainSecurityFor`), so the old reason given here --
-      "extraction cannot see a filter chain" -- no longer holds. A gateway, or a
-      chain outside the analysed sources, is still invisible.
-    - `R.build` reads the FLATTENED `security_schemes` key that
-      `raw_landing._security_properties` produces. This test hands it a raw
-      structural endpoint, which carries `security` instead, so `declared` is
-      False here whatever the pack recovered -- it would be False for
-      `@DemoSecured` too. The note is what is under test; the flattening is
-      covered where it is produced.
+    This used to assert the same thing about a REAL endpoint and pass for the
+    wrong reason: `build` read a flattened `security_schemes` key that a raw
+    structural endpoint does not carry, so `declared` was False whatever the pack
+    had recovered. Its own docstring said so. The flattening is gone —
+    `Endpoint-[:SECURED_BY]->SecurityScheme` replaced it — and the test now
+    exercises absence rather than a lookup miss.
     """
-    built = R.build(_endpoint(demo_structural, "/record/page"))
+    built = R.build({"http_method": "GET", "path": "/open", "security": []})
     assert built["security"]["declared"] is False
     assert "not the same as open" in built["security"]["note"]
+
+
+def test_a_scheme_keeps_its_own_roles_through_the_recipe():
+    """The reason `SecurityScheme` is a node. Two parallel arrays could not say
+    which role belonged to which scheme once a scheme had more than one, and a
+    third of the demo corpus was misaligned that way."""
+    built = R.build({"http_method": "DELETE", "path": "/record/{id}", "security": [
+        {"scheme": "role", "expression": '@DemoSecured({ "records:write", "records:admin" })',
+         "roles": ["records:write", "records:admin"], "source": "annotation"},
+        {"scheme": "role", "expression": "hasRole(RECORDS)",
+         "roles": ["RECORDS"], "source": "annotation"}]})
+
+    by_expression = {d["expression"]: d["roles"] for d in built["security"]["declarations"]}
+    assert by_expression["hasRole(RECORDS)"] == ["RECORDS"]
+    assert sorted(by_expression['@DemoSecured({ "records:write", "records:admin" })']) == [
+        "records:admin", "records:write"]
+    assert built["security"]["declared"] is True
 
 
 def test_declared_security_is_carried(demo_structural):
@@ -159,3 +174,30 @@ def test_every_rejection_is_named_beside_the_call(demo_structural):
     built = R.build(_endpoint(demo_structural, "/summary/{id}"),
                     rejections=(("422", "SummaryUnavailableException"),))
     assert "# 422 when SummaryUnavailableException" in R.as_curl(built)
+
+
+def test_the_curl_states_its_auth_requirement_and_no_secret():
+    """`as_curl` named security only when there was NONE, so a caller reading
+    the command for an endpoint requiring `records:admin` saw nothing about auth
+    at all. Each declaration now states its own roles — and stops there, because
+    what the credential IS is not a fact Métis holds (X-6e)."""
+    built = R.build({"http_method": "DELETE", "path": "/record/{id}", "security": [
+        {"scheme": "role", "expression": '@DemoSecured({ "records:admin" })',
+         "roles": ["records:admin"]},
+        {"scheme": "role", "expression": "hasRole(RECORDS)", "roles": ["RECORDS"]}]})
+    rendered = R.as_curl(built)
+
+    assert "auth: role — roles records:admin" in rendered
+    assert "auth: role — roles RECORDS" in rendered
+    assert "never carries a secret" in rendered
+    # The requirement, not a credential: nothing in the command looks usable.
+    assert "Authorization:" not in rendered and "Bearer" not in rendered
+
+
+def test_an_open_endpoint_still_says_nothing_was_declared():
+    """The two branches must stay distinct — adding the declared case must not
+    lose the one that says absence is not openness."""
+    rendered = R.as_curl(R.build({"http_method": "GET", "path": "/open",
+                                  "security": []}))
+    assert "not the same as open" in rendered
+    assert "auth:" not in rendered

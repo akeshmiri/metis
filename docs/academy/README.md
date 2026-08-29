@@ -1,3 +1,6 @@
+---
+system: metis
+---
 # The Métis academy
 
 **Authored, not generated.** That is the difference between this directory and

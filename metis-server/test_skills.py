@@ -181,8 +181,10 @@ def test_the_shared_knowledge_that_survives_is_the_knowledge_skills_cite():
     The ISO/IEEE files and the two test-design templates were ported from Atlas
     and never rewired: nothing referenced them, and their own cross-references
     named a `test-designer` skill, a "Stage 08 Gate" and a `resources/templates/`
-    path that do not exist here. They are in `docs/historical/` now, with the
-    standards mapping intact — see that directory's README.
+    path that do not exist here. They were retired to `docs/historical/`, and
+    that directory has since been deleted along with the rest of the v1 material
+    — so this test asserts only what SURVIVED the port, which is the half that
+    was ever load-bearing.
 
     Métis does not render a test-design document from a template; it renders
     test cases from an approved model (`rendering/test_case.py`).
@@ -191,10 +193,6 @@ def test_the_shared_knowledge_that_survives_is_the_knowledge_skills_cite():
     for expected in ("anti-hallucination-protocol.md",
                      "test-techniques-reference.md"):
         assert (knowledge / expected).exists(), f"{expected} did not survive the port"
-
-    retired = PLUGIN.parent.parent / "docs" / "historical" / "atlas-test-design-port"
-    assert (retired / "iso-29119-test-documentation-map.md").exists()
-    assert (retired / "README.md").exists(), "a retired port needs its reason"
 
 
 def test_every_shared_knowledge_file_is_cited_by_a_skill():
@@ -209,7 +207,7 @@ def test_every_shared_knowledge_file_is_cited_by_a_skill():
     for path in knowledge.glob("*.md"):
         assert path.name in skill_text, (
             f"{path.name} is in the skill tree and no skill references it — "
-            f"either cite it or retire it to docs/historical/"
+            f"either cite it from a skill or delete it"
         )
 
 

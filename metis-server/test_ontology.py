@@ -75,8 +75,8 @@ def test_the_label_set_is_closed_and_each_label_is_argued():
     test enforces: name the writer, name the reader, and if either is "a file
     somebody will write one day", stage it in §8.7 instead.
     """
-    assert len(KNOWN_LABELS) == 64, (
-        f"the ontology is sixty-four labels (spec D-1); found {len(KNOWN_LABELS)}: "
+    assert len(KNOWN_LABELS) == 65, (
+        f"the ontology is sixty-five labels (spec D-1); found {len(KNOWN_LABELS)}: "
         f"{sorted(KNOWN_LABELS)}. Adding one requires naming its writer and its "
         f"reader, not just its purpose."
     )
@@ -288,7 +288,8 @@ def test_missing_required_property_is_rejected():
     result = validate("Transition", {"id": "t1", "source_episode_id": "e1", "name": "t1"})
     assert not result.valid
     missing = " ".join(result.errors)
-    for prop in ("trigger", "guard_expression", "implementation_status", "surface"):
+    for prop in ("c_trigger", "b_guard_expression", "b_implementation_status",
+                 "b_surface"):
         assert prop in missing, f"{prop} should be reported missing"
 
 
@@ -301,11 +302,12 @@ def test_empty_string_counts_as_missing():
 
 def test_enum_membership_is_enforced_by_the_gate_not_the_schema():
     """Spec ONT-012: the schema guarantees presence, this gate guarantees membership."""
-    base = {"id": "t1", "source_episode_id": "e1", "name": "t1", "trigger": "click",
-            "guard_expression": "", "implementation_status": "implemented"}
-    assert validate("Transition", {**base, "surface": "api"}).valid
-    bad = validate("Transition", {**base, "surface": "cli"})
-    assert not bad.valid and "surface" in bad.errors[0]
+    base = {"id": "t1", "source_episode_id": "e1", "name": "t1", "c_trigger": "click",
+            "b_guard_expression": "", "b_implementation_status": "implemented",
+            "model_id": "m"}
+    assert validate("Transition", {**base, "b_surface": "api"}).valid
+    bad = validate("Transition", {**base, "b_surface": "cli"})
+    assert not bad.valid and "b_surface" in bad.errors[0]
 
 
 def test_episode_is_exempt_from_source_episode_id():
@@ -378,16 +380,17 @@ def test_a_specialisation_narrows_its_parent_and_inherits_the_rest():
     """`:ApiCall` rides alongside `:Transition`, never instead of it — which is
     what lets the graph name the two surfaces while the engine keeps one
     traversal and therefore one definition of a flow."""
-    base = {"id": "t", "source_episode_id": "e", "name": "n", "trigger": "GET /x",
-            "guard_expression": "", "implementation_status": "implemented"}
-    assert validate("ApiCall", {**base, "surface": "api"}).valid
-    assert validate("UiAction", {**base, "surface": "ui"}).valid
+    base = {"id": "t", "source_episode_id": "e", "name": "n", "c_trigger": "GET /x",
+            "b_guard_expression": "", "b_implementation_status": "implemented",
+            "model_id": "m"}
+    assert validate("ApiCall", {**base, "b_surface": "api"}).valid
+    assert validate("UiAction", {**base, "b_surface": "ui"}).valid
     # The narrowing is real.
-    assert not validate("ApiCall", {**base, "surface": "ui"}).valid
+    assert not validate("ApiCall", {**base, "b_surface": "ui"}).valid
     # And the inheritance is real: an unguarded transition is normal, and
     # forgetting to inherit `may_be_empty` would reject every one of them.
     assert LABELS["ApiCall"].specialises == "Transition"
-    assert "guard_expression" in LABELS["ApiCall"].all_may_be_empty
+    assert "b_guard_expression" in LABELS["ApiCall"].all_may_be_empty
 
 
 # --------------------------------------------------------------------------

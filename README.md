@@ -45,23 +45,12 @@ docs/                            the spec, the guide, the academy, and history
 ├── guide/                       GENERATED from labels.py, intakes.json,
 │                                stages.py and the CLI parser. `metis guide
 │                                --check` fails on a diff, so it cannot drift
-├── academy/                     AUTHORED reasoning — labelled as such because
-│                                it is not checkable the way the guide is
-└── historical/                  superseded, kept for its reasoning.
-    │                            every directory has a README saying what is stale
-    ├── design-notes-v1/         the 15 v1 design notes (Amendments 1–5 and friends)
-    ├── metis-specification-v1.md            the v1 platform spec
-    ├── metis-ontology-specification-v1.md   the v1 ontology
-    ├── migration-plan-v1-to-v2.md           the rebuild plan; completed at 61814dc
-    ├── mcp-contracts-v1/        contracts for 18 tools that no longer exist
-    ├── schema-v1/               hand-written Cypher (now generated)
-    ├── academy/                 v1 explainers + the site built from them
-    ├── atlas-test-design-port/  the unwired Atlas test-design skill
-    └── PLAN-v1.md               the v1 build plan
+└── academy/                     AUTHORED reasoning — labelled as such because
+                                 it is not checkable the way the guide is
 
 metis-server/                    the engine. Python, no framework.
 ├── metis_mcp/
-│   ├── ontology/                THE ontology: 64 labels + the relationship
+│   ├── ontology/                THE ontology: 65 labels + the relationship
 │   │                            catalogue. The Cypher schema is GENERATED from
 │   │                            labels.py, so the two cannot drift.
 │   ├── mbt/                     model-based testing: criteria, path generation,
@@ -96,7 +85,7 @@ metis-server/                    the engine. Python, no framework.
 ├── code_analysis/               Joern query packs → normalised contract →
 │                                synthesis. No engine type reaches the graph.
 ├── schema/                      GENERATED Cypher (Community only — C1)
-└── test_*.py                    78 test files, 1,702 tests, no Neo4j required.
+└── test_*.py                    83 test files, 1,897 tests, no Neo4j required.
                                  Joern is needed for five of them (see CLAUDE.md)
 
 .mcp.json                        registers the MCP server for this repo — stdio,

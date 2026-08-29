@@ -185,6 +185,39 @@ def sections_of(text: str) -> list[tuple[str, str]]:
     return out
 
 
+class SystemNotDeclared(LessonsRefused):
+    """The corpus does not say which system it documents."""
+
+
+def system_of(directory: str | Path) -> str:
+    """The system this corpus documents, from its index's own frontmatter.
+
+    **Named after the SYSTEM, not the folder.** An academy is about something,
+    and the root of its topic tree should say what — `topic:metis`, not
+    `topic:academy`. Two corpora in folders both called `academy` document
+    different systems and must not merge into one root; the same corpus moved to
+    a different folder must not split into two.
+
+    Declared in `README.md` as `system: <name>`, and REFUSED when absent. An
+    earlier version took the directory name, which is a guess wearing a fact's
+    clothing: it is real information about where the files sit and no
+    information at all about what they are about. The same rule `topics_of`
+    follows — authored, never inferred — applies here, and this is the more
+    important place for it, because every document in the corpus hangs off it.
+    """
+    index = Path(directory) / "README.md"
+    if index.is_file():
+        fields, _ = parse_frontmatter(index.read_text())
+        declared = (fields.get("system") or "").strip().lower()
+        if declared:
+            return declared
+    raise SystemNotDeclared(
+        f"{Path(directory)}/README.md does not declare `system: <name>` in its "
+        f"frontmatter. The root of the topic tree is named after the system the "
+        f"corpus documents, and naming it after the folder would be a guess — "
+        f"two academies about different systems would then share one root.")
+
+
 def plan_lessons(directory: str | Path, *, job_id: str = "manual",
                  proposed_by: str = "academy",
                  t_recorded: str | None = None):
@@ -205,6 +238,13 @@ def plan_lessons(directory: str | Path, *, job_id: str = "manual",
             return False
         plan.nodes.append(PlannedNode(label=label, properties=props))
         return True
+
+    # The root of this collection. Created once, before any lesson, so the
+    # topics below have something to attach to whatever order they arrive in.
+    corpus = system_of(directory)
+    corpus_topic_id = f"topic:{corpus}"
+    add_node("Topic", {"id": corpus_topic_id, "name": corpus,
+                       "source_episode_id": episode_id})
 
     add_node("Episode", {
         "id": episode_id,
@@ -233,6 +273,13 @@ def plan_lessons(directory: str | Path, *, job_id: str = "manual",
         # same ground point at the SAME node and "what else covers this" is a
         # traversal rather than a second search. `add_node` is a MERGE by id, so
         # the eighth lesson declaring `practice` reuses the node the fifth made.
+        #
+        # Each of those then sits under the CORPUS topic (`topic:academy`), so
+        # the collection has a root: "what is in the academy" is one hop, and a
+        # second corpus landed later does not mix into it. A lesson still points
+        # only at its own subjects — it reaches the root through them, which is
+        # what keeps `related_by_topic` on a lesson from returning every document
+        # in the corpus.
         for topic in lesson["topics"]:
             # The episode is whichever landing run first created it. A shared
             # node cannot carry one provenance per document pointing at it, and
@@ -243,6 +290,11 @@ def plan_lessons(directory: str | Path, *, job_id: str = "manual",
                     from_label="Lesson", from_id=lesson_id(lesson["path"]),
                     rel_type="BELONGS_TO",
                     to_label="Topic", to_id=f"topic:{topic}"))
+                if topic != corpus:
+                    plan.edges.append(PlannedEdge(
+                        from_label="Topic", from_id=f"topic:{topic}",
+                        rel_type="BELONGS_TO",
+                        to_label="Topic", to_id=corpus_topic_id))
 
         # One Passage per `##` section, each carrying its own vector.
         #

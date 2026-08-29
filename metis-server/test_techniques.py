@@ -9,6 +9,7 @@ import sys
 
 from metis_mcp.mbt.model import IMPLEMENTED, PLANNED, Model, State, Transition
 from metis_mcp.mbt.techniques import (
+    analyse_constraints,
     ABOVE,
     AT,
     BELOW,
@@ -250,3 +251,91 @@ if __name__ == "__main__":
             print(f"ERROR {t.__name__}: {type(e).__name__}: {e}")
     print(f"\n{len(tests) - failures}/{len(tests)} passed")
     sys.exit(1 if failures else 0)
+
+
+# --------------------------------------------------------------------------
+# Declared constraints (GD-3)
+# --------------------------------------------------------------------------
+#
+# `analyse_guard` reads what the code EVALUATES. These read what it DECLARES —
+# `@Size(max=64)` on a payload field — and they are why 164 constrained fields
+# stay test data rather than becoming 164 transitions. The same M-9 rule governs
+# both: a condition on the data, never the data.
+
+def test_a_size_constraint_yields_the_three_point_boundary_set():
+    result = analyse_constraints(["@Size(max=64)"])
+    assert [b.condition for b in result.boundaries] == [
+        "length = 63", "length = 64", "length = 65"]
+
+
+def test_a_two_ended_size_constraint_bounds_both_ends():
+    """`@Size(min=3, max=40)` has two boundaries, and off-by-one lives at each."""
+    result = analyse_constraints(["@Size(min=3, max=40)"])
+    assert [b.condition for b in result.boundaries] == [
+        "length = 2", "length = 3", "length = 4",
+        "length = 39", "length = 40", "length = 41"]
+
+
+def test_a_presence_assertion_gets_no_boundary():
+    """**The refusal that matters.** `@NotNull` has no third point — "one less
+    than null" is not a value, and claiming a boundary would be the invention
+    M-9 forbids. It partitions two ways and says why."""
+    result = analyse_constraints(["@NotNull"])
+    assert not result.boundaries
+    assert {p.condition for p in result.partitions} == {
+        "satisfies @NotNull", "violates @NotNull"}
+    assert any("no orderable domain" in why for _, why in result.unanalysable)
+
+
+def test_a_shape_assertion_gets_no_boundary_either():
+    result = analyse_constraints(['@Pattern(regexp="[a-z]+")'])
+    assert not result.boundaries
+    assert any("no boundary" in why for _, why in result.unanalysable)
+
+
+def test_an_unknown_annotation_is_reported_not_skipped():
+    """M-17: silence would let a criterion quietly shrink its own requirements."""
+    result = analyse_constraints(["@SomethingNobodyHasSeen"])
+    assert not result.boundaries
+    assert result.unanalysable
+    assert result.partitions, "an unknown constraint still partitions two ways"
+
+
+def test_a_constraint_carrying_a_message_is_still_analysed():
+    """Real annotations carry messages: `@NotNull(message = "required")` is what
+    the pilot corpus actually holds."""
+    result = analyse_constraints(['@NotNull(message = "required")'])
+    assert {p.condition for p in result.partitions} == {
+        "satisfies @NotNull", "violates @NotNull"}
+
+
+def test_no_constraint_output_names_a_value_outside_its_own_vocabulary():
+    """The same assertion the guard techniques carry: everything emitted is a
+    condition derived from the constraint's own numbers."""
+    for text in ("@Size(max=64)", "@Min(18)", "@NotNull", "@Email"):
+        result = analyse_constraints([text])
+        for boundary in result.boundaries:
+            assert boundary.source_guard == text
+            assert str(int(boundary.value)) in boundary.condition
+
+
+def test_the_constraints_reach_boundary_coverage_as_targets():
+    """The whole point: a constraint becomes CASES without adding a model
+    element (P-1a). It was landed, loaded, and consumed by nothing."""
+    from metis_mcp.mbt.criteria import targets_for
+    from metis_mcp.mbt.model import APPROVED, Model, State, Transition
+
+    model = Model(
+        id="m-api",
+        states={"A": State(id="A", name="A", surface="api", is_initial=True,
+                           lifecycle_state=APPROVED),
+                "B": State(id="B", name="Rejected", surface="api",
+                           lifecycle_state=APPROVED)},
+        transitions={"t1": Transition(
+            id="t1", source="A", target="B", trigger="POST /r",
+            guard="NOT (payload_valid)", lifecycle_state=APPROVED,
+            data_requirements=("@Size(max=64)",))})
+
+    notes = [t.data_note for t in targets_for(model, "boundary-coverage").targets]
+    assert any("length = 65" in n for n in notes), notes
+    assert any("@Size(max=64)" in n for n in notes)

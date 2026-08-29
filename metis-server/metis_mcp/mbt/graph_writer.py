@@ -328,15 +328,15 @@ def persist(session, plan: PersistPlan) -> PersistResult:
 
 COVERED_TRANSITIONS_CYPHER = """
 MATCH (p:Scenario)-[c:COVERS {is_validated: true}]->(t:Transition|ApiCall|UiAction)
-WHERE $journey IN t.functional_areas AND t.surface = $surface
+WHERE $journey IN t.functional_areas AND t.b_surface = $surface
 RETURN t.id AS transition, collect(DISTINCT p.id) AS paths
 ORDER BY transition
 """
 
 UNCOVERED_TRANSITIONS_CYPHER = """
 MATCH (t:Transition|ApiCall|UiAction)
-WHERE $journey IN t.functional_areas AND t.surface = $surface
-  AND t.implementation_status = 'implemented'
+WHERE $journey IN t.functional_areas AND t.b_surface = $surface
+  AND t.b_implementation_status = 'implemented'
   AND NOT (:Scenario)-[:COVERS {is_validated: true}]->(t)
 RETURN t.id AS transition, t.lifecycle_state AS lifecycle
 ORDER BY transition
@@ -345,7 +345,7 @@ ORDER BY transition
 TRANSITIONS_WITHOUT_AC_CYPHER = """
 MATCH (t:Transition|ApiCall|UiAction)
 WHERE $journey IN t.functional_areas
-  AND t.implementation_status = 'implemented'
+  AND t.b_implementation_status = 'implemented'
   AND NOT (:AcceptanceCriterion)-[:VALIDATES]->(t)
 RETURN t.id AS transition
 ORDER BY transition

@@ -23,7 +23,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from metis_mcp.mbt.model import QUARANTINE, Model, State, Transition
+from metis_mcp.mbt.model import (
+    QUARANTINE, Model, State, Transition, state_from_dict, transition_from_dict,
+)
 from metis_mcp.model_sources.base import (
     AC_MINED,
     DECLARED_CONTRACT,
@@ -54,12 +56,7 @@ class HumanAuthoredSource(ModelSource):
         states = {}
         skipped: list[tuple[str, str]] = []
         for entry in data.get("states", []):
-            states[entry["id"]] = State(
-                id=entry["id"], name=entry.get("name", entry["id"]),
-                surface=entry.get("surface", "api"),
-                is_initial=bool(entry.get("is_initial", False)),
-                lifecycle_state=QUARANTINE,
-            )
+            states[entry["id"]] = state_from_dict(entry, lifecycle_state=QUARANTINE)
 
         transitions = {}
         for entry in data.get("transitions", []):
@@ -68,17 +65,13 @@ class HumanAuthoredSource(ModelSource):
                 # modelling defect and shrinking the model would hide it.
                 skipped.append((entry["id"], "source or target state not in this model"))
                 continue
-            transitions[entry["id"]] = Transition(
-                id=entry["id"], source=entry["source"], trigger=entry["trigger"],
-                target=entry["target"], guard=entry.get("guard", ""),
-                implementation_status=entry.get("implementation_status", "implemented"),
-                lifecycle_state=QUARANTINE,
-                outcome_status=entry.get("outcome_status"),
-                guard_anchor=entry.get("guard_anchor", ""),
-                source_state_unresolved=bool(entry.get("source_state_unresolved", False)),
-                inputs=tuple(entry.get("inputs", ()) or ()),
-                security=tuple(entry.get("security", ()) or ()),
-            )
+            # The shared codec, not a second field list. This one dropped
+            # `evidence`, so `landing.plan_landing`'s `EVIDENCE_RELATIONSHIPS`
+            # loop iterated an empty tuple and `metis land` on a model file wrote
+            # no DERIVED_FROM, EXERCISES or EXPECTS edge at all — while the file
+            # carried the evidence ids the whole time.
+            transitions[entry["id"]] = transition_from_dict(
+                entry, lifecycle_state=QUARANTINE)
 
         return SourceResult(
             model=Model(id=data["id"], states=states, transitions=transitions),

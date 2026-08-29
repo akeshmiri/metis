@@ -24,7 +24,10 @@ from pathlib import Path as FsPath
 from metis_mcp.guide import GuideRefused
 from metis_mcp.mbt.coverage import ComponentRef, build_ledger, format_report
 from metis_mcp.mbt.criteria import DEFAULT_CRITERION, criterion_names
-from metis_mcp.mbt.model import QUARANTINE, Model, State, Transition
+from metis_mcp.mbt.model import (
+    QUARANTINE, Model, State, Transition, state_from_dict, state_to_dict,
+    transition_from_dict, transition_to_dict,
+)
 from metis_mcp.mbt.path_generation import DEFAULT_SETUP_CAP, generate
 from metis_mcp.mbt.test_levels import (
     format_grades, from_pack as inventory_from_pack, grade_transitions,
@@ -87,33 +90,17 @@ def read_source(path: str) -> Model:
                           "implementation_status": "implemented"}]}
     """
     data = json.loads(FsPath(path).read_text())
+    # One codec, not a field list kept here. This was eleven fields named by
+    # hand, and every field it did not name was dropped: `response_body` gone
+    # turned "no body" into a false assertion, `condition` gone left a UI case
+    # with nothing to check. `mbt.model` carries every declared field.
+    #
     # Lifecycle is NOT read from the source: it is a human fact and lives in the
-    # review-state file. Everything a source emits starts at Quarantine (spec S-4).
-    states = {
-        s["id"]: State(
-            id=s["id"], name=s.get("name", s["id"]),
-            surface=s.get("surface", "api"), is_initial=bool(s.get("is_initial", False)),
-            lifecycle_state=QUARANTINE,
-        )
-        for s in data["states"]
-    }
-    transitions = {
-        t["id"]: Transition(
-            id=t["id"], source=t["source"], trigger=t["trigger"], target=t["target"],
-            guard=t.get("guard", ""),
-            implementation_status=t.get("implementation_status", "implemented"),
-            lifecycle_state=QUARANTINE,
-            # Carried across the file boundary. Dropping unknown keys here meant
-            # a model written by extraction and read back lost everything the
-            # pack had recovered about what a caller must send.
-            outcome_status=t.get("outcome_status"),
-            guard_anchor=t.get("guard_anchor", ""),
-            source_state_unresolved=bool(t.get("source_state_unresolved", False)),
-            inputs=tuple(t.get("inputs", ()) or ()),
-            security=tuple(t.get("security", ()) or ()),
-        )
-        for t in data["transitions"]
-    }
+    # review-state file. Everything a source emits starts at Quarantine (S-4).
+    states = {s["id"]: state_from_dict(s, lifecycle_state=QUARANTINE)
+              for s in data["states"]}
+    transitions = {t["id"]: transition_from_dict(t, lifecycle_state=QUARANTINE)
+                   for t in data["transitions"]}
     return Model(id=data["id"], states=states, transitions=transitions)
 
 
@@ -660,14 +647,14 @@ def cmd_ac_mine(args) -> int:
     if result.model is None:
         return 1
     if args.out:
+        # The codec, so what is written is what `read_source` reads back. This
+        # was a fourth hand-maintained field list, and the narrowest of them:
+        # a mined model written here and read back lost everything the six
+        # named fields did not cover.
         FsPath(args.out).write_text(json.dumps({
             "id": result.model.id,
-            "states": [{"id": s.id, "name": s.name, "surface": s.surface,
-                        "is_initial": s.is_initial}
-                       for s in result.model.states.values()],
-            "transitions": [{"id": t.id, "source": t.source, "trigger": t.trigger,
-                             "target": t.target, "guard": t.guard,
-                             "implementation_status": t.implementation_status}
+            "states": [state_to_dict(s) for s in result.model.states.values()],
+            "transitions": [transition_to_dict(t)
                             for t in result.model.transitions.values()],
         }, indent=2))
         print(f"\nWrote {args.out} — everything at Quarantine (S-4).")
@@ -831,6 +818,20 @@ def cmd_analyse(args) -> int:
         if not hasattr(args, name):
             setattr(args, name, value)
     return _run_workflow(args, resume=False)
+
+
+def cmd_properties(args) -> int:
+    """What each property of a node is for — the call, or the behaviour.
+
+    A node carries 25 properties in one flat table and nothing says which
+    describe how to issue the request and which describe the state machine.
+    """
+    from metis_mcp.rendering.contract import describe_concerns
+
+    element = ("State" if (getattr(args, "element", "") or "").lower() == "state"
+               else "Transition")
+    print(describe_concerns(element))
+    return 0
 
 
 def cmd_frameworks(args) -> int:
@@ -999,10 +1000,130 @@ def cmd_report(args) -> int:
     return 0
 
 
-def cmd_payload(args) -> int:
+def cmd_generate(args) -> int:
+    """Automation artefacts from an approved model, for a declared runner.
+
+    The gates in front of this are the same ones `payload` passes: G1 (the model
+    is approved) and M-18 (it is well-formed). Generating from an unreviewed or
+    ambiguous model would produce confidently wrong tests, which is the whole
+    reason those gates exist.
+
+    `--list` prints what can be generated and what is deliberately refused.
+    """
+    from metis_mcp.rendering.fixtures import EMPTY, FixturesInvalid, load_file
+    from metis_mcp.rendering.generators import (
+        TargetUnsupported, declared_for, describe, emit_files, get, select_for,
+        surface_of)
+    from metis_mcp.rendering.payload import resolve_payload
+
+    if getattr(args, "list", False):
+        print(describe())
+        return 0
+
+    try:
+        spec = get(args.target)
+    except TargetUnsupported as e:
+        print(f"REFUSED: {e}")
+        return 1
+
+    fixtures = EMPTY
+    if getattr(args, "fixtures", ""):
+        try:
+            fixtures = load_file(args.fixtures)
+        except FixturesInvalid as e:
+            print(f"REFUSED: {e}")
+            return 1
+
     model, result = _generate(args)
     rendered = render(model, result.paths)
-    print(json.dumps([build_payload(model, c) for c in rendered.cases], indent=2))
+    resolved = [resolve_payload(build_payload(model, c), fixtures)
+                for c in rendered.cases]
+
+    # A target generates for ONE surface. Emitting a browser test from an API
+    # case produced a file whose every step was a TODO -- which reads as a
+    # modelling gap and is a target mismatch, the harder of the two to diagnose
+    # from the artefact.
+    cases, skipped = select_for(spec, resolved)
+    if not cases:
+        present = sorted({surface_of(d) for d in resolved} - {""})
+        suggestion = ", ".join(sorted(
+            g.name for surface in present for g in declared_for(surface)))
+        print(f"REFUSED: {spec.name} generates {spec.surface} tests and none of "
+              f"the {len(resolved)} case(s) are {spec.surface}"
+              + (f" (they are: {', '.join(present)})" if present else "")
+              + (f". For this model: {suggestion}" if suggestion else ""))
+        return 1
+
+    # The emitter names its own files: in Java the filename IS a declaration, so
+    # a caller that invented one wrote source `javac` rejects on the first line.
+    files = emit_files(spec.name, cases)
+
+    out_dir = FsPath(args.out) if getattr(args, "out", "") else None
+    if out_dir:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for filename, text in sorted(files.items()):
+            (out_dir / filename).write_text(text)
+        print(f"{len(files)} {spec.name} file(s) -> {out_dir}")
+    else:
+        for _, text in sorted(files.items()):
+            print(text)
+
+    # Reported, and reported as a COUNT of what a human still has to supply --
+    # the artefacts are not finished work and saying so is the point.
+    if skipped:
+        print(f"{len(skipped)} case(s) skipped: not {spec.surface}", file=sys.stderr)
+    still = sorted({f for d in cases for f in d["unresolved"]})
+    if still:
+        print(f"{len(still)} field(s) are TODO in the output, not guessed: "
+              f"{still[:3]}", file=sys.stderr)
+    return 0
+
+
+def cmd_payload(args) -> int:
+    """The automation payload, optionally resolved against authored fixtures.
+
+    Without `--fixtures` this is unchanged: what the model recovered, with what
+    it could not recover marked. With them, each payload is joined to the
+    selectors and values a person supplied, and the result says which fields the
+    fixtures filled and which are still unrecovered — so a reader can tell a
+    fact extracted from source from a value somebody chose.
+    """
+    from metis_mcp.rendering.fixtures import FixturesInvalid, load_file
+    from metis_mcp.rendering.payload import resolve_payload
+
+    model, result = _generate(args)
+    rendered = render(model, result.paths)
+    payloads = [build_payload(model, c) for c in rendered.cases]
+
+    if not getattr(args, "fixtures", ""):
+        print(json.dumps(payloads, indent=2))
+        return 0
+
+    try:
+        fixtures = load_file(args.fixtures)
+    except FixturesInvalid as e:
+        print(f"REFUSED: {e}")
+        return 1
+
+    resolved = [resolve_payload(p, fixtures) for p in payloads]
+    print(json.dumps(resolved, indent=2))
+
+    # Reported on stderr so the document on stdout stays pipeable, and reported
+    # at all because a fixture that matched nothing is the shape of a rename.
+    still = sorted({f for r in resolved for f in r["unresolved"]})
+    # INTERSECTION, not union. `unused` is per case, and a fixture that filled a
+    # field in case 0 is legitimately unused in case 5 — unioning them reported
+    # a fixture as matching nothing while the document above showed it applied.
+    # "Matched nothing" has to mean nothing ANYWHERE, or the warning is noise
+    # that trains a reader to ignore it.
+    unused_sets = [set(r["unused"]) for r in resolved]
+    unused = sorted(set.intersection(*unused_sets)) if unused_sets else []
+    if still:
+        print(f"{len(still)} field(s) still unrecovered, e.g. {still[:3]}",
+              file=sys.stderr)
+    if unused:
+        print(f"{len(unused)} fixture(s) matched nothing: {unused[:5]} — a "
+              f"renamed element or a typo", file=sys.stderr)
     return 0
 
 
@@ -1223,7 +1344,7 @@ def _promote_tier_one(args, model) -> tuple[int, int, int]:
             transitions += 1
 
         for element_id, proposed in sorted(state_names.items()):
-            s.run("MATCH (n:State {id:$i}) SET n.name=$n, n.name_tier=$tier",
+            s.run("MATCH (n:State {id:$i}) SET n.name=$n, n.x_name_tier=$tier",
                   i=element_id, n=proposed, tier=TIER_AC_VOCABULARY)
             states += 1
 
@@ -2885,6 +3006,7 @@ def main(argv: list[str] | None = None) -> int:
         ("render", cmd_render, "render paths as test cases"),
         ("report", cmd_report, "coverage report"),
         ("payload", cmd_payload, "machine-readable automation payload"),
+        ("generate", cmd_generate, "automation artefacts for a declared runner"),
     ):
         p = sub.add_parser(name, help=help_text)
         p.add_argument("model", nargs="?", help="model JSON file (omit to read the graph)")
@@ -2896,6 +3018,15 @@ def main(argv: list[str] | None = None) -> int:
                        help=f"maximum setup steps (default {DEFAULT_SETUP_CAP})")
         p.add_argument("--state", help="review-state file (default: <model>.review.json)")
         p.add_argument("--overrides", help="override log (default: <model>.overrides.json)")
+        p.add_argument("--fixtures",
+                       help="authored selectors/values (metis.fixtures/1) to "
+                            "resolve unrecovered fields against")
+        if name == "generate":
+            p.add_argument("--target", default="",
+                           help="declared runner; --list to see them")
+            p.add_argument("--out", help="directory to write into (default: stdout)")
+            p.add_argument("--list", action="store_true",
+                           help="what can be generated, and what is refused")
         p.add_argument("--inventory",
                        help="jvm-test-inventory report; skips transitions an "
                             "existing test already covers (REQ-METIS-PG-01)")
@@ -3292,6 +3423,14 @@ def main(argv: list[str] | None = None) -> int:
     analyse_parser.add_argument("--max-setup", type=int, default=DEFAULT_SETUP_CAP)
     add_graph_args(analyse_parser)
     analyse_parser.set_defaults(handler=cmd_analyse)
+
+    properties_parser = sub.add_parser(
+        "properties",
+        help="what each node property is for — the call, or the behaviour")
+    properties_parser.add_argument(
+        "element", nargs="?", default="transition",
+        help="transition (default) or state")
+    properties_parser.set_defaults(handler=cmd_properties)
 
     frameworks_parser = sub.add_parser(
         "frameworks", help="what extraction is declared to support (X-4)")
