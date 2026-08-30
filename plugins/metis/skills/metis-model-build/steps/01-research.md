@@ -7,8 +7,8 @@ scope is the one the user named.
 
 1. **Establish what exists before running anything.**
    ```
-   python3 -m metis_mcp.mbt.cli sources
-   python3 -m metis_mcp.mbt.cli workflow status model-build--<scope>
+   metis sources
+   metis workflow status model-build--<scope>
    ```
    A run may already be halted at G1 — in which case this is a *review* task, and
    `metis-review-assist` is the skill, not this one.

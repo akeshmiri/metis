@@ -271,6 +271,70 @@ _ACADEMY_WORDS = (
 )
 
 
+
+# The words that ROUTE a question here carry no information about which lesson
+# answers it — "Métis" is in all eight — so they are removed before searching.
+# Measured: "what is a state and what is a transition" retrieves `The shape of
+# the model`; prefix it with "in Metis" and the same query retrieves `What Métis
+# does not do`, because the name pulls the embedding toward the lesson that says
+# the name most. The trigger and the query are different jobs done by one string.
+_TRIGGER_NOISE = ("metis", "métis", "academy", "lesson")
+
+# The routes that cannot answer without a journey — and it is only one. This
+# looks like it should be all three and is not: `auth_facts` and `call_recipe`
+# take a `journey` and then query the whole graph without binding it, so they
+# return the same thing with or without one. `journey_walkthrough` is the
+# exception. Its Cypher filters on `$j`, so with no journey it matches nothing
+# and reports `no transitions for journey ''`.
+_NEEDS_JOURNEY = frozenset({"journey_walkthrough"})
+
+
+def _for_search(question: str) -> str:
+    """The question with its routing words removed, or unchanged if that empties it."""
+    import re
+
+    stripped = re.sub(r"\b(" + "|".join(_TRIGGER_NOISE) + r")\b", " ",
+                      question, flags=re.IGNORECASE)
+    stripped = re.sub(r"\s+", " ", stripped).strip(" ,.?!")
+    return stripped or question
+
+
+def _academy_hits(session, question: str, limit: int = 5) -> list[dict]:
+    """Lesson hits, semantic where the deployment configured a provider.
+
+    **`ask` searched keywords only, whatever was embedded.** A corpus with
+    vectors and a caller that never used them is the whole cost of semantic
+    search and none of the benefit — measured on the academy's own benchmark,
+    keyword ranks 23 of 36 questions first and hybrid ranks 29.
+
+    Keyword remains the answer when no provider is configured. That is the
+    default install, and it is not a degradation to be hidden: `answered_by`
+    below says which ran.
+    """
+    from metis_mcp.mbt.graph_loader import hybrid_search, search_knowledge
+    from metis_mcp.retrieval import RetrievalRefused, configured_provider
+
+    try:
+        provider = configured_provider()
+    except RetrievalRefused:
+        # A misconfigured provider is the deployment's problem to see, but it
+        # must not make `ask` unusable — keyword still answers.
+        provider = None
+
+    if provider is not None:
+        try:
+            hits = [h.__dict__ if hasattr(h, "__dict__") else dict(h)
+                    for h in hybrid_search(session, _for_search(question),
+                                           provider=provider, limit=limit)]
+            return [h for h in hits if h.get("label") == "Lesson"]
+        except RetrievalRefused:
+            # A corpus embedded with another model. Refusing the whole question
+            # would be worse than answering it the way a default install does.
+            pass
+    return [h for h in search_knowledge(session, _for_search(question), limit=limit)
+            if h.get("label") == "Lesson"]
+
+
 def _ask_academy(question: str):
     """The academy's answer to a question about Métis itself, or `None`.
 
@@ -297,8 +361,7 @@ def _ask_academy(question: str):
 
     try:
         with session() as s:
-            hits = [h for h in search_knowledge(s, question, limit=5)
-                    if h.get("label") == "Lesson"]
+            hits = _academy_hits(s, question)
             if not hits:
                 return None
             best = hits[0]
@@ -334,6 +397,31 @@ def _ask_academy(question: str):
     }
 
 
+def _academy_suggestion(question: str) -> dict | None:
+    """The academy's best guess, as a SUGGESTION and never as an answer.
+
+    Carries no body — a title and an id, so a reader can decide whether to read
+    it. Handing back prose here would be answering, which is the thing the
+    routing could not justify.
+    """
+    from metis_mcp.mbt.graph_session import GraphNotConfigured, session
+
+    try:
+        with session() as s:
+            hits = _academy_hits(s, question, limit=1)
+    except (GraphNotConfigured, Exception):        # noqa: BLE001 - a suggestion
+        return None                                # is never worth an error
+    if not hits:
+        return None
+    return {
+        "lesson": hits[0]["id"],
+        "title": hits[0].get("name", ""),
+        "note": "not an answer — the academy is about Métis itself, and nothing "
+                "checked that this question is. Ask again naming Métis to have it "
+                "answered from there.",
+    }
+
+
 def ask(question: str, journey: str = "") -> dict:
     """Route a question to the tools above and return what they said.
 
@@ -362,25 +450,67 @@ def ask(question: str, journey: str = "") -> dict:
                       "journey_walkthrough"],
         }
 
-    for words, tool in _ROUTES:
-        if any(w in text for w in words):
-            answer = {"auth_facts": lambda: auth_facts(journey),
-                      "call_recipe": lambda: call_recipe(journey),
-                      "journey_walkthrough": lambda: journey_walkthrough(journey),
-                      }[tool]()
-            return {
-                "ok": answer.get("ok", False),
-                "question": question,
-                "answered_by": tool,
-                "answer": answer,
-                "rule": ("everything above came from the graph. Any sentence you "
-                         "add that is not in it is not something Métis recovered"),
-            }
+    routed = next((tool for words, tool in _ROUTES
+                   if any(w in text for w in words)), None)
+
+    # **A route that cannot run is not the more specific answer.**
+    #
+    # The academy is checked after the product routes, on the argument that a
+    # question naming both a product noun and Métis wants the product tool. That
+    # argument assumes the product tool can answer. Asked "what is Métis and how
+    # does it decide what to test", `ask` matched *how does*, called
+    # `journey_walkthrough('')` and returned `no transitions for journey ''` — a
+    # question the academy answers in full, refused by a tool that was never
+    # given the one argument it needs. The corpus was landed, indexed, reachable
+    # through `search_knowledge`, and still lost to a keyword.
+    #
+    # Narrow on purpose. It fires only where the route NEEDS a journey, none was
+    # given, and the question names this system. A product route with a journey
+    # still wins, and a question with no academy word still gets the product
+    # tool's own failure rather than a lesson: `_ask_academy` returning `None`
+    # falls through to exactly the behaviour that was there before.
+    if (routed in _NEEDS_JOURNEY and not journey
+            and any(w in text for w in _ACADEMY_WORDS)):
+        academy = _ask_academy(question)
+        if academy is not None:
+            return academy
+
+    if routed is not None:
+        answer = {"auth_facts": lambda: auth_facts(journey),
+                  "call_recipe": lambda: call_recipe(journey),
+                  "journey_walkthrough": lambda: journey_walkthrough(journey),
+                  }[routed]()
+        return {
+            "ok": answer.get("ok", False),
+            "question": question,
+            "answered_by": routed,
+            "answer": answer,
+            "rule": ("everything above came from the graph. Any sentence you "
+                     "add that is not in it is not something Métis recovered"),
+        }
+
     if any(w in text for w in _ACADEMY_WORDS):
         academy = _ask_academy(question)
         if academy is not None:
             return academy
 
+    # **Unroutable, and the academy is offered rather than hidden.**
+    #
+    # Deciding "is this a question about Métis?" from the text alone was measured
+    # three ways and none of them holds. The hand-listed vocabulary above routes
+    # 8 of the academy's own 36 benchmark questions. Widening it to the ontology's
+    # nouns routes 19 and wrongly routes "how do I reset my router" (`Route`).
+    # A relevance floor fails differently: "what time does the shop close" scores
+    # 6.70 against `Time: what was true, and when` — above 20 real questions —
+    # and semantic similarity narrows that overlap without closing it (academy
+    # min 0.343, off-topic max 0.403).
+    #
+    # So this does not classify. It says plainly that no tool answered, and names
+    # what the academy would have offered — a suggestion a reader can take or
+    # ignore, with no claim attached. Silence was the worse failure: the corpus
+    # was landed, indexed, and invisible to anyone who did not already know to
+    # say "Métis".
+    suggestion = _academy_suggestion(question)
     return {
         "ok": False,
         "question": question,
@@ -389,4 +519,5 @@ def ask(question: str, journey: str = "") -> dict:
                   "states — it cannot answer from anything but the graph",
         "tools": ["call_recipe", "auth_facts", "payload_shape",
                   "journey_walkthrough"],
+        **({"academy_may_cover": suggestion} if suggestion else {}),
     }

@@ -15,12 +15,12 @@ extract → ac-draft → land → validate → reconcile → G1 (halt)
 ## Commands
 
 ```
-python3 -m metis_mcp.mbt.cli workflow list
-python3 -m metis_mcp.mbt.cli workflow run model-build --scope <scope> \
+metis workflow list
+metis workflow run model-build --scope <scope> \
     <behaviour-report.json> --endpoints <structural-report.json> --service <svc> \
     --journey <j> --surface api --source code
-python3 -m metis_mcp.mbt.cli workflow status model-build--<scope>
-python3 -m metis_mcp.mbt.cli workflow resume model-build --scope <scope> \
+metis workflow status model-build--<scope>
+metis workflow resume model-build --scope <scope> \
     --journey <j> --surface <s>
 ```
 

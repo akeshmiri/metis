@@ -51,9 +51,9 @@ through the CLI, where the gates are.
 The workflows below run through the CLI, not through a tool call:
 
 ```
-python3 -m metis_mcp.mbt.cli workflow list
-python3 -m metis_mcp.mbt.cli workflow run <workflow> --scope <scope> ...
-python3 -m metis_mcp.mbt.cli workflow status <workflow>--<scope>
+metis workflow list
+metis workflow run <workflow> --scope <scope> ...
+metis workflow status <workflow>--<scope>
 ```
 
 - **`model-build`** — Recover behaviour from code, work out what it should do, and settle that with a human before anything is generated from it. Halts at **model-approval** for a human.

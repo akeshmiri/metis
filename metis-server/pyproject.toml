@@ -43,6 +43,15 @@ test = [
     "pytest>=8.0",
     "PyYAML",          # pack.yaml manifests are validated, not text-scanned
 ]
+# **Semantic search, and only if you ask for it.** `retrieval.EmbeddingProvider`
+# is a Protocol precisely so a default install loads no model; this extra is the
+# supported way to get one rather than an argument against that. `model2vec`
+# distils a sentence transformer into a lookup table — tens of megabytes, no
+# torch, no API key, and deterministic, which `retrieval-bench` needs to measure
+# anything. A deployment wanting a stronger model names its own provider.
+embeddings = [
+    "model2vec>=0.3",
+]
 # **Joern and a JDK are also required and are not installable from here.**
 # `test_extraction.py` builds real CPGs from `demo_project/` and runs the shipped
 # query packs, which is the only behavioural test those packs have. A missing

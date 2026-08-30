@@ -14,8 +14,8 @@ machine per surface (M-1).
 
 2. **Establish which model it is about.**
    ```
-   python3 -m metis_mcp.mbt.cli workflow list
-   python3 -m metis_mcp.mbt.cli validate --journey <j> --surface <s>
+   metis workflow list
+   metis validate --journey <j> --surface <s>
    ```
    If the statement does not name a scope, **ask**. Do not infer one from a
    word it happens to share with a journey name — `route()` refuses to break a
@@ -24,7 +24,7 @@ machine per surface (M-1).
 
 3. **Read what the model already says about this behaviour.**
    ```
-   python3 -m metis_mcp.mbt.cli reconcile --journey <j> --surface <s>
+   metis reconcile --journey <j> --surface <s>
    ```
    Record the existing transitions whose trigger or target the statement touches,
    with their guards **verbatim**. These are the elements a contradiction will be

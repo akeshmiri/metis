@@ -118,6 +118,18 @@ def _all_transition_pairs(model: Model) -> CriterionResult:
     for t1 in model.generatable_transitions():
         followers = model.outgoing(t1.target)
         if not followers:
+            # **A dropped target says why, like every other criterion here.**
+            # This used to `continue`, and it was the only place in this module
+            # that discarded a target without a reason. On a model whose states
+            # are all terminal -- every recovered API model, where an outcome
+            # state is the end of the call -- that produced NO targets and NO
+            # unsatisfiable rows, and the report read `covered: 0, uncovered: 0`.
+            # Full coverage of nothing and total absence of coverage render
+            # identically, which is the silent success this project hunts for.
+            result.unsatisfiable.append((
+                t1.id,
+                f"terminal: no generatable transition leaves {t1.target} — "
+                f"there is no pair to cover"))
             continue
         for t2 in followers:
             result.targets.append(CoverageTarget(

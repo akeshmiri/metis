@@ -168,3 +168,143 @@ def test_an_unknown_journey_is_reported(graph, monkeypatch):
     monkeypatch.setattr(A, "_rows", lambda *a, **k: [])
     out = A.journey_walkthrough("nope")
     assert out["ok"] is False and "nope" in out["reason"]
+
+
+# --------------------------------------------------------------------------
+# Routing to the academy, and what happens when it cannot be decided
+# --------------------------------------------------------------------------
+
+def test_the_routing_words_are_removed_before_searching():
+    """**The trigger and the query are different jobs done by one string.**
+    "Métis" is what routes a question to the academy and appears in all eight
+    lessons, so it carries no information about WHICH one answers. Measured:
+    "what is a state and what is a transition" retrieves `The shape of the
+    model`; prefix it with "in Metis" and the same query retrieves `What Métis
+    does not do`, because the name pulls toward the lesson that says it most.
+    """
+    from metis_mcp.authoring import _for_search
+
+    assert "metis" not in _for_search("in Metis what is a state").lower()
+    assert "state" in _for_search("in Metis what is a state")
+
+
+def test_stripping_never_empties_the_question():
+    """A question that is ONLY routing words still has to be searched with
+    something — an empty query matches everything, ranked arbitrarily."""
+    from metis_mcp.authoring import _for_search
+
+    assert _for_search("Métis").strip()
+    assert _for_search("academy").strip()
+
+
+def test_an_unroutable_question_offers_the_academy_rather_than_hiding_it():
+    """Deciding "is this about Métis?" from the text was measured three ways and
+    none holds — so `ask` does not classify. It says no tool answered and names
+    what the academy would have offered, with the claim explicitly withheld."""
+    from metis_mcp.authoring import _academy_suggestion
+
+    suggestion = _academy_suggestion("what is a state and what is a transition")
+    if suggestion is None:
+        return                                    # no graph configured here
+    assert suggestion["title"]
+    assert "not an answer" in suggestion["note"]
+    # A suggestion carries no body: handing back prose would be answering.
+    assert "body" not in suggestion
+
+
+def test_a_configured_provider_is_optional_and_absent_by_default(monkeypatch):
+    """`None` is the supported answer. A default install has no provider and
+    every caller falls back to keyword and says so."""
+    from metis_mcp.retrieval import PROVIDER_ENV, configured_provider
+
+    monkeypatch.delenv(PROVIDER_ENV, raising=False)
+    monkeypatch.setattr("metis_mcp.mbt.graph_session._load_config",
+                        lambda: ({}, None))
+    assert configured_provider() is None
+
+
+def test_a_misconfigured_provider_raises_rather_than_degrading(monkeypatch):
+    """Falling back to keyword silently would mean a deployment that configured
+    semantic search got keyword results with no signal."""
+    import pytest
+
+    from metis_mcp.retrieval import PROVIDER_ENV, RetrievalRefused, configured_provider
+
+    monkeypatch.setenv(PROVIDER_ENV, "not_a_dotted_path")
+    with pytest.raises(RetrievalRefused):
+        configured_provider()
+
+
+# --------------------------------------------------------------------------
+# A product route that cannot run does not outrank the academy
+# --------------------------------------------------------------------------
+
+_ACADEMY_SENTINEL = {"ok": True, "answered_by": "academy",
+                     "answer": {"lesson": "lesson:stub"}}
+
+
+@pytest.fixture
+def academy(monkeypatch):
+    """`_ask_academy` without a graph, and a record of whether it was asked."""
+    calls = []
+
+    def fake(question):
+        calls.append(question)
+        return dict(_ACADEMY_SENTINEL)
+
+    monkeypatch.setattr(A, "_ask_academy", fake)
+    return calls
+
+
+def test_a_route_that_needs_a_journey_and_has_none_yields_to_the_academy(
+        graph, academy):
+    """**The bug this pins.** `ask` matched *how does*, called
+    `journey_walkthrough('')` and returned `no transitions for journey ''` — for
+    a question the academy answers in full. A route that was never given the one
+    argument it needs is not the more specific answer; it is the one that cannot
+    answer at all."""
+    out = A.ask("What is Métis and how does it decide what to test?")
+
+    assert out["answered_by"] == "academy"
+    assert academy == ["What is Métis and how does it decide what to test?"]
+
+
+def test_a_product_route_with_a_journey_still_wins(graph, academy):
+    """The ordering rule is unchanged where it was right: a question naming both
+    a product noun and Métis wants the product tool, when that tool can run."""
+    out = A.ask("how does Métis handle this journey", journey="mfa")
+
+    assert out["answered_by"] == "journey_walkthrough"
+    assert academy == [], "the academy must not be consulted when the route runs"
+
+
+def test_a_question_with_no_academy_word_gets_the_tools_own_failure(graph, academy):
+    """Narrow on purpose. Without a word naming this system there is nothing to
+    suggest the academy is the better source, and the tool's own refusal — which
+    names the journey it wanted — is the honest answer."""
+    out = A.ask("explain the flow")
+
+    assert out["answered_by"] == "journey_walkthrough"
+    assert academy == []
+
+
+def test_the_academy_declining_falls_through_to_the_product_route(graph, monkeypatch):
+    """`_ask_academy` returns `None` when nothing matched. That must land on
+    exactly the behaviour that was there before, not on a refusal invented
+    here."""
+    monkeypatch.setattr(A, "_ask_academy", lambda question: None)
+
+    assert A.ask("how does Métis work")["answered_by"] == "journey_walkthrough"
+
+
+def test_only_the_route_that_binds_the_journey_needs_one(graph, academy):
+    """**The asymmetry is real and worth pinning.** `auth_facts` and
+    `call_recipe` take a `journey` and never bind it — they query the whole
+    graph — so they answer the same with or without one and must not yield.
+    `journey_walkthrough` filters on `$j` and is the only member of the set."""
+    from metis_mcp.authoring import _NEEDS_JOURNEY
+
+    assert _NEEDS_JOURNEY == {"journey_walkthrough"}
+    assert A.ask("give me a curl for Métis")["answered_by"] == "call_recipe"
+    assert A.ask("what token does Métis need")["answered_by"] == "auth_facts"
+    assert academy == []

@@ -42,12 +42,12 @@ throughout and are not repeated here.
 All real, all in `metis-server`:
 
 ```
-python3 -m metis_mcp.mbt.cli workflow status <run-id>
-python3 -m metis_mcp.mbt.cli validate  --journey <j> --surface <s>
-python3 -m metis_mcp.mbt.cli reconcile --journey <j> --surface <s>
-python3 -m metis_mcp.mbt.cli review export --journey <j> --surface <s> -o review.json
-python3 -m metis_mcp.mbt.cli review apply  --journey <j> --surface <s> review.json
-python3 -m metis_mcp.mbt.cli workflow resume model-build --scope <scope> --journey <j> --surface <s>
+metis workflow status <run-id>
+metis validate  --journey <j> --surface <s>
+metis reconcile --journey <j> --surface <s>
+metis review export --journey <j> --surface <s> -o review.json
+metis review apply  --journey <j> --surface <s> review.json
+metis workflow resume model-build --scope <scope> --journey <j> --surface <s>
 ```
 
 ## Two rules this skill must not soften

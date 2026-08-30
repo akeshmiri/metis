@@ -8,8 +8,8 @@ model. A cross-surface question is a second model and a second run.
 1. **Run all four checks in one command.** They are one gate, not four, and
    running them together is what makes the output comparable between runs.
    ```
-   python3 -m metis_mcp.mbt.cli validate --journey <j> --surface <s>
-   python3 -m metis_mcp.mbt.cli validate <model.json>
+   metis validate --journey <j> --surface <s>
+   metis validate <model.json>
    ```
 
 2. **Sort the findings by severity, and keep the three apart.**

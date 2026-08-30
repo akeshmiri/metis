@@ -1,10 +1,10 @@
 """
 CLI for the MBT engine (application spec §9.4, first slice).
 
-    python3 -m metis_mcp.mbt.cli paths    <model.json> [--criterion C] [--max-setup N]
-    python3 -m metis_mcp.mbt.cli render   <model.json> [--criterion C]
-    python3 -m metis_mcp.mbt.cli report   <model.json> [--criterion C]
-    python3 -m metis_mcp.mbt.cli payload  <model.json> [--criterion C]
+    metis paths    <model.json> [--criterion C] [--max-setup N]
+    metis render   <model.json> [--criterion C]
+    metis report   <model.json> [--criterion C]
+    metis payload  <model.json> [--criterion C]
 
 This is the seed of §9.4's command set, scoped to what stage 1 of N-16 needs: a
 model in, paths/cases/coverage out. It reads a model from a JSON file rather than
@@ -171,8 +171,8 @@ def _require_approved(model: Model) -> None:
         lines.append(f"    ... and {len(outstanding) - 12} more")
     lines += [
         "",
-        "  Review them:  python3 -m metis_mcp.mbt.cli review export <model> -o review.json",
-        "  Then apply:   python3 -m metis_mcp.mbt.cli review apply review.json --model <model>",
+        "  Review them:  metis review export <model> -o review.json",
+        "  Then apply:   metis review apply review.json --model <model>",
     ]
     raise ApprovalRequired("\n".join(lines))
 
@@ -383,7 +383,7 @@ def _load(args) -> Model:
             f"source is now {overlay_result.current_fingerprint}).\n"
             f"Decisions are retained, not discarded — but they are not applied "
             f"until re-reviewed against the current source (spec E-8).\n\n"
-            f"  Re-export:  python3 -m metis_mcp.mbt.cli review export {args.model} -o review.json"
+            f"  Re-export:  metis review export {args.model} -o review.json"
         )
     return model
 
@@ -1415,7 +1415,7 @@ def cmd_review_export(args) -> int:
             # and omitting it made the printed command refuse with "review file
             # is for model 'archive-ui', not 'archive-api'". An
             # instruction the tool tells you to run has to run.
-            print(f"  python3 -m metis_mcp.mbt.cli review apply "
+            print(f"  metis review apply "
                   f"--journey {args.journey} --surface {args.surface} {args.out}")
         else:
             print(text)
@@ -1437,7 +1437,7 @@ def cmd_review_export(args) -> int:
         FsPath(args.out).write_text(text)
         print(f"Wrote {args.out} — {len(review.items)} item(s) awaiting a decision.")
         print(f"Set 'reviewer', choose approve/reject/defer per item, then:")
-        print(f"  python3 -m metis_mcp.mbt.cli review apply {args.out} --model {args.model}")
+        print(f"  metis review apply {args.out} --model {args.model}")
     else:
         print(text)
     return 0
@@ -2040,15 +2040,25 @@ def cmd_retrieval_bench(args) -> int:
             return 1
 
     rankings: dict[str, list[str]] = {}
-    with session() as s:
-        for question in questions:
-            if args.hybrid:
-                hits = hybrid_search(s, question, provider=provider,
-                                     limit=args.limit)
-                rankings[question] = [h.id for h in hits]
-            else:
-                rows = search_knowledge(s, question, limit=args.limit)
-                rankings[question] = [r["id"] for r in rows]
+    # **A refusal is an answer, and must read like one.** `require_matching_model`
+    # refuses a query whose model disagrees with what the corpus was embedded
+    # with — the guard this module's whole argument rests on. It was caught
+    # around `load_provider` and not around the search, so the one refusal that
+    # matters most arrived as a traceback: the correct behaviour, presented as a
+    # crash.
+    try:
+        with session() as s:
+            for question in questions:
+                if args.hybrid:
+                    hits = hybrid_search(s, question, provider=provider,
+                                         limit=args.limit)
+                    rankings[question] = [h.id for h in hits]
+                else:
+                    rows = search_knowledge(s, question, limit=args.limit)
+                    rankings[question] = [r["id"] for r in rows]
+    except RetrievalRefused as e:
+        print(f"REFUSED: {e}")
+        return 1
 
     report = score(rankings, questions)
     if not args.hybrid:

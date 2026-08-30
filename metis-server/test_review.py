@@ -367,7 +367,13 @@ def test_printed_next_step_commands_carry_the_scope_they_need():
     # for how the source is actually written.
     joined = re.sub(r'"\s*\n\s*f?"', "", source)
 
-    printed = re.findall(r'print\(f?"[^"]*metis_mcp\.mbt\.cli ([^"]*)"', joined)
+    # `metis`, not `python3 -m metis_mcp.mbt.cli`: the printed instructions were
+    # retargeted at the console script, and this parser matched the module path
+    # it no longer prints. The `assert printed` below is what caught that — a
+    # regex over source that silently matches nothing is the failure mode this
+    # test has already had once, and it is why the guard is here rather than
+    # left to the per-command assertions.
+    printed = re.findall(r'print\(f?"[^"]*\bmetis ([a-z][a-z-]*\b[^"]*)"', joined)
     assert printed, "no next-step instructions found — the parser missed them"
     assert any("--journey" in c for c in printed), (
         "no journey-scoped instruction was found; the parser is not seeing the "

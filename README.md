@@ -85,7 +85,7 @@ metis-server/                    the engine. Python, no framework.
 ├── code_analysis/               Joern query packs → normalised contract →
 │                                synthesis. No engine type reaches the graph.
 ├── schema/                      GENERATED Cypher (Community only — C1)
-└── test_*.py                    83 test files, 1,897 tests, no Neo4j required.
+└── test_*.py                    84 test files, 1,911 tests, no Neo4j required.
                                  Joern is needed for five of them (see CLAUDE.md)
 
 .mcp.json                        registers the MCP server for this repo — stdio,
@@ -103,7 +103,7 @@ connectors/                      connector manifests + their schema.
 cd metis-server
 uv venv && uv pip install -e ".[test]"   # the extra is what brings pytest
 uv run python -m pytest -q            # the whole suite; no database needed
-uv run python -m metis_mcp.mbt.cli workflow list
+uv run metis workflow list
 ```
 
 **Joern and a JDK are test prerequisites**, and neither is pip-installable so the
@@ -111,7 +111,7 @@ uv run python -m metis_mcp.mbt.cli workflow list
 `demo_project/` and runs the shipped query packs over them — before it existed the
 packs had no behavioural test at all, and their correctness claims were prose in a
 manifest. A missing Joern **fails** rather than skipping, because a skip would
-quietly restore that. Run `uv run python -m metis_mcp.mbt.cli doctor` to check.
+quietly restore that. Run `uv run metis doctor` to check.
 The CPGs are cached by a hash of the corpus, so this costs ~25s once and ~7s
 afterwards.
 

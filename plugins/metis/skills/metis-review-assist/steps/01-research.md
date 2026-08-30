@@ -7,7 +7,7 @@ models that appear in reconciliation output are noted, not reviewed.
 
 1. **Find where the run stopped.**
    ```
-   python3 -m metis_mcp.mbt.cli workflow status model-build--<scope>
+   metis workflow status model-build--<scope>
    ```
    The record names the blocked stage, the outstanding elements, and the exact
    command that records the decision. If there is no run, the user may be
@@ -15,7 +15,7 @@ models that appear in reconciliation output are noted, not reviewed.
 
 2. **Get the well-formedness findings.**
    ```
-   python3 -m metis_mcp.mbt.cli validate --journey <j> --surface <s>
+   metis validate --journey <j> --surface <s>
    ```
    Record each finding's severity verbatim. The three are not synonyms:
    `blocking` means this is wrong; `unverifiable` means it *cannot be shown* to
@@ -24,7 +24,7 @@ models that appear in reconciliation output are noted, not reviewed.
 
 3. **Get both reconciliation directions.**
    ```
-   python3 -m metis_mcp.mbt.cli reconcile --journey <j> --surface <s>
+   metis reconcile --journey <j> --surface <s>
    ```
    Record `UNSPECIFIED BEHAVIOUR` and `UNIMPLEMENTED` **separately** (F-5) — a
    specification gap and an implementation gap have different causes and
@@ -34,7 +34,7 @@ models that appear in reconciliation output are noted, not reviewed.
 
 4. **Export the review file.**
    ```
-   python3 -m metis_mcp.mbt.cli review export --journey <j> --surface <s> -o review.json
+   metis review export --journey <j> --surface <s> -o review.json
    ```
    Each item carries `evidence` (what the reviewer is shown), `proposed_by`, and
    where one exists `criterion_id` / `criterion_text`.

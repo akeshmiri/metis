@@ -32,7 +32,7 @@ step writes a file and runs one free check. It touches no graph.
 
 5. **Run the check. It is free — no graph, no model call.**
    ```
-   python3 -m metis_mcp.mbt.cli knowledge check <knowledge.json>
+   metis knowledge check <knowledge.json>
    ```
    It reports every defect at once. Fix them all and re-run until it is clean.
 

@@ -723,48 +723,48 @@ CREATE VECTOR INDEX metis_vector_acceptance_criterion IF NOT EXISTS
 FOR (n:AcceptanceCriterion)
 ON (n.embedding)
 OPTIONS {indexConfig: {
-  `vector.dimensions`: 1536,
+  `vector.dimensions`: 256,
   `vector.similarity_function`: 'cosine'
 }};
 CREATE VECTOR INDEX metis_vector_business_entity IF NOT EXISTS
 FOR (n:BusinessEntity)
 ON (n.embedding)
 OPTIONS {indexConfig: {
-  `vector.dimensions`: 1536,
+  `vector.dimensions`: 256,
   `vector.similarity_function`: 'cosine'
 }};
 CREATE VECTOR INDEX metis_vector_intent IF NOT EXISTS
 FOR (n:Intent)
 ON (n.embedding)
 OPTIONS {indexConfig: {
-  `vector.dimensions`: 1536,
+  `vector.dimensions`: 256,
   `vector.similarity_function`: 'cosine'
 }};
 CREATE VECTOR INDEX metis_vector_lesson IF NOT EXISTS
 FOR (n:Lesson)
 ON (n.embedding)
 OPTIONS {indexConfig: {
-  `vector.dimensions`: 1536,
+  `vector.dimensions`: 256,
   `vector.similarity_function`: 'cosine'
 }};
 CREATE VECTOR INDEX metis_vector_passage IF NOT EXISTS
 FOR (n:Passage)
 ON (n.embedding)
 OPTIONS {indexConfig: {
-  `vector.dimensions`: 1536,
+  `vector.dimensions`: 256,
   `vector.similarity_function`: 'cosine'
 }};
 CREATE VECTOR INDEX metis_vector_requirement IF NOT EXISTS
 FOR (n:Requirement)
 ON (n.embedding)
 OPTIONS {indexConfig: {
-  `vector.dimensions`: 1536,
+  `vector.dimensions`: 256,
   `vector.similarity_function`: 'cosine'
 }};
 CREATE VECTOR INDEX metis_vector_specification IF NOT EXISTS
 FOR (n:Specification)
 ON (n.embedding)
 OPTIONS {indexConfig: {
-  `vector.dimensions`: 1536,
+  `vector.dimensions`: 256,
   `vector.similarity_function`: 'cosine'
 }};

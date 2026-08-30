@@ -180,6 +180,37 @@ def fuse(keyword: Sequence[dict], semantic: Sequence[dict],
     return hits
 
 
+PROVIDER_ENV = "METIS_EMBEDDING_PROVIDER"
+
+
+def configured_provider():
+    """The provider this deployment configured, or `None`.
+
+    **`None` is the supported answer**, not a degraded one: a default install has
+    no provider, and every caller here falls back to keyword search and says it
+    did. Resolution follows PLT-002's order minus the argument — environment,
+    then the configuration file — so a provider that works in one place and not
+    another is a difference in inputs rather than in code.
+
+    A named provider that cannot be loaded RAISES. Falling back to keyword
+    silently would mean a deployment that configured semantic search got keyword
+    results with no signal, which is the failure `load_provider` refuses one
+    layer down.
+    """
+    import os
+
+    spec = os.environ.get(PROVIDER_ENV, "").strip()
+    if not spec:
+        try:
+            from metis_mcp.mbt.graph_session import _load_config
+
+            data, _ = _load_config()
+            spec = ((data or {}).get("embedding") or {}).get("provider", "").strip()
+        except Exception:                          # noqa: BLE001 - absent config
+            spec = ""
+    return load_provider(spec) if spec else None
+
+
 def load_provider(spec: str) -> EmbeddingProvider:
     """`package.module:Attribute` -> an `EmbeddingProvider`.
 

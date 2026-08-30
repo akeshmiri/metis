@@ -1012,7 +1012,7 @@ def _g1(context) -> tuple:
                 f"produce confidently wrong tests",
                 evidence,
                 f"edit {written} (set 'reviewer', then approve/reject/defer each "
-                f"item), then:\n      python3 -m metis_mcp.mbt.cli review apply "
+                f"item), then:\n      metis review apply "
                 f"{scope_flags} --resume {written}")
 
     return (HALTED,
@@ -1020,7 +1020,7 @@ def _g1(context) -> tuple:
             f"review. Generating from an unreviewed model would produce "
             f"confidently wrong tests",
             evidence,
-            f"python3 -m metis_mcp.mbt.cli review export {scope_flags} -o review.json"
+            f"metis review export {scope_flags} -o review.json"
             f"   # decide, then: review apply {scope_flags} review.json")
 
 
@@ -1117,7 +1117,7 @@ def _g2(context) -> tuple:
             f"needs the literal word {AFFIRMATIVE!r} in the same run — there is no "
             f"default-yes and no timeout-implies-yes (T-18)",
             [f"{c.id}  {c.name}" for c in context.cases[:20]],
-            f"python3 -m metis_mcp.mbt.cli workflow resume "
+            f"metis workflow resume "
             f"{context.workflow}--{context.scope} --confirm {AFFIRMATIVE}")
 
 
@@ -1205,5 +1205,5 @@ def _writeback(context) -> tuple:
             f"{AFFIRMATIVE!r} in this run (T-18). A file the team has edited is "
             f"never overwritten (T-15)",
             (),
-            f"python3 -m metis_mcp.mbt.cli workflow resume "
+            f"metis workflow resume "
             f"{context.workflow}--{context.scope} --confirm {AFFIRMATIVE}")

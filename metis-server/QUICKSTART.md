@@ -19,17 +19,17 @@ wherever an absolute interpreter path is needed.
 uv run python -m pytest -q
 ```
 
-83 test files — **no Neo4j, no model calls, no config file.** The engine is
+84 test files — **no Neo4j, no model calls, no config file.** The engine is
 deliberately database-free: models, criteria, path generation, coverage and
 validation are all pure. If this does not pass, stop here.
 
-One caveat on that command: 136 of those tests DO need Joern and a JDK, and
+One caveat on that command: five of those files DO need Joern and a JDK, and
 `conftest.py` fails rather than skips without them, deliberately — they are the
 only behavioural test the query packs have. Run `metis doctor` first. To exercise
 just the engine-free half, see the `--ignore` list in `CLAUDE.md`.
 
 ```bash
-uv run python -m metis_mcp.mbt.cli workflow list
+uv run metis workflow list
 ```
 
 Five workflows, their ordered stages, and where each stops for a human.
@@ -92,17 +92,17 @@ that it is wired up: it reads the workflow registry and needs no graph.
 
 ```bash
 # Is a state machine well-formed? Blocking / unverifiable / advisory, kept apart.
-uv run python -m metis_mcp.mbt.cli validate --journey <journey> --surface api
+uv run metis validate --journey <journey> --surface api
 
 # Coverage, always with the criterion and the version it refers to (P-4, P-16).
-uv run python -m metis_mcp.mbt.cli report --journey <journey> --surface api
+uv run metis report --journey <journey> --surface api
 
 # Capture a stated requirement as atomic criteria, then compare it to the model.
-uv run python -m metis_mcp.mbt.cli knowledge check <knowledge.json>
-uv run python -m metis_mcp.mbt.cli knowledge compare <knowledge.json> --journey <j>
+uv run metis knowledge check <knowledge.json>
+uv run metis knowledge compare <knowledge.json> --journey <j>
 
 # The reviewer's screens (loopback only; this server does not authenticate).
-uv run python -m metis_mcp.mbt.cli ui --journey <journey> --surface api
+uv run metis ui --journey <journey> --surface api
 ```
 
 A workflow run exits `0` complete, **`5` blocked on a human decision — not a

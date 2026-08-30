@@ -255,4 +255,4 @@ cypher --format plain "MATCH (t:Transition) RETURN count(t) AS needs_classifying
 echo
 echo "Nothing is approved, and that is correct: G1 is a human decision (F-8), and"
 echo "a rebuild that approved its own output would defeat the gate it ran through."
-echo "Review with:  python3 -m metis_mcp.mbt.cli review export --journey <j> --surface <s> -o r.json"
+echo "Review with:  metis review export --journey <j> --surface <s> -o r.json"

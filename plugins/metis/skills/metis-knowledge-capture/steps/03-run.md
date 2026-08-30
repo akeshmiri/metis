@@ -7,7 +7,7 @@ proposes; it never decides.
 
 1. **Compare before landing.**
    ```
-   python3 -m metis_mcp.mbt.cli knowledge compare <knowledge.json> --journey <j> --surface <s>
+   metis knowledge compare <knowledge.json> --journey <j> --surface <s>
    ```
    Read the three counts and report them **separately** (F-5):
    *already in the model* · *contradicting* · *new*. Never a percentage, never a
@@ -21,7 +21,7 @@ proposes; it never decides.
 
 3. **Run the workflow.**
    ```
-   python3 -m metis_mcp.mbt.cli workflow run knowledge-capture --scope <scope> \
+   metis workflow run knowledge-capture --scope <scope> \
        --knowledge <knowledge.json> --journey <j> --surface api
    ```
    Exit `5` is the expected outcome: the run halted at G1 with the criteria
@@ -30,7 +30,7 @@ proposes; it never decides.
 
 4. **Hand over the decision, do not make it.**
    ```
-   python3 -m metis_mcp.mbt.cli review export --journey <j> --surface <s> -o review.json
+   metis review export --journey <j> --surface <s> -o review.json
    ```
    Say which entries are inferred complements, and that approving one unchanged
    leaves it `code_derived` — it documents the system without validating it

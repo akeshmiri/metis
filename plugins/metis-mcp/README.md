@@ -81,7 +81,7 @@ authenticating sits in front.
 by composition, not by discipline: every tool calls a query function, and none
 imports `review.decisions`, `publishing.publish` or `model_sources.landing`.
 Landing, approval and publication go through
-`python3 -m metis_mcp.mbt.cli`, where the two gates are.
+`metis`, where the two gates are.
 
 A tool that cannot reach the graph says so with the variable to set — distinct
 from "nothing found", which is a different answer with a different consequence.

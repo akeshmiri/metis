@@ -216,6 +216,54 @@ def test_p3_unsatisfiable_guard_targets_are_reported():
     assert "unsatisfiable" in reasons, f"got reasons {reasons}"
 
 
+def _terminal_outcomes_model() -> Model:
+    """The shape every recovered API model has: a call, and an outcome state
+    that nothing leaves.
+
+    `login_model` is not this shape -- its states lead on to one another, which
+    is why it never exercised the branch below.
+    """
+    return Model(
+        id="records-api",
+        states={
+            "Record": State(id="Record", name="Record", is_initial=True,
+                            lifecycle_state=APPROVED),
+            "Ok200": State(id="Ok200", name="GetRecord200",
+                           lifecycle_state=APPROVED),
+            "NoContent204": State(id="NoContent204", name="DeleteRecordId204",
+                                  lifecycle_state=APPROVED),
+        },
+        transitions={
+            "t1": Transition(id="t1", source="Record", trigger="GET /record",
+                             target="Ok200", lifecycle_state=APPROVED),
+            "t2": Transition(id="t2", source="Record",
+                             trigger="DELETE /record/{id}",
+                             target="NoContent204", lifecycle_state=APPROVED),
+        },
+    )
+
+
+def test_p3_a_pair_with_no_follower_is_reported_not_silently_dropped():
+    """**The silent success this project hunts for.** `_all_transition_pairs`
+    `continue`d past a terminal state, producing no target and no reason -- so a
+    model whose states are all terminal reported `covered: 0, uncovered: 0`, and
+    full coverage of nothing was indistinguishable from no coverage at all. It
+    was the only criterion in the module that dropped a target without saying
+    why. Measured on the live `records-api`: 13 transitions, 13 silent drops.
+    """
+    result = generate(_terminal_outcomes_model(), ALL_TRANSITION_PAIRS)
+
+    assert not result.paths, "a terminal-only model has no pair to cover"
+    assert len(result.uncoverable) == 2, (
+        f"every dropped pair must be reported, got {result.uncoverable}"
+    )
+    assert {u.target_key for u in result.uncoverable} == {"t1", "t2"}
+    for u in result.uncoverable:
+        assert "terminal" in u.detail and "no pair to cover" in u.detail, (
+            f"the reason must say why, got {u.detail!r}"
+        )
+
+
 def test_guard_splitting_is_minimal_and_does_not_interpret():
     assert atomic_conditions("credentials_valid AND NOT account_locked") == [
         "credentials_valid", "NOT account_locked",

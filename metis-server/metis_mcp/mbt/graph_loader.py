@@ -739,7 +739,16 @@ def roll_up_passages(session, rows: list[dict]) -> list[dict]:
             parent = parents.get(row["id"])
             if parent is None:
                 continue
+            # The parent's properties replace the passage's — but the SCORE is
+            # the passage's, and it is the only relevance signal a caller has.
+            # Replacing the row wholesale dropped it, so every academy hit came
+            # back unranked and a caller could not tell "the shape of the model"
+            # from "the weather in Paris": both returned three lessons and
+            # neither said how well anything matched.
+            score = row.get("score")
             row = {k: v for k, v in parent.items() if k != "passage_id"}
+            if score is not None:
+                row["score"] = score
             # Carried through so a caller can still say WHY this ranked.
             row["matched_passage"] = parent["passage_id"]
         if row["id"] in seen:

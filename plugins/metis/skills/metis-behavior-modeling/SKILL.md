@@ -31,8 +31,8 @@ through `--allow-unverifiable`, which is recorded, not silent.
 ## Command
 
 ```
-python3 -m metis_mcp.mbt.cli validate <model.json>
-python3 -m metis_mcp.mbt.cli validate --journey <j> --surface <s>
+metis validate <model.json>
+metis validate --journey <j> --surface <s>
 ```
 
 Add `--allow-unverifiable` only when the user has explicitly accepted the risk,

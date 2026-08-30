@@ -282,7 +282,7 @@ def format_run(record: RunRecord) -> str:
             lines.append(f"      ... and {len(blocked.outstanding) - 12} more")
         if blocked and blocked.next_command:
             lines += ["", f"  Record the decision:", f"      {blocked.next_command}",
-                      f"  Then:", f"      python3 -m metis_mcp.mbt.cli workflow "
+                      f"  Then:", f"      metis workflow "
                       f"resume {record.run_id}"]
         lines += ["",
                   "  Nothing auto-promotes on elapsed time (F-8). This run will wait "

@@ -10,7 +10,7 @@ Record what the human decided. Nothing here decides anything itself.
 
 2. **Apply.**
    ```
-   python3 -m metis_mcp.mbt.cli review apply --journey <j> --surface <s> review.json
+   metis review apply --journey <j> --surface <s> review.json
    ```
 
    Three refusals are normal and must be reported honestly rather than worked
@@ -27,7 +27,7 @@ Record what the human decided. Nothing here decides anything itself.
 
 4. **Resume the run.**
    ```
-   python3 -m metis_mcp.mbt.cli workflow resume model-build --scope <scope> \
+   metis workflow resume model-build --scope <scope> \
        --journey <j> --surface <s>
    ```
 

@@ -37,10 +37,10 @@ remember the order of. This table is generated from the workflow registry
 ## Running one
 
 ```
-python3 -m metis_mcp.mbt.cli workflow list
-python3 -m metis_mcp.mbt.cli workflow run <code> --scope <scope> [...]
-python3 -m metis_mcp.mbt.cli workflow status <code>--<scope>
-python3 -m metis_mcp.mbt.cli workflow resume <code> --scope <scope> [...]
+metis workflow list
+metis workflow run <code> --scope <scope> [...]
+metis workflow status <code>--<scope>
+metis workflow resume <code> --scope <scope> [...]
 ```
 
 Exit `0` complete · **`5` blocked on a human decision, not a failure** ·

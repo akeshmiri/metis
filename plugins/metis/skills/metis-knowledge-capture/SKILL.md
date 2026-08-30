@@ -145,15 +145,15 @@ BusinessEntity is never on the path from a test case to a transition.
 All real, all in `metis-server`.
 
 ```
-python3 -m metis_mcp.mbt.cli knowledge check <knowledge.json>
-python3 -m metis_mcp.mbt.cli knowledge compare <knowledge.json>
-python3 -m metis_mcp.mbt.cli glossary check <glossary.json>
-python3 -m metis_mcp.mbt.cli feature render <knowledge.json> --glossary <glossary.json> -o spec.feature
-python3 -m metis_mcp.mbt.cli feature read spec.feature --model-id <model> -o <knowledge.json>
-python3 -m metis_mcp.mbt.cli workflow run knowledge-capture --scope <scope> \
+metis knowledge check <knowledge.json>
+metis knowledge compare <knowledge.json>
+metis glossary check <glossary.json>
+metis feature render <knowledge.json> --glossary <glossary.json> -o spec.feature
+metis feature read spec.feature --model-id <model> -o <knowledge.json>
+metis workflow run knowledge-capture --scope <scope> \
     --knowledge <knowledge.json> --glossary <glossary.json> --journey <j> --surface api
-python3 -m metis_mcp.mbt.cli workflow status knowledge-capture--<scope>
-python3 -m metis_mcp.mbt.cli workflow resume knowledge-capture --scope <scope> \
+metis workflow status knowledge-capture--<scope>
+metis workflow resume knowledge-capture --scope <scope> \
     --knowledge <knowledge.json> --journey <j>
 ```
 

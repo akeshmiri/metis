@@ -180,7 +180,7 @@ jobs:
       # failing with "Local astgen binary not found".
       - name: Preflight
         run: |
-          uv run python -m metis_mcp.mbt.cli doctor || true
+          uv run metis doctor || true
           uv run python -c "from code_analysis import engine; engine.preflight().require(ignore=('graph',))"
 
       - name: Extraction suite

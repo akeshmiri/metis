@@ -125,9 +125,9 @@ def render_agent(skill: Skill, tools: list[str]) -> str:
         "The workflows below run through the CLI, not through a tool call:",
         "",
         "```",
-        "python3 -m metis_mcp.mbt.cli workflow list",
-        "python3 -m metis_mcp.mbt.cli workflow run <workflow> --scope <scope> ...",
-        "python3 -m metis_mcp.mbt.cli workflow status <workflow>--<scope>",
+        "metis workflow list",
+        "metis workflow run <workflow> --scope <scope> ...",
+        "metis workflow status <workflow>--<scope>",
         "```",
         "",
     ]

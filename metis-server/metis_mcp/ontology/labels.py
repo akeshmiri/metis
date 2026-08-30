@@ -111,11 +111,22 @@ def vector_index_for(label: str) -> str:
 
 VECTOR_PROPERTY = "embedding"
 VECTOR_MODEL_PROPERTY = "embedding_model"
-# 1536 is OpenAI's text-embedding-3-small and a common default. Changing the
-# model means changing this AND rebuilding the index; the two cannot drift
-# silently because `retrieval` refuses a query whose model does not match what
-# the nodes were written with.
-VECTOR_DIMENSIONS = 1536
+# The width every vector index is created with. Changing the model means changing
+# this AND rebuilding the indexes; the two cannot drift silently because
+# `retrieval` refuses a query whose model does not match what the nodes were
+# written with, and `cmd_embed` refuses a provider whose width disagrees.
+#
+# **256 is `minishlab/potion-base-8M`**, the model the `embeddings` extra
+# installs — local, deterministic, no API key. It was 1536 (OpenAI's
+# text-embedding-3-small) while no provider existed at all, which pinned the
+# ontology to a model nothing in the tree could produce.
+#
+# **This constant is the design's weak point and is worth knowing about.** A
+# width belongs to a provider, not to an ontology, so a deployment wanting a
+# 1536-dim model must edit this file and recreate seven indexes. That is the
+# documented procedure rather than an accident — but it means one graph holds one
+# model's width, and two deployments on different models cannot share a schema.
+VECTOR_DIMENSIONS = 256
 VECTOR_SIMILARITY = "cosine"
 
 SEARCH_INDEX = "metis_search"
