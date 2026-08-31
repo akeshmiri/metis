@@ -355,11 +355,14 @@ def test_generation_is_additive_against_the_recovered_inventory(
     uncovered."""
     model = _synthesise(demo_structural, demo_behaviour).model
     grades = grade_transitions(model, from_pack(demo_inventory))
-    by_trigger = {model.transitions[tid].trigger: g.grade for tid, g in grades.items()}
-    assert by_trigger["GET /record/{id}"] == COVERED
-    assert by_trigger["POST /record"] == COVERED
-    assert by_trigger["DELETE /record/{id}"] == OUTCOME_UNPROVEN
-    assert by_trigger["GET /record"] == UNCOVERED
+    # Keyed on (trigger, status) rather than trigger alone: a route answering
+    # two statuses would otherwise keep whichever came last, silently.
+    by_call = {(model.transitions[tid].trigger, model.transitions[tid].outcome_status):
+               g.grade for tid, g in grades.items()}
+    assert by_call[("GET /record/{id}", 200)] == COVERED
+    assert by_call[("POST /record", 201)] == COVERED
+    assert by_call[("DELETE /record/{id}", 204)] == OUTCOME_UNPROVEN
+    assert by_call[("GET /record", 200)] == UNCOVERED
     assert not any(g.should_generate for g in grades.values() if g.grade == COVERED)
 
 

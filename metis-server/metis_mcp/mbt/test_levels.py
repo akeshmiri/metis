@@ -186,7 +186,26 @@ def _routes_of(transition, service: str) -> tuple[str, tuple[str, ...]] | None:
 
 
 def expected_status(transition, model: Model) -> str | None:
-    """The status a transition's target state represents, if it names one."""
+    """The status this transition answers with, if it is identifiable.
+
+    **The transition's own property first, the target's name second.** This read
+    only the name, and `unfolding` repoints a creator's target from a
+    status-named state (`Created201`) to a resource state (`RecordPresent`) —
+    whose name carries no status. `unfolding` says of that move: "Its status is
+    not lost -- it lives on `outcome_status`." True of the data and false of
+    this reader, which is the two-representations failure in miniature: the
+    creator became ungradeable and every unfolded `POST` silently dropped from
+    `covered` to "this outcome is not identifiable by status".
+
+    **Latent rather than theoretical.** Every `*Present` state in a recovered
+    model has a creator whose target was repointed, so every one of them was
+    ungradeable. It is invisible on a corpus where no existing test reaches a
+    creator — which is why it survived: nothing was wrong with the graph, only
+    with what could be concluded from it.
+    """
+    status = getattr(transition, "outcome_status", None)
+    if status:
+        return str(status)
     target = model.states.get(transition.target)
     name = target.name if target else transition.target
     m = _STATUS_IN_NAME.search(name or "")

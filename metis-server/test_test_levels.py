@@ -271,3 +271,53 @@ if __name__ == "__main__":
             print(f"ERROR {t.__name__}: {type(e).__name__}: {e}")
     print(f"\n{len(tests) - failures}/{len(tests)} passed")
     sys.exit(1 if failures else 0)
+
+
+def test_an_unfolded_creator_is_still_gradeable():
+    """**Two representations of one status, and the reader picked the fragile
+    one.**
+
+    `expected_status` read the status out of the TARGET STATE'S NAME —
+    `Created201` yields 201. M-6 unfolding repoints a creator's target to the
+    resource state it produces (`RecordPresent`), whose name carries no status,
+    so the creator became ungradeable and dropped from `covered` to "this
+    outcome is not identifiable by status" without anything reporting it.
+
+    `unfolding` says of that repointing: "Its status is not lost -- it lives on
+    `outcome_status`." That was true of the data and false of this reader.
+
+    Latent rather than theoretical: every `*Present` state in a recovered model
+    has a creator whose target was repointed, so every one was ungradeable. It
+    stays invisible on a corpus where no existing test reaches a creator, which
+    is why it survived — the graph was right and only the conclusion was wrong.
+    """
+    from metis_mcp.mbt.model import Model, State, Transition
+    from metis_mcp.mbt.test_levels import expected_status
+
+    unfolded = Model(
+        id="records-api",
+        states={"Record": State(id="Record", name="Record", is_initial=True),
+                "RecordPresent": State(id="RecordPresent", name="RecordPresent")},
+        transitions={"create": Transition(
+            id="create", source="Record", trigger="POST /record",
+            target="RecordPresent", outcome_status=201)},
+    )
+    assert expected_status(unfolded.transitions["create"], unfolded) == "201", (
+        "an unfolded creator still answers 201; the state name just stopped "
+        "saying so")
+
+
+def test_the_target_name_is_still_read_when_the_transition_has_no_status():
+    """The fallback stays: an authored model may name its states and carry no
+    `outcome_status` at all, and that was the only source before."""
+    from metis_mcp.mbt.model import Model, State, Transition
+    from metis_mcp.mbt.test_levels import expected_status
+
+    authored = Model(
+        id="a-api",
+        states={"Ready": State(id="Ready", name="Ready", is_initial=True),
+                "Created201": State(id="Created201", name="Created201")},
+        transitions={"t": Transition(id="t", source="Ready", trigger="POST /x",
+                                     target="Created201")},
+    )
+    assert expected_status(authored.transitions["t"], authored) == "201"
