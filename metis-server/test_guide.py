@@ -104,7 +104,14 @@ def test_the_intakes_page_names_the_command_that_runs_each_intake(pages):
 
     for intake in intakes.all_intakes():
         assert f"| {intake['id']} |" in pages["intakes.md"], intake["id"]
-    assert "`metis data catalogue`" in pages["intakes.md"]
+    # At least one intake must actually name its invoker, or the em dash below
+    # is the only thing the column ever shows and the table proves nothing.
+    # This asserted `metis data catalogue` until the database intake was removed
+    # with its layer; the general form is what the test was always about.
+    commanded = [i for i in intakes.all_intakes() if i.get("command")]
+    assert commanded, "no intake declares a command — the column is vacuous"
+    for intake in commanded:
+        assert f"`metis {' '.join(intake['command'])}`" in pages["intakes.md"]
 
 
 def test_the_workflows_page_marks_where_each_one_stops_for_a_person(pages):
@@ -153,15 +160,22 @@ def test_the_academy_exists_and_declares_itself_authored():
     assert "not built" in readme, "the unlanded state must be stated"
 
 
-def test_the_academy_join_table_matches_the_kinds_that_exist():
+def test_the_deferred_join_lesson_teaches_outcomes_that_exist():
     """The one academy claim that CAN be checked, so it is. A lesson naming a
-    join kind the engine does not have is the drift this whole file is about."""
-    from metis_mcp.resolution import KINDS
+    mechanism the engine does not have is the drift this whole file is about.
+
+    It checked the four `JoinKind`s until the 2026-08-31 re-baseline staged out
+    the labels all four joined. The lesson now teaches the principle through the
+    two third-outcomes that are still live, and those are what it must name.
+    """
+    from metis_mcp.mbt.validation import UNVERIFIABLE
 
     lesson = (ACADEMY_DIR / "04-deferred-joins.md").read_text()
-    for name in KINDS:
-        assert f"`{name}`" in lesson, f"{name} is not taught"
-    assert f"| kind | edge |" in lesson
+    assert f"`{UNVERIFIABLE}`" in lesson, "M-17's third outcome is not taught"
+    assert "`unmodelled`" in lesson, "recovery's third outcome is not taught"
+    assert "JoinKind" in lesson, (
+        "the lesson must say what was removed, or a reader meets X-19 in the "
+        "spec and finds no trace of it here")
 
 
 @pytest.mark.parametrize("lesson", sorted(

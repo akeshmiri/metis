@@ -505,3 +505,78 @@ def test_the_output_is_sorted_and_deduplicated():
 
     changed = changed_files(".", "HEAD~1")
     assert changed == sorted(set(changed))
+
+
+# --------------------------------------------------------------------------
+# Parse-time exclusion (the `.history` defect)
+# --------------------------------------------------------------------------
+
+def test_a_glob_excludes_a_top_level_directory_too():
+    """`**/` means ZERO or more directories.
+
+    `.*/` requires at least one, so `**/.history/**` matched `a/.history/x` and
+    missed `.history/x` at the repository root — which is exactly where an
+    editor puts it."""
+    import re
+
+    from code_analysis.engine import _exclude_regex
+
+    rx = _exclude_regex(("**/.history/**",))
+    assert re.search(rx, ".history/athena/V.java")
+    assert re.search(rx, "a/.history/V.java")
+
+
+def test_an_exclude_does_not_match_a_similarly_named_directory():
+    """`**/.history/**` must not take `athena-history/` with it."""
+    import re
+
+    from code_analysis.engine import _exclude_regex
+
+    rx = _exclude_regex(("**/.history/**",))
+    assert not re.search(rx, "athena-history/src/main/java/Z.java")
+    assert not re.search(rx, "athena-boot-core/src/main/java/Z.java")
+
+
+def test_a_star_does_not_cross_a_separator():
+    import re
+
+    from code_analysis.engine import _exclude_regex
+
+    rx = _exclude_regex(("src/*/java",))
+    assert re.search(rx, "src/test/java")
+    assert not re.search(rx, "src/a/b/java")
+
+
+def test_the_patterns_are_escaped_not_interpreted():
+    """A glob is not a regex. An unescaped `.` would match any character, so
+    `**/.history/**` would also exclude `xhistory/`."""
+    import re
+
+    from code_analysis.engine import _exclude_regex
+
+    rx = _exclude_regex(("a.b/**",))
+    assert re.search(rx, "a.b/x")
+    assert not re.search(rx, "axb/x")
+
+
+def test_changing_an_exclude_invalidates_the_cached_build():
+    """**The silent success this closes.** Editing a profile's `exclude` gave a
+    `cache hit` reporting "repo, commit, engine and packs all unchanged" — true,
+    and incomplete — so the change appeared to do nothing. `drop_noise` is
+    already folded into the key for exactly this reason."""
+    from pathlib import Path
+
+    from code_analysis.engine import cache_key
+
+    base = cache_key(Path("/repo"), "sha1", "javasrc", "4.0.604")
+    with_exclude = cache_key(Path("/repo"), "sha1+x:**/.history/**", "javasrc",
+                             "4.0.604")
+    assert base != with_exclude
+
+
+def test_the_exclude_order_does_not_change_the_key():
+    """Two profiles listing the same patterns in a different order describe the
+    same parse, and must not rebuild the CPG."""
+    from code_analysis.engine import _exclude_regex
+
+    assert _exclude_regex(("a/**", "b/**")) == _exclude_regex(("a/**", "b/**"))

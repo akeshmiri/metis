@@ -5,8 +5,9 @@ The generation contract (`rendering/contract.py`) — enforced, not documented.
 reads, while facts the model holds died before the artefact. Both symptoms have
 one cause: nothing stated what generation takes. A contract that is only prose
 would drift the same way, so every claim in it is checked here by putting a
-sentinel in one field and following it through `render` -> `build_payload` ->
-`emit`.
+sentinel in one field and following it through `render`. It followed it through
+`build_payload` and `emit` too, until those were removed: Métis states what must
+be verified and no longer emits an implementation.
 
 **Value-travel, not source scanning.** "Read by nobody" is a fact about runtime.
 A grep for `inputs` finds `payload.py:73` and concludes the field is consumed;
@@ -28,10 +29,8 @@ from metis_mcp.mbt.model import APPROVED, GuardCheck, Model, State, Transition
 from metis_mcp.mbt.path_generation import generate
 from metis_mcp.rendering import contract
 from metis_mcp.rendering.contract import (
-    ARTEFACT, CONSUMED, DERIVED, GATE, INFRASTRUCTURE, NOT_CONSUMED, OWED,
-    PAYLOAD, PROSE, UNREAD_GRAPH_PROPERTIES)
-from metis_mcp.rendering.generators import emit
-from metis_mcp.rendering.payload import build_payload
+    CONSUMED, DERIVED, GATE, GENERATOR_ONLY, INFRASTRUCTURE, NOT_CONSUMED, OWED,
+    PROSE, UNREAD_GRAPH_PROPERTIES)
 from metis_mcp.rendering.test_case import render
 
 SENTINEL = "ZQXSENTINEL"
@@ -131,20 +130,6 @@ def _travel(element: str, field: str, *, surface: str, criterion: str = ""):
     if needle in json.dumps([dataclasses.asdict(c) for c in rendered.cases], default=str):
         arrived.add(PROSE)
 
-    payloads = [build_payload(model, c) for c in rendered.cases]
-    if needle in json.dumps(payloads, default=str):
-        arrived.add(PAYLOAD)
-
-    # EVERY case, not just the first. A technique that varies the data produces
-    # several cases over one walk and the fact under test may distinguish only
-    # one of them — emitting `payloads[0]` alone reported "never reaches the
-    # artefact" for a fact that reaches it in case three.
-    target = "rest-assured" if surface == "api" else "playwright"
-    for payload in payloads:
-        doc = {"resolved": payload, "unresolved": [], "supplied": {}, "unused": []}
-        if needle in emit(target, doc):
-            arrived.add(ARTEFACT)
-            break
     return arrived
 
 
@@ -357,7 +342,7 @@ def test_the_contract_is_not_silently_empty():
     green with their fix reverted."""
     assert len(CONSUMED) > 10
     assert {f.element for f in CONSUMED} == {"Transition", "State"}
-    assert any(ARTEFACT in f.reaches for f in CONSUMED)
+    assert any(PROSE in f.reaches for f in CONSUMED)
     # Something must still be recorded as not carried. This deliberately does NOT
     # assert that a CONSUMED fact is incomplete — every one of those gaps is now
     # closed, and a guard that required a gap to exist would have to be weakened
@@ -372,9 +357,9 @@ def test_the_incomplete_helper_would_report_a_gap_if_there_were_one():
     empty parametrize forever and pass by having nothing to do."""
     from metis_mcp.rendering.contract import ModelFact
 
-    complete = ModelFact("Transition", "x", (PAYLOAD,), ("c",), "why")
-    gapped = ModelFact("Transition", "y", (PAYLOAD,), ("c",), "why",
-                       owed="the artefact", owed_reaches=(ARTEFACT,))
+    complete = ModelFact("Transition", "x", (PROSE,), ("c",), "why")
+    gapped = ModelFact("Transition", "y", (PROSE,), ("c",), "why",
+                       owed="the gate", owed_reaches=(GATE,))
     assert complete.is_complete and not gapped.is_complete
 
 

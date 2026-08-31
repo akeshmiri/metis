@@ -26,7 +26,9 @@ from metis_mcp.mbt.model import QUARANTINE
 from metis_mcp.mbt.naming import transition_display_name
 from metis_mcp.model_sources.base import SourceResult
 from metis_mcp.ontology import validate, validate_relationship
-from metis_mcp.ontology.labels import NEED_REVIEW, NEEDS_REVIEW_STATES
+from metis_mcp.ontology.labels import (
+    NEED_REVIEW, NEEDS_REVIEW_STATES, PROJECT_PROPERTY,
+)
 
 
 # **Human facts. A write path may never assert these.**
@@ -101,7 +103,6 @@ EVIDENCE_RELATIONSHIPS = {
     "Endpoint": "DERIVED_FROM",
     "DeclaredOutcome": "DERIVED_FROM",
     "ExceptionMapping": "DERIVED_FROM",
-    "Parameter": "EXERCISES",
     # No `Field`: a field is a property of its type, not a node (X-6d), and the
     # label is staged out. The entry outlived the label, and because a mapped
     # label is *planned* before it is validated, a single field on a rejection
@@ -232,6 +233,14 @@ class LandingPlan:
     edges: list[PlannedEdge] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     skipped: list[tuple[str, str]] = field(default_factory=list)
+    # Which project everything in this plan belongs to. Stamped onto every node
+    # as `m_project` by `land`, so "everything belonging to Athena" is a property
+    # lookup rather than a guess from an id prefix.
+    #
+    # Empty is legal and means "not stated". It is not silently fine: a plan that
+    # names no project lands nodes `storage export` cannot claim, and export
+    # reports that count rather than quietly emitting a short file.
+    project: str = ""
 
     @property
     def is_legal(self) -> bool:
@@ -553,6 +562,11 @@ def land(session, plan: LandingPlan) -> LandingResult:
     by_label: dict[tuple, list[dict]] = {}
     for node in plan.nodes:
         props = {k: v for k, v in node.properties.items() if v is not None}
+        # Stamped here rather than by each plan builder: there are five of them
+        # and a project is a property of the RUN, not of any one fact in it.
+        # Setting it in one place means a new builder cannot forget it.
+        if plan.project:
+            props.setdefault(PROJECT_PROPERTY, plan.project)
         by_label.setdefault((node.label, _with_marker(node, props)), []).append(props)
 
     nodes_written = 0

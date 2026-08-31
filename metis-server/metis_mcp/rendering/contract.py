@@ -16,18 +16,20 @@ carrying the trigger that would change that. The set is closed against
 status fails a test rather than passing unnoticed.
 
 **`reaches` is measured, not asserted.** Every claim here was established by
-putting a sentinel in one field and following it through `render` ->
-`build_payload` -> `emit`, which is also what `test_generation_contract.py` does
-on every run. Reading the code is how three of these were classified wrongly the
-first time: `inputs` and `security` do reach the artefact (as a data-requirement
-condition and an auth comment), and `guard_wording` is read by the prose renderer
-while never reaching the payload at all.
+putting a sentinel in one field and following it through `render`, which is also
+what `test_generation_contract.py` does on every run.
 
-**Three destinations, because they fail independently.** A fact can reach the
-human-readable case and not the machine payload — `response_body` does exactly
-that, rendering "200 with RecordDto" into prose while `build_payload` omits it —
-and a fact can reach the payload and stop there, as `guard_anchor` does. Naming
-one "consumed" would hide the other two.
+**Two destinations now, and they fail independently.** A fact can be rendered
+into the human-readable case, or consumed as a precondition and never rendered.
+There were four: `payload` (`metis.automation-payload/1`) and `artefact` (the
+emitted `.java` / `.spec.ts`) went with the generators, because Métis states what
+must be verified and does not produce the implementation.
+
+**Five facts reached ONLY those two** and are no longer consumed by anything:
+`Transition.id`, `security`, `media_types`, `guard_anchor` and `State.page`.
+They are recorded in `GENERATOR_ONLY` rather than deleted — a property the model
+still carries and nothing now reads is worth being able to see, and it is the
+list to revisit if an executor is ever handed a machine-readable form again.
 
 Not a JSON manifest: `intakes.py:_root()` walks to the repo root and does not
 survive a wheel install, and here the check *is* the artefact. Not in
@@ -45,11 +47,25 @@ CONTRACT_VERSION = "metis.generation-contract/1"
 
 # Where a fact can arrive. Ordered by how far along the chain it is.
 PROSE = "prose"          # the human-readable TestCase — R8's actual product
-PAYLOAD = "payload"      # metis.automation-payload/1
-ARTEFACT = "artefact"    # the emitted .java / .spec.ts
 GATE = "gate"            # consumed as a precondition, never rendered (D-10)
 
-DESTINATIONS = (PROSE, PAYLOAD, ARTEFACT, GATE)
+DESTINATIONS = (PROSE, GATE)
+
+# Retired with the generators. Kept as names rather than as `reaches` entries so
+# that `test_generation_contract` measures against destinations that still exist,
+# while the fact that these properties are now read by nothing stays visible.
+PAYLOAD = "payload"      # metis.automation-payload/1 — removed
+ARTEFACT = "artefact"    # the emitted .java / .spec.ts — removed
+RETIRED_DESTINATIONS = ()
+
+#: Properties the model carries that no destination reads any more.
+GENERATOR_ONLY = (
+    ("Transition", "id"),
+    ("Transition", "security"),
+    ("Transition", "media_types"),
+    ("Transition", "guard_anchor"),
+    ("State", "page"),
+)
 
 # --------------------------------------------------------------------------
 # What a property is FOR
@@ -150,6 +166,14 @@ PREFIX_OVERRIDE: dict[tuple[str, str], str] = {
     # not have to know it was filed under the call.
     ("State", "page"): PAGE_PREFIX,
     ("State", "condition"): PAGE_PREFIX,
+    # **These three lost their derivation with the generators.** A prefix comes
+    # from a fact's `concerns`, and the facts that declared theirs left `CONSUMED`
+    # when `payload` and `artefact` did. The properties are still landed and must
+    # still be spelled the way landing writes them, so the name is stated here
+    # rather than inferred from a fact that no longer exists.
+    ("Transition", "security"): CALL_PREFIX,
+    ("Transition", "media_types"): CALL_PREFIX,
+    ("Transition", "guard_anchor"): EPISTEMIC_PREFIX,
 }
 
 # `u_` is declared and carries nothing today. Forms are an interaction
@@ -234,29 +258,24 @@ class ModelFact:
 
 CONSUMED: tuple[ModelFact, ...] = (
     ModelFact(
-        "Transition", "id", (PAYLOAD, ARTEFACT),
-        ("rendering.test_case.case_id", "rendering.payload.build_payload"),
-        "the case has no identity; the emitter names methods from it",
-        concerns=(IDENTITY,)),
-    ModelFact(
-        "Transition", "source", (PROSE, PAYLOAD),
+        "Transition", "source", (PROSE,),
         ("mbt.path_generation.generate", "rendering.test_case.render"),
         "no path can be walked and no precondition stated",
         concerns=(BEHAVIOUR,)),
     ModelFact(
-        "Transition", "target", (PROSE, PAYLOAD),
+        "Transition", "target", (PROSE,),
         ("mbt.path_generation.generate", "rendering.payload._step_payload"),
         "nothing says where the case lands",
         concerns=(BEHAVIOUR,)),
     ModelFact(
-        "Transition", "trigger", (PROSE, PAYLOAD, ARTEFACT),
+        "Transition", "trigger", (PROSE,),
         ("rendering.test_case._describe", "rendering.payload._act_detail",
          "rendering.generators.rest_assured._step"),
         "the method and path are split from it — with no trigger there is no call",
         affects_artefact=True,
         concerns=(BEHAVIOUR, REQUEST)),
     ModelFact(
-        "Transition", "guard", (PROSE, PAYLOAD, ARTEFACT),
+        "Transition", "guard", (PROSE,),
         ("rendering.test_case.render", "rendering.payload._step_payload",
          "rendering.generators._data.lines"),
         "the precondition a case must establish, and the data requirement it "
@@ -275,7 +294,7 @@ CONSUMED: tuple[ModelFact, ...] = (
         "enforced at the point of generation",
         concerns=(REVIEW,)),
     ModelFact(
-        "Transition", "inputs", (PROSE, PAYLOAD, ARTEFACT),
+        "Transition", "inputs", (PROSE,),
         ("rendering.test_case.input_condition", "rendering.payload._act_detail",
          "rendering.generators._data.lines"),
         "what a caller must send. A POST with a recovered body used to be emitted "
@@ -292,21 +311,7 @@ CONSUMED: tuple[ModelFact, ...] = (
         graph_property="inputs", affects_artefact=True,
         concerns=(REQUEST, DATA)),
     ModelFact(
-        "Transition", "security", (PAYLOAD, ARTEFACT),
-        ("rendering.payload._act_detail", "rendering.generators.rest_assured._step"),
-        "that a scheme applies. The credential itself is never carried (X-6e).\n\n"
-        "**Empty on every node in practice.** Synthesis carries the endpoint's "
-        "declared security onto a REJECTION transition and not onto the ordinary "
-        "ones, so 0 of 30 `ApiCall` nodes hold this while 13 of them reach a real "
-        "declaration one hop away on `Endpoint.security_schemes`. Prefixing an "
-        "empty duplicate `c_` claims it answers 'how do I call this' when the "
-        "answer is on the endpoint — recorded here rather than left to be "
-        "discovered by a reader who trusts the prefix",
-        # See `inputs`: the `_json` storage suffix is dropped.
-        graph_property="security",
-        concerns=(REQUEST,)),
-    ModelFact(
-        "Transition", "outcome_status", (PROSE, PAYLOAD, ARTEFACT),
+        "Transition", "outcome_status", (PROSE,),
         ("rendering.test_case.observable_result", "rendering.payload._act_detail",
          "rendering.generators.rest_assured._step"),
         "the status a case asserts. Absent, the emitter states that asserting one "
@@ -314,27 +319,7 @@ CONSUMED: tuple[ModelFact, ...] = (
         affects_artefact=True,
         concerns=(RESPONSE, BEHAVIOUR)),
     ModelFact(
-        "Transition", "media_types", (PAYLOAD, ARTEFACT),
-        ("rendering.payload._assert_detail",
-         "rendering.generators.rest_assured._expectations"),
-        "what the endpoint PRODUCES (synthesis.py:411 reads `produces`), so it is "
-        "asserted on the response in `.then()`. Setting it on the request instead "
-        "would claim something different and would be wrong",
-        affects_artefact=True,
-        concerns=(RESPONSE,)),
-    ModelFact(
-        "Transition", "guard_anchor", (PAYLOAD, ARTEFACT),
-        ("rendering.payload._step_payload", "rendering.generators._data.guard_lines"),
-        "T-9a: the guard's own `file:line@commit`. A condition a reviewer cannot "
-        "trace is one they take on trust, and the generated test now says which "
-        "line its precondition came from",
-        # NOT evidence: the anchor moves whenever code moves. Revoking approval
-        # on a refactor that changed no behaviour would train reviewers to
-        # re-approve without reading, which is worse than not checking.
-        affects_artefact=False,
-        concerns=(PROVENANCE,)),
-    ModelFact(
-        "Transition", "response_body", (PROSE, PAYLOAD, ARTEFACT),
+        "Transition", "response_body", (PROSE,),
         ("rendering.test_case.observable_result", "rendering.payload._assert_detail",
          "rendering.generators.rest_assured._expectations"),
         "the declared body type. Empty means NO body — `ResponseEntity<Void>` is "
@@ -343,7 +328,7 @@ CONSUMED: tuple[ModelFact, ...] = (
         affects_artefact=True,
         concerns=(RESPONSE,)),
     ModelFact(
-        "Transition", "guard_wording", (PROSE, PAYLOAD, ARTEFACT),
+        "Transition", "guard_wording", (PROSE,),
         ("rendering.test_case.render", "rendering.payload._step_payload",
          "rendering.generators._data.guard_lines"),
         "the guard in business language. The raw guard is never overwritten — "
@@ -355,7 +340,7 @@ CONSUMED: tuple[ModelFact, ...] = (
         affects_artefact=False,
         concerns=(PRESENTATION,)),
     ModelFact(
-        "Transition", "data_requirements", (PROSE, PAYLOAD, ARTEFACT),
+        "Transition", "data_requirements", (PROSE,),
         ("mbt.techniques.analyse_constraints", "mbt.criteria._boundary_coverage",
          "rendering.payload.build_payload", "rendering.generators._data.lines"),
         "GD-3's declared constraints an input must violate to reach a rejection. "
@@ -371,7 +356,7 @@ CONSUMED: tuple[ModelFact, ...] = (
         affects_artefact=False,
         concerns=(DATA,)),
     ModelFact(
-        "Transition", "checks", (PROSE, PAYLOAD, ARTEFACT),
+        "Transition", "checks", (PROSE,),
         ("mbt.criteria.guard_conditions", "rendering.payload._step_payload",
          "rendering.generators._data.guard_lines"),
         "one condition, at one line, in its evaluation order — a test data "
@@ -394,7 +379,7 @@ CONSUMED: tuple[ModelFact, ...] = (
         "the machine cannot be indexed or walked",
         concerns=(IDENTITY,)),
     ModelFact(
-        "State", "name", (PROSE, PAYLOAD, ARTEFACT),
+        "State", "name", (PROSE,),
         ("rendering.test_case.observable_result", "rendering.payload._step_payload",
          "rendering.generators.playwright._step"),
         "what the case says it reached. A case is a transition AND the state it "
@@ -402,7 +387,7 @@ CONSUMED: tuple[ModelFact, ...] = (
         "what makes it right, and a reader could not tell one 200 from another",
         concerns=(IDENTITY, PRESENTATION)),
     ModelFact(
-        "State", "surface", (GATE, PAYLOAD),
+        "State", "surface", (GATE,),
         ("rendering.payload._act_detail", "rendering.generators.select_for"),
         "which emitter a case routes to, and which branch of the act detail applies",
         concerns=(BEHAVIOUR,)),
@@ -417,17 +402,7 @@ CONSUMED: tuple[ModelFact, ...] = (
         "the G1 gate's outstanding list",
         concerns=(REVIEW,)),
     ModelFact(
-        "State", "page", (PAYLOAD, ARTEFACT),
-        ("rendering.payload._assert_detail",
-         "rendering.generators.playwright._step"),
-        "which page the state belongs to — a UI test that does not say where it "
-        "is has not said much",
-        # `_act_detail` carried this only alongside a non-empty `condition`
-        # (payload.py:106), so a page with no condition never reached the payload
-        # at all. `_assert_detail` carries it unconditionally.
-        concerns=(RESPONSE,)),
-    ModelFact(
-        "State", "condition", (PROSE, PAYLOAD, ARTEFACT),
+        "State", "condition", (PROSE,),
         ("rendering.test_case.precondition_of", "rendering.payload._act_detail",
          "rendering.generators.playwright._step"),
         "what the page presents, which is what a UI tester actually asserts",
@@ -453,6 +428,30 @@ OWED: dict[tuple[str, str], str] = {}
 # ---------------------------------------------------------------------------
 
 NOT_CONSUMED: dict[tuple[str, str], str] = {
+    # **The five that went with the generators.** Each reached `payload` and
+    # `artefact` and nothing else, so removing those destinations left them read
+    # by nobody. Recorded rather than deleted: the model still carries them, and
+    # "carried but unread" is the state this table exists to make visible.
+    # `GENERATOR_ONLY` above is the same list, addressable in one place.
+    ("Transition", "id"):
+        "the stable identity a generated method was named from. Still the key "
+        "everything joins on; nothing RENDERS it. Returns if a case must print "
+        "the transition it came from.",
+    ("Transition", "security"):
+        "the declared scheme, which became an auth comment in the emitted "
+        "source. `auth_facts` reads SecurityScheme from the graph instead. "
+        "Returns when a rendered case states what the caller must present.",
+    ("Transition", "media_types"):
+        "the content types a runner set as headers. Returns when a case must "
+        "distinguish two outcomes differing only by representation.",
+    ("Transition", "guard_anchor"):
+        "`file:line@commit` for the guard, written into the emitted test as a "
+        "comment. Still landed as evidence (T-9a) and shown by the review UI; it "
+        "no longer reaches a case. Returns when prose cites its source line.",
+    ("State", "page"):
+        "which page a ui state belongs to, used to pick a Playwright locator. "
+        "Still carried for identity and display. Returns when a ui case names "
+        "the screen it acts on.",
     ("Transition", "source_state_unresolved"):
         "§5.8's honesty flag, for review and reporting rather than generation. "
         "Read by `server.get_model` and `landing`. Returns when a case must say "
@@ -518,6 +517,17 @@ GRAPH_CONCERNS: dict[str, tuple[str, ...]] = {
     "lifecycle_state": (REVIEW,),
     "source_episode_id": (PROVENANCE,),
     "extraction_method": (PROVENANCE,),
+    # **Classified here since the generators left.** Their concerns used to come
+    # from their `ModelFact`; the facts moved to `NOT_CONSUMED` when `payload`
+    # and `artefact` were removed, and a property on the node still has to say
+    # what it is for — "generation does not consume it" is no excuse, because it
+    # is landed either way.
+    "security": (REQUEST,),
+    "media_types": (RESPONSE,),
+    "guard_anchor": (PROVENANCE,),
+    # A `ui` State's page. It picked a Playwright locator and now picks nothing,
+    # but it is still how a reader tells two states on different screens apart.
+    "page": (IDENTITY, PRESENTATION),
     # `landing` writes these under names that differ from the dataclass field.
     "guard_expression": (BEHAVIOUR, DATA),
     "inputs_json": (REQUEST, DATA),

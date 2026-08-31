@@ -18,9 +18,23 @@ def graph(monkeypatch):
     def rows(cypher: str, **params):
         if "security_schemes IS NOT NULL" in cypher:
             return []
-        if "location:'header'" in cypher:
-            return [{"name": "userId", "endpoints": 6, "required": True},
-                    {"name": "mfaSessionId", "endpoints": 5, "required": True}]
+        # `auth_facts` reads headers out of the transition's `c_inputs` now that
+        # `Parameter` is staged out — one row per transition, decoded and
+        # counted in Python because Community has no APOC to parse JSON in
+        # Cypher. Two headers over six and five endpoints, expressed the way
+        # landing actually writes them.
+        if "e.id AS endpoint" in cypher:
+            import json
+            both = json.dumps([
+                {"name": "userId", "location": "header", "required": True,
+                 "type_name": "java.lang.String", "constraints": []},
+                {"name": "mfaSessionId", "location": "header", "required": True,
+                 "type_name": "java.lang.String", "constraints": []}])
+            only_user = json.dumps([
+                {"name": "userId", "location": "header", "required": True,
+                 "type_name": "java.lang.String", "constraints": []}])
+            return ([{"inputs": both, "endpoint": f"ep:{i}"} for i in range(5)]
+                    + [{"inputs": only_user, "endpoint": "ep:5"}])
         if "count(e) AS n" in cypher:
             return [{"n": 12}]
         if "is_initial" in cypher:
@@ -308,3 +322,145 @@ def test_only_the_route_that_binds_the_journey_needs_one(graph, academy):
     assert A.ask("give me a curl for Métis")["answered_by"] == "call_recipe"
     assert A.ask("what token does Métis need")["answered_by"] == "auth_facts"
     assert academy == []
+
+
+# --------------------------------------------------------------------------
+# More than one academy in one graph
+# --------------------------------------------------------------------------
+
+class _Rows(list):
+    def single(self):
+        return self[0] if self else None
+
+
+class _FakeSession:
+    """Answers the two corpus queries and nothing else."""
+
+    def __init__(self, roots=(), lessons=()):
+        self.roots, self.lessons = tuple(roots), tuple(lessons)
+
+    def run(self, cypher, params=None, **kw):
+        if "toLower(root.name) AS name" in cypher:
+            return _Rows({"name": n} for n in self.roots)
+        if "collect(DISTINCT l.id) AS ids" in cypher:
+            return _Rows([{"ids": list(self.lessons)}])
+        return _Rows()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+@pytest.fixture
+def two_corpora(monkeypatch):
+    """A graph holding a Métis academy and an Athena one."""
+    fake = _FakeSession(roots=("metis", "athena"),
+                        lessons=("lesson:01-what-athena-is",))
+    monkeypatch.setattr("metis_mcp.mbt.graph_session.session", lambda: fake)
+    return fake
+
+
+def test_a_landed_corpus_is_routable_without_an_edit(graph, two_corpora, academy):
+    """**The failure this closes.** A second academy — `system: athena` — landed,
+    embedded and correctly ranked by `search_knowledge`, could not be reached
+    through `ask`: no word in a question about Athena appears in a vocabulary
+    hand-listed about Métis. The routing vocabulary now comes from the corpus
+    roots in the graph, so landing an academy is enough."""
+    assert A.ask("what modules does Athena have")["answered_by"] == "academy"
+    assert academy == ["what modules does Athena have"]
+
+
+def test_the_hand_listed_words_still_route(graph, two_corpora, academy):
+    """`g1`, `quarantine` and the rest name Métis without saying it, and no
+    corpus root would supply them."""
+    assert A.ask("why is everything sitting in Quarantine")["answered_by"] == "academy"
+
+
+def test_a_question_naming_no_system_is_not_routed_to_a_corpus(graph, two_corpora,
+                                                               academy):
+    out = A.ask("why was this designed the way it is")
+    assert out.get("answered_by") is None
+    assert academy == []
+
+
+def test_naming_a_corpus_scopes_the_answer_to_it(two_corpora):
+    """Asked "what is Athena and what does it collect", search returned
+    `What Métis does not do` first — a confident answer from the wrong system,
+    which is worse than no answer."""
+    from metis_mcp.authoring import _academy_hits
+
+    mixed = [{"label": "Lesson", "id": "lesson:01-what-metis-does-not-do"},
+             {"label": "Lesson", "id": "lesson:01-what-athena-is"}]
+    import metis_mcp.mbt.graph_loader as gl
+    orig = gl.search_knowledge
+    gl.search_knowledge = lambda s, q, limit=20: mixed
+    try:
+        hits = _academy_hits(two_corpora, "what is Athena and what does it collect")
+    finally:
+        gl.search_knowledge = orig
+
+    assert [h["id"] for h in hits] == ["lesson:01-what-athena-is"], (
+        "a question naming one corpus must not be answered from another")
+
+
+def test_two_corpus_names_scope_to_neither(two_corpora):
+    """"How does Métis model Athena" is a question about the pair. Picking one
+    would answer half of it while looking certain."""
+    from metis_mcp.authoring import _named_corpus
+
+    assert _named_corpus(two_corpora, "how does métis model athena") == ""
+    assert _named_corpus(two_corpora, "what modules does athena have") == "athena"
+
+
+def test_the_corpus_name_is_stripped_before_searching(two_corpora):
+    """The word that ROUTES a question to a corpus appears in every document in
+    it, so it cannot say which one answers."""
+    from metis_mcp.authoring import _for_search, corpus_words
+
+    query = _for_search("what modules does Athena have", corpus_words(two_corpora))
+    assert "athena" not in query.lower()
+    assert "modules" in query
+
+
+def test_the_suggestion_does_not_claim_the_academy_is_about_metis(two_corpora):
+    """It said "the academy is about Métis itself" and "ask again naming Métis"
+    — false with a second corpus landed, and advice that would not have worked."""
+    from metis_mcp.authoring import _academy_suggestion
+
+    suggestion = _academy_suggestion("what is the definition of done")
+    if suggestion is None:
+        return                                    # nothing matched here
+    assert "Métis" not in suggestion["note"]
+
+
+def test_the_provider_spec_resolves_without_loading_the_model(monkeypatch):
+    """**One resolver, and asking must be cheap.** `rebuild_graph.sh` has to name
+    a provider on the `embed` command line, and a shell script re-deriving
+    "environment, then the config file" would be a second answer to one question.
+    Returning the STRING matters too: loading a provider imports the model and,
+    the first time, downloads it — asking "is anything configured" must not."""
+    from metis_mcp.retrieval import PROVIDER_ENV, configured_provider_spec
+
+    monkeypatch.setenv(PROVIDER_ENV, "some.module:Provider")
+    assert configured_provider_spec() == "some.module:Provider"
+
+
+def test_no_configured_provider_is_an_empty_spec_not_an_error(monkeypatch):
+    """A default install has none, and the rebuild reports that and carries on."""
+    from metis_mcp.retrieval import PROVIDER_ENV, configured_provider_spec
+
+    monkeypatch.delenv(PROVIDER_ENV, raising=False)
+    monkeypatch.setattr("metis_mcp.mbt.graph_session._load_config",
+                        lambda: ({}, None))
+    assert configured_provider_spec() == ""
+
+
+def test_the_config_file_supplies_the_spec_when_the_environment_does_not(monkeypatch):
+    from metis_mcp.retrieval import PROVIDER_ENV, configured_provider_spec
+
+    monkeypatch.delenv(PROVIDER_ENV, raising=False)
+    monkeypatch.setattr("metis_mcp.mbt.graph_session._load_config",
+                        lambda: ({"embedding": {"provider": "pkg.mod:P"}}, None))
+    assert configured_provider_spec() == "pkg.mod:P"

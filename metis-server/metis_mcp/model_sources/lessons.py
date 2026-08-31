@@ -242,6 +242,10 @@ def plan_lessons(directory: str | Path, *, job_id: str = "manual",
     # The root of this collection. Created once, before any lesson, so the
     # topics below have something to attach to whatever order they arrive in.
     corpus = system_of(directory)
+    # The corpus names the system it documents, and that is exactly the project
+    # these nodes belong to — declared once in the corpus README, so `m_project`
+    # and the root of the topic tree cannot disagree about what this is.
+    plan.project = corpus
     corpus_topic_id = f"topic:{corpus}"
     add_node("Topic", {"id": corpus_topic_id, "name": corpus,
                        "source_episode_id": episode_id})

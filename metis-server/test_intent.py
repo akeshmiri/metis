@@ -269,28 +269,22 @@ def test_the_contract_changes_the_content_hash(tmp_path):
 
 
 def test_a_refusing_contract_is_caught_not_raised():
-    """`OpenAPIRefused` and `StructureRefused` derive from `Exception`, not
-    `ValueError` — a caller catching `(OSError, ValueError)` let a malformed
-    document crash the whole command instead of reporting it and continuing
-    with the others. X-5 stops a run; it does not traceback."""
+    """`OpenAPIRefused` derives from `Exception`, not `ValueError` — a caller
+    catching `(OSError, ValueError)` let a malformed document crash the whole
+    command instead of reporting it and continuing with the others. X-5 stops a
+    run; it does not traceback.
+
+    `StructureRefused` was the second one checked here and went with the UI
+    structure layer, which also left `CONTRACT_BUILDERS` with a single entry —
+    so `test_both_builders_share_one_signature`, which existed because two
+    arities crashed the dispatcher, no longer has two to compare.
+    """
     from code_analysis.openapi import OpenAPIRefused
     from metis_mcp.model_sources.spec_build import contract_errors
-    from metis_mcp.model_sources.structure import StructureRefused
 
     caught = contract_errors()
-    assert OpenAPIRefused in caught and StructureRefused in caught
-
-
-def test_both_builders_share_one_signature():
-    """They are dispatched from one table, and two arities meant the dispatcher
-    crashed on whichever it called second."""
-    import inspect
-
-    from metis_mcp.model_sources.spec_build import CONTRACT_BUILDERS
-
-    signatures = {name: list(inspect.signature(fn).parameters)
-                  for name, fn in CONTRACT_BUILDERS.items()}
-    assert len(set(map(tuple, signatures.values()))) == 1, signatures
+    assert OpenAPIRefused in caught
+    assert ValueError in caught and OSError in caught
 
 
 def test_the_endpoint_links_back_to_its_specification(tmp_path):

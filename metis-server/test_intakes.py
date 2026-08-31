@@ -126,25 +126,6 @@ def test_a_registered_source_and_a_declared_intake_agree(declared):
             f"`{source}` is a registered model source and no intake declares it")
 
 
-def test_the_database_intake_has_a_reader_and_says_what_it_cannot_do(declared):
-    """This asserted `status: declared` and "NO READER EXISTS" until the reader
-    was built — and it failed the moment it was, which is the point of checking a
-    declaration against the code instead of reading it.
-
-    What it must still say is the honest part: the fixture path is what the suite
-    exercises, and the live connection is opt-in because a driver is an optional
-    extra and the suite must keep running with none installed.
-    """
-    db = intakes.get("database")
-    assert db is not None
-    assert db["status"] == intakes.PARTIAL
-    assert db["reader"] == "code_analysis.db_catalogue"
-    assert db["access"] == "read_only_connection"
-    limits = " ".join(db["limits"])
-    assert "FIXTURE path is what the test suite exercises" in limits
-    assert "NO row data" in limits, "X-7a, stated where a reader will see it"
-
-
 def test_the_catalogue_reader_is_importable_without_any_driver():
     """The property that matters more than convenience: a suite that needs a
     database is a suite people stop running. No `psycopg`, no `oracledb`, no
@@ -169,8 +150,9 @@ def test_the_web_intake_records_that_a_selector_comes_from_code(declared):
     declaration carries the correction so the next person does not repeat it."""
     web = intakes.get("web")
     assert any("selector" in limit for limit in web["limits"])
-    structure = intakes.get("structure")
-    assert any("does NOT carry selectors" in limit for limit in structure["limits"])
+    # The `structure` intake was the other half of this pair and went with the UI
+    # structure layer. What the correction was ABOUT still holds: a selector is
+    # recovered, never authored, and `web` is where that is declared.
 
 
 # --------------------------------------------------------------------------
@@ -202,7 +184,6 @@ def test_the_capability_map_states_every_limit_not_just_the_working_parts(declar
     that lists only what works is the thing this whole file exists to prevent.
     """
     text = intakes.describe()
-    assert "database" in text
     for intake in declared:
         if intake["status"] != intakes.WORKING:
             assert intake["id"] in text, intake["id"]
@@ -315,15 +296,6 @@ def test_every_declared_intake_command_is_a_command_the_cli_registers():
     assert not missing, "\n  ".join(missing)
 
 
-def test_the_database_intake_declares_the_command_that_runs_it():
-    """The one the audit found unreachable."""
-    from metis_mcp import intakes
-
-    database = next(i for i in intakes.all_intakes() if i["id"] == "database")
-    assert tuple(database["command"]) == ("data", "catalogue")
-    assert _command_is_invokable(database["command"])
-
-
 # ---------------------------------------------------------------------------
 # The other direction: a pack that exists and no intake declares
 # ---------------------------------------------------------------------------
@@ -411,7 +383,7 @@ def test_the_intakes_that_can_say_where_a_timestamp_comes_from_do(declared):
     nature rather than implying a real timestamp exists.
     """
     have = {i["id"] for i in declared if i.get("temporal")}
-    assert {"code", "openapi", "database", "uif"} <= have
+    assert {"code", "openapi", "uif"} <= have
 
 
 def test_the_temporal_pitfall_is_named_and_not_just_the_happy_path(declared):
@@ -421,9 +393,16 @@ def test_the_temporal_pitfall_is_named_and_not_just_the_happy_path(declared):
     code = next(i for i in declared if i["id"] == "code")
     assert "squash" in code["temporal"]["known_pitfalls"]
 
-    database = next(i for i in declared if i["id"] == "database")
-    assert "undated" in database["temporal"]["known_pitfalls"], (
-        "an extraction-time default must be declared as such, not as a date")
+    # The `database` intake carried the second example — an extraction-time
+    # default declared as such rather than as a date — and went with the
+    # database layer. Every remaining intake that declares a temporal source
+    # must still declare its pitfall, which is the general form of both.
+    for intake in declared:
+        temporal = intake.get("temporal") or {}
+        if temporal.get("t_recorded_source"):
+            assert temporal.get("known_pitfalls"), (
+                f"{intake['id']} declares where its timestamp comes from and "
+                f"not how that goes wrong")
 
 
 # --------------------------------------------------------------------------
@@ -502,3 +481,47 @@ def test_these_guards_can_fail():
     # former state — must not be silently acceptable.
     assert ANCHORS["swagger"][0] not in anchored, (
         "this fixture assumes OpenApiItem is not a tracker intake")
+
+
+# --------------------------------------------------------------------------
+# A refusal must name a flag the command accepts
+# --------------------------------------------------------------------------
+
+def test_analyse_accepts_every_flag_its_own_refusals_name():
+    """**Advice that cannot be followed is worse than none.**
+
+    `metis analyse` is the one-command front end over `workflow run model-build`,
+    and two stages it runs refuse with an instruction:
+
+      extract  "... and no --service was given ... pass --service to scope it"
+      validate "To proceed accepting that risk, pass --allow-unverifiable."
+
+    Both flags existed only on `workflow run`, so `analyse` on a multi-module
+    repository was a dead end: it printed what to do and rejected it. Worse for
+    `--service`, `cmd_analyse` then hardcoded `args.service = ""`, so adding the
+    flag alone would have left the refusal identical with the flag supplied.
+    """
+    import subprocess
+    import sys
+
+    help_text = subprocess.run(
+        [sys.executable, "-m", "metis_mcp.mbt.cli", "analyse", "--help"],
+        capture_output=True, text=True).stdout
+
+    for flag in ("--service", "--allow-unverifiable"):
+        assert flag in help_text, (
+            f"a stage `analyse` runs tells the reader to pass {flag}, and "
+            f"`analyse` does not accept it")
+
+
+def test_analyse_does_not_discard_the_service_it_was_given():
+    """The half a flag alone would not have fixed. `cmd_analyse` set
+    `args.service = ""` after parsing, so the value never reached the stage."""
+    import inspect
+
+    from metis_mcp.mbt import cli
+
+    source = inspect.getsource(cli.cmd_analyse)
+    assert 'args.service = ""' not in source, (
+        "the service is being overwritten after it was parsed")
+    assert "args.service" in source, "the service must still be threaded through"

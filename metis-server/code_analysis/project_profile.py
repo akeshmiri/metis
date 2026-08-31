@@ -252,12 +252,42 @@ def load_for(repo: str | Path, project: str = "") -> ProjectProfile:
     """
     name = project or project_name_for(repo)
     profile = load_project(name)
+    # **`stray` was never assigned**, so this raised `NameError` for every
+    # profile that loaded — the whole success path of `load_for`, and with it
+    # `metis analyse` on any project. Nothing caught it: the only test of this
+    # function asserts the MISSING-profile refusal, which raises above; and
+    # `authoring._base_url` calls it inside `except Exception`, so the one
+    # caller that ran in tests swallowed the error and returned "".
+    #
+    # An in-repo profile is the thing being reported. That location is where
+    # `init` used to write, and a checkout that still carries one is exactly the
+    # case F-10 is about: the file somebody just edited is the one being ignored.
+    stray = Path(repo) / ".metis" / "project.json"
     if stray.exists():
         # F-10: what was found and not used is named.
         profile.notes.append(
             f"{stray} exists and was ignored — the profile in use is "
             f"{profile.path}. Delete the stray one so there is a single answer.")
     return profile
+
+
+def all_excludes(profile) -> tuple[str, ...]:
+    """Every exclude any journey declares, de-duplicated and ordered.
+
+    **The UNION, because the CPG is built once for the whole checkout.** One
+    parse serves every journey, so a pattern is only safe to apply at parse time
+    if excluding it cannot hurt another journey. In practice these are `.history`
+    and test trees — noise for all of them. A journey that needs a path another
+    excludes should say so in review; silently parsing it for one and not the
+    other would make two journeys disagree about what the code contains.
+    """
+    seen, out = set(), []
+    for journey in getattr(profile, "journeys", ()):
+        for pattern in getattr(journey, "exclude", ()):
+            if pattern and pattern not in seen:
+                seen.add(pattern)
+                out.append(pattern)
+    return tuple(out)
 
 
 def format_profile(profile: ProjectProfile) -> str:

@@ -62,23 +62,31 @@ def test_the_label_set_is_closed_and_each_label_is_argued():
     below, because a second representation of one fact is only safe while
     something proves they agree.
 
-    **Read this before adding the fifty-seventh.** D-1 opens by saying the previous
+    **Read this before adding the thirty-eighth.** D-1 opens by saying the previous
     ontology carried ~45 labels where this application needed twelve, and that
     keeping the rest "would advertise capability that does not exist — the precise
-    failure this specification corrects". The count is past that again.
+    failure this specification corrects". The count reached 65 and was cut back.
 
-    That is not automatically the same mistake. Every label added since carries a
-    named writer and a named reader, which the original thirty-three did not, and
-    the business, Web and data layers were each asked for by name to answer a
-    question the graph genuinely could not. But the number is a warning to heed
-    rather than explain away, and the check on any further growth is the one this
-    test enforces: name the writer, name the reader, and if either is "a file
-    somebody will write one day", stage it in §8.7 instead.
+    The 2026-08-31 re-baseline removed 28: the database layer, the UI widget
+    taxonomy, `Method`/`Function`, and `Parameter` — the last of those because a
+    parameter node held the same five values as its entry in the transition's
+    own `c_inputs` and nothing else but bookkeeping. Each had a named writer and a named
+    reader and still failed a stricter bar — **a label earns a node when a
+    REQUIREMENT question needs it as one**. Measured before removing any of
+    them: a transition could reach only nine labels, the database layer was
+    reachable from no transition at all, and 69% of a real project's graph was
+    code structure. Métis is a requirement tool over a state machine; code is
+    where requirements are recovered FROM, not a thing to mirror.
+
+    The check on any further growth is what this test enforces: name the writer,
+    name the reader, say which requirement question needs it as a node, and if
+    any of the three is "a file somebody will write one day", stage it in §8.7.
     """
-    assert len(KNOWN_LABELS) == 65, (
-        f"the ontology is sixty-five labels (spec D-1); found {len(KNOWN_LABELS)}: "
-        f"{sorted(KNOWN_LABELS)}. Adding one requires naming its writer and its "
-        f"reader, not just its purpose."
+    assert len(KNOWN_LABELS) == 37, (
+        f"the ontology is thirty-seven labels (spec D-1); found "
+        f"{len(KNOWN_LABELS)}: {sorted(KNOWN_LABELS)}. Adding one requires "
+        f"naming its writer, its reader, and the requirement question that "
+        f"needs it as a node."
     )
 
 
@@ -125,30 +133,35 @@ def test_the_module_docstring_states_the_real_count():
 # D-1 demands a named writer AND a named reader. A label with only a writer is
 # how an ontology accretes — `Revision` is declared here with neither and is the
 # standing example of what this test exists to prevent.
+# `Query`, `Method`, `Route` and `DatasourceItem` were here until the
+# 2026-08-31 re-baseline. Their labels went with the database layer, the UI
+# structure layer and the code mirror: a requirement is not stated about a
+# method, a table or a widget, and none of the four could be reached from a
+# transition.
 EVIDENCE_LAYER = {
     "Endpoint": ("raw_landing", "Transition-[:DERIVED_FROM]->"),
-    "Parameter": ("raw_landing", "Transition-[:EXERCISES]->"),
-    "Class": ("raw_landing", "Parameter-[:OF_TYPE]-> and Transition-[:EXPECTS]->"),
+    "Class": ("raw_landing", "Transition-[:EXPECTS|REQUIRES]->"),
     # A specialisation of Class, so it is reached by the same edges — which is
     # exactly why every one of them must be matched with
     # `label_expression("Class")`. Its reader is also `Field-[:OF_TYPE]->`, the
     # nested-payload edge: a field of an enum type is how a test case learns its
     # value space is closed and enumerable rather than needing a boundary
     # analysis.
-    "Enum": ("raw_landing", "Field-[:OF_TYPE]-> and Parameter-[:OF_TYPE]->"),
+    "Enum": ("raw_landing", "Class-[:OF_TYPE]-> — the nested-payload edge: a "
+             "field of an enum type is how a case learns its value space is "
+             "closed and enumerable rather than needing a boundary analysis"),
     # X-19a. Written as its dialect (`Postgres`/`Oracle`/`MySql`/`JpaQuery`), so
     # every one of these is reached through `label_expression("Query")`. The
     # reader is what makes a table reachable from a transition at all.
-    "Query": ("code_analysis.jpa via raw_landing",
-              "Method-[:ISSUES]-> and Query-[:QUERIES]->Table"),
+
     # `Field` was here until X-6d. A field is a property of its type now, and
     # `Transition-[:REQUIRES]->Class` names the type whose constraints a case
     # must satisfy — see STAGED_OUT for what would bring the label back.
-    "Method": ("raw_landing", "Endpoint-[:HANDLED_BY]->"),
+
     "DeclaredOutcome": ("raw_landing", "Transition-[:DERIVED_FROM]->"),
     "Check": ("raw_landing", "Transition-[:CONSTRAINED_BY]->"),
     "ExceptionMapping": ("raw_landing", "ExceptionMapping-[:HANDLED_BY]->Method"),
-    "Route": ("raw_landing", "Route-[:RENDERS]->Page"),
+
     # The five intake anchors. Writer: `intake_landing`, from a UIF's
     # `scope` block. Reader: the traceability chain §7.8 ends on --
     # TestCase -> Scenario -> Transition -> AcceptanceCriterion -> Requirement
@@ -157,7 +170,7 @@ EVIDENCE_LAYER = {
     "ConfluenceItem": ("intake_landing", "ConfluenceItem-[:REPRESENTS]->Requirement"),
     "OpenApiItem": ("intake_landing", "OpenApiItem-[:REPRESENTS]->Requirement"),
     "ZephyrItem": ("intake_landing", "ZephyrItem-[:REPRESENTS]->Requirement"),
-    "DatasourceItem": ("intake_landing", "DatasourceItem-[:REPRESENTS]->Requirement"),
+
     "CodeItem": ("intake_landing", "CodeItem-[:REPRESENTS]->Requirement"),
     # The two document labels. Writer: `specgen`. Reader: the MCP surface's
     # `get_spec` / `get_entity`, which is the whole point of putting the
@@ -200,9 +213,13 @@ def test_every_evidence_label_participates_in_the_catalogue():
 # thing a transition must reach is the TYPE — `Transition-[:REQUIRES]->Class` —
 # and the field detail travels on it. Dropping the entry without repointing
 # REQUIRES would have removed the requirement rather than restated it.
+#
+# `Parameter` left the same way: what a caller sends is a value inside the
+# transition's own `c_inputs`, and a transition does not need an edge to reach
+# its own property. `Class` still has to be reachable, because the constraints
+# a case is chosen from live there and nowhere else.
 REACHED_FROM_TRANSITION = {
-    "Endpoint", "DeclaredOutcome", "ExceptionMapping",
-    "Parameter", "Class", "Check",
+    "Endpoint", "DeclaredOutcome", "ExceptionMapping", "Class", "Check",
 }
 
 
@@ -578,21 +595,20 @@ def test_the_marker_carries_no_properties_of_its_own():
 def test_relationships_with_no_writer_are_named_as_such():
     """D-1 wants a named writer AND a named reader for everything catalogued.
 
-    Three relationships have neither: `LINKS_TO` (Jira issue links, which
-    `intake_landing` would write), and `ON_EVENT`/`RENDERS` (the UI surface,
-    whose packs are declared `status: unwired`). They stay in the catalogue
-    because each has a real intended writer — but a gap nobody has written down
-    is a gap somebody rediscovers, so this asserts the comment is there.
+    `LINKS_TO` (Jira issue links, which `intake_landing` would write) has
+    neither. It stays in the catalogue because it has a real intended writer —
+    but a gap nobody has written down is a gap somebody rediscovers, so this
+    asserts the comment is there.
+
+    `ON_EVENT` and `RENDERS` were the other two. They joined `Event`, `Route`
+    and `Page`, which the 2026-08-31 re-baseline staged out — so the gap closed
+    by the labels leaving rather than by a writer arriving.
 
     When a writer appears, delete its name from here and from the comment.
     """
     source = Path("metis_mcp/ontology/labels.py").read_text()
-    for rel, why in (("LINKS_TO", "written by nothing"),
-                     ("ON_EVENT", "nothing writes either"),
-                     ("RENDERS", "nothing writes either")):
-        assert rel in source
+    assert "LINKS_TO" in source
     assert "Catalogued, written by nothing" in source
-    assert "status: unwired" in source
 
 
 # ---------------------------------------------------------------------------

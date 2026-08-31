@@ -4,9 +4,9 @@ Land a product's Spec Kit acceptance criteria into the graph.
 **This exists because its predecessor did not.** The 66 criteria of the pilot
 estate were loaded by a script under `/tmp` that no longer exists, so when the
 graph was lost there was no way to rebuild the intent side at all -- the models
-could be re-extracted from committed sources and the criteria could not. RD-9
-says recovery is re-ingestion rather than migration, and that only works if every
-ingestion path is committed.
+could be re-extracted from committed sources and the criteria could not.
+Recovery is re-ingestion whenever there is no stored export to restore from
+(`metis storage`), and that only works if every ingestion path is committed.
 
 **What it does and does not claim.** It writes `AcceptanceCriterion` nodes with
 `provenance: code_derived` -- the weakest grade -- because the pilot estate's specs are

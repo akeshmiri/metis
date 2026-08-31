@@ -197,18 +197,35 @@ def configured_provider():
     results with no signal, which is the failure `load_provider` refuses one
     layer down.
     """
+    spec = configured_provider_spec()
+    return load_provider(spec) if spec else None
+
+
+def configured_provider_spec() -> str:
+    """The provider SPEC this deployment configured, or `""` — without loading it.
+
+    **Split out so there is one resolver, not two.** `rebuild_graph.sh` has to
+    name a provider on the `embed` command line (`--provider` is required, and
+    `load_provider` never defaults, on purpose). A shell script re-deriving
+    "environment, then the config file" would be a second answer to one question
+    — the mistake the password resolution in that same script exists to avoid.
+
+    Returning the string rather than the provider matters: loading one imports
+    the model and, the first time, downloads it. Asking "is anything configured"
+    must not do that.
+    """
     import os
 
     spec = os.environ.get(PROVIDER_ENV, "").strip()
-    if not spec:
-        try:
-            from metis_mcp.mbt.graph_session import _load_config
+    if spec:
+        return spec
+    try:
+        from metis_mcp.mbt.graph_session import _load_config
 
-            data, _ = _load_config()
-            spec = ((data or {}).get("embedding") or {}).get("provider", "").strip()
-        except Exception:                          # noqa: BLE001 - absent config
-            spec = ""
-    return load_provider(spec) if spec else None
+        data, _ = _load_config()
+        return ((data or {}).get("embedding") or {}).get("provider", "").strip()
+    except Exception:                              # noqa: BLE001 - absent config
+        return ""
 
 
 def load_provider(spec: str) -> EmbeddingProvider:

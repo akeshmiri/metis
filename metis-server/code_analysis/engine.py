@@ -332,6 +332,48 @@ def preflight(check_engine_version: bool = True) -> Preflight:
 # Cache
 # ---------------------------------------------------------------------------
 
+def _exclude_regex(patterns) -> str:
+    """Profile globs -> one `--exclude-regex` alternation.
+
+    The profile speaks globs (`**/src/test/**`) because that is what a person
+    writes and what `fnmatch` already reads elsewhere; `joern-parse` speaks
+    regex. Translating here keeps one vocabulary in the profile rather than
+    asking an author to know which tool consumes their pattern.
+
+    Deliberately small: `**` becomes "anything", `*` becomes "anything but a
+    separator", `?` one character, and everything else is escaped. A pattern it
+    cannot express would silently widen what is parsed, so nothing else is
+    interpreted.
+    """
+    import re
+
+    out = []
+    for pattern in patterns:
+        built, i = [], 0
+        while i < len(pattern):
+            if pattern.startswith("**/", i):
+                # ZERO or more directories. `.*/ ` would require at least one,
+                # so `**/.history/**` matched `a/.history/x` and missed
+                # `.history/x` at the repository root — which is exactly where
+                # an editor puts it.
+                built.append("(?:.*/)?")
+                i += 3
+            elif pattern.startswith("**", i):
+                built.append(".*")
+                i += 2
+            elif pattern[i] == "*":
+                built.append("[^/]*")
+                i += 1
+            elif pattern[i] == "?":
+                built.append("[^/]")
+                i += 1
+            else:
+                built.append(re.escape(pattern[i]))
+                i += 1
+        out.append("".join(built))
+    return "(" + "|".join(out) + ")"
+
+
 def cache_key(repo: Path, commit: str, language: str, engine_version: str) -> str:
     import hashlib
 
@@ -641,7 +683,8 @@ def constructor_param(framework: str) -> str:
 def extract(repo: str | Path, *, language: str, project: str,
             framework: str = "", project_annotations: dict | None = None,
             commit: str = "", refresh: bool = False,
-            skip_preflight: bool = False, drop_noise: bool = True) -> Extraction:
+            skip_preflight: bool = False, drop_noise: bool = True,
+            exclude: tuple[str, ...] = ()) -> Extraction:
     """Build a CPG and run both packs, or reuse what is already cached."""
     repo = Path(repo).resolve()
     if not skip_preflight:
@@ -655,8 +698,14 @@ def extract(repo: str | Path, *, language: str, project: str,
     commit = commit or head_commit(repo) or "unknown"
     # `drop_noise` folded in: without it, flipping the flag returned the previous
     # build from the cache and the change looked like it had no effect.
-    key = cache_key(repo, commit + ("" if drop_noise else "+all"), language,
-                    installed_version(home))
+    # `exclude` folded in for the reason `drop_noise` is: a profile that stopped
+    # excluding `.history` returned the previous build from the cache, reported
+    # "repo, commit, engine and packs all unchanged" — true, and incomplete —
+    # and the change looked like it had done nothing.
+    excludes = tuple(sorted(x for x in exclude if x))
+    key = cache_key(repo, commit + ("" if drop_noise else "+all")
+                    + ("" if not excludes else "+x:" + "|".join(excludes)),
+                    language, installed_version(home))
     out = cache_dir(project) / key
     cpg = out / "cpg.bin"
     packs = packs_for(framework)
@@ -689,8 +738,28 @@ def extract(repo: str | Path, *, language: str, project: str,
     table.write_text(annotation_table(framework, project_annotations))
     log.append(f"annotations: {len(table.read_text().splitlines()) - 1} declared")
 
-    _run([str(home / "joern-parse"), str(repo), "--language", language,
-          "--output", str(cpg)], "joern-parse")
+    # **Excluded at PARSE time, which is the only place it works.** The profile's
+    # `exclude` globs were read only by `project_profile.Journey.owns`, when
+    # deciding which journey a file belongs to — long after the CPG existed. So
+    # an editor's local history was parsed, and every snapshot of a controller
+    # produced its own endpoint: 462 nodes on Athena anchored in
+    # `.history/…/VersionController_20260514114505.java`, 330 of the 870
+    # Endpoint nodes. Adding `**/.history/**` to the profile changed nothing.
+    #
+    # `--exclude-regex` can only ignore MORE (see TEST_ROOTS above), which is
+    # exactly the semantics wanted: it narrows what is parsed and can never
+    # widen it.
+    parse = [str(home / "joern-parse"), str(repo), "--language", language,
+             "--output", str(cpg)]
+    if excludes:
+        # **After `--frontend-args`, because `joern-parse` has no such option.**
+        # Its own flags are `--output/--language/--namespaces`; exclusion belongs
+        # to the x2cpg frontend, and `joern-parse` passes everything after this
+        # separator to it verbatim. Passing `--exclude-regex` directly exits 1
+        # with a Scala stack trace.
+        parse += ["--frontend-args", "--exclude-regex", _exclude_regex(excludes)]
+        log.append(f"excluding {len(excludes)} pattern(s) at parse time")
+    _run(parse, "joern-parse")
     log.append(f"cpg: {cpg.stat().st_size // 1024} KB")
 
     # **A second CPG, rooted inside the test tree.** Every pack used to receive

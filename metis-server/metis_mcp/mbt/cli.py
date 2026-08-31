@@ -35,7 +35,7 @@ from metis_mcp.mbt.test_levels import (
 from metis_mcp.mbt.validation import (
     ValidationFailed, format_validation, require_valid, validate,
 )
-from metis_mcp.rendering import build_payload, format_case, render
+from metis_mcp.rendering import format_case, render
 from metis_mcp.review import ReviewFile, apply, export, format_audit
 from metis_mcp.review.roles import (
     CONFIRM_PUBLICATION, PUBLISHER, ROLES, Identity, NotPermitted, require,
@@ -694,11 +694,18 @@ def cmd_doctor(args) -> int:
 
 
 def cmd_init(args) -> int:
-    """Scaffold `.metis/project.json` inside the target repository.
+    """Scaffold `$METIS_HOME/profiles/<project>.json`, describing one repository.
+
+    **Not inside the repository, and this docstring used to say it was.** A
+    profile lives beside the machine's other Métis state so that "which database
+    did that write go to" stays answerable from the command alone — the same
+    reason a project-local `.metis/config.*` was removed. `load_for` REPORTS an
+    in-repo profile it finds and refuses to read it (F-10), which only works
+    while there is one place profiles actually live.
 
     What is mechanically knowable is filled in; every judgement is left marked
-    REPLACE, the way `.metis/config.yaml` already does. A plausible default for
-    a judgement is worse than a marker, because nobody revisits it.
+    REPLACE. A plausible default for a judgement is worse than a marker, because
+    nobody revisits it.
     """
     import json
 
@@ -737,7 +744,7 @@ def cmd_analyse(args) -> int:
     """
     from code_analysis.engine import EngineUnavailable, extract
     from code_analysis.project_profile import (
-        ProfileInvalid, ProfileMissing, load_for,
+        ProfileInvalid, ProfileMissing, all_excludes, load_for,
     )
 
     try:
@@ -775,6 +782,7 @@ def cmd_analyse(args) -> int:
                              framework=profile.framework,
                              project_annotations=profile.annotations,
                              commit=args.commit or "",
+                             exclude=all_excludes(profile),
                              refresh=args.refresh)
     except EngineUnavailable as e:
         print(f"REFUSED: {e}")
@@ -786,6 +794,13 @@ def cmd_analyse(args) -> int:
 
     args.workflow = "model-build"
     args.scope = args.scope or profile.project
+    # **`analyse` could not scope a monorepo at all.** The extract stage refuses
+    # a report spanning several deployables and says to "pass --service" — a
+    # flag only `workflow run` had, so the advice named something this command
+    # could not accept. Worse, the value was then hardcoded to `""` further
+    # down, so adding the flag alone would have changed nothing: the refusal
+    # would have stayed identical with the flag correctly supplied.
+    args.service = getattr(args, "service", "") or ""
 
     # **The source follows the surface.** `code` reads the two JVM pack reports;
     # `web` reads a UI pack's. Hardcoding `code` meant a ui journey handed a
@@ -810,7 +825,6 @@ def cmd_analyse(args) -> int:
     args.inventory = str(extraction.inventory) if extraction.inventory else None
     args.journey = journey.journey
     args.surface = journey.surface
-    args.service = ""
     for name, value in (("author", ""), ("job_id", "analyse"), ("state", None),
                         ("overrides", None), ("glossary", None),
                         ("knowledge", None), ("confirm", ""), ("as_user", ""),
@@ -997,133 +1011,6 @@ def cmd_report(args) -> int:
     rendered = render(model, result.paths)
     ids = {c.target_key: c.id for c in rendered.cases}
     print(format_report(_ledger(args, model, result, ids)))
-    return 0
-
-
-def cmd_generate(args) -> int:
-    """Automation artefacts from an approved model, for a declared runner.
-
-    The gates in front of this are the same ones `payload` passes: G1 (the model
-    is approved) and M-18 (it is well-formed). Generating from an unreviewed or
-    ambiguous model would produce confidently wrong tests, which is the whole
-    reason those gates exist.
-
-    `--list` prints what can be generated and what is deliberately refused.
-    """
-    from metis_mcp.rendering.fixtures import EMPTY, FixturesInvalid, load_file
-    from metis_mcp.rendering.generators import (
-        TargetUnsupported, declared_for, describe, emit_files, get, select_for,
-        surface_of)
-    from metis_mcp.rendering.payload import resolve_payload
-
-    if getattr(args, "list", False):
-        print(describe())
-        return 0
-
-    try:
-        spec = get(args.target)
-    except TargetUnsupported as e:
-        print(f"REFUSED: {e}")
-        return 1
-
-    fixtures = EMPTY
-    if getattr(args, "fixtures", ""):
-        try:
-            fixtures = load_file(args.fixtures)
-        except FixturesInvalid as e:
-            print(f"REFUSED: {e}")
-            return 1
-
-    model, result = _generate(args)
-    rendered = render(model, result.paths)
-    resolved = [resolve_payload(build_payload(model, c), fixtures)
-                for c in rendered.cases]
-
-    # A target generates for ONE surface. Emitting a browser test from an API
-    # case produced a file whose every step was a TODO -- which reads as a
-    # modelling gap and is a target mismatch, the harder of the two to diagnose
-    # from the artefact.
-    cases, skipped = select_for(spec, resolved)
-    if not cases:
-        present = sorted({surface_of(d) for d in resolved} - {""})
-        suggestion = ", ".join(sorted(
-            g.name for surface in present for g in declared_for(surface)))
-        print(f"REFUSED: {spec.name} generates {spec.surface} tests and none of "
-              f"the {len(resolved)} case(s) are {spec.surface}"
-              + (f" (they are: {', '.join(present)})" if present else "")
-              + (f". For this model: {suggestion}" if suggestion else ""))
-        return 1
-
-    # The emitter names its own files: in Java the filename IS a declaration, so
-    # a caller that invented one wrote source `javac` rejects on the first line.
-    files = emit_files(spec.name, cases)
-
-    out_dir = FsPath(args.out) if getattr(args, "out", "") else None
-    if out_dir:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        for filename, text in sorted(files.items()):
-            (out_dir / filename).write_text(text)
-        print(f"{len(files)} {spec.name} file(s) -> {out_dir}")
-    else:
-        for _, text in sorted(files.items()):
-            print(text)
-
-    # Reported, and reported as a COUNT of what a human still has to supply --
-    # the artefacts are not finished work and saying so is the point.
-    if skipped:
-        print(f"{len(skipped)} case(s) skipped: not {spec.surface}", file=sys.stderr)
-    still = sorted({f for d in cases for f in d["unresolved"]})
-    if still:
-        print(f"{len(still)} field(s) are TODO in the output, not guessed: "
-              f"{still[:3]}", file=sys.stderr)
-    return 0
-
-
-def cmd_payload(args) -> int:
-    """The automation payload, optionally resolved against authored fixtures.
-
-    Without `--fixtures` this is unchanged: what the model recovered, with what
-    it could not recover marked. With them, each payload is joined to the
-    selectors and values a person supplied, and the result says which fields the
-    fixtures filled and which are still unrecovered — so a reader can tell a
-    fact extracted from source from a value somebody chose.
-    """
-    from metis_mcp.rendering.fixtures import FixturesInvalid, load_file
-    from metis_mcp.rendering.payload import resolve_payload
-
-    model, result = _generate(args)
-    rendered = render(model, result.paths)
-    payloads = [build_payload(model, c) for c in rendered.cases]
-
-    if not getattr(args, "fixtures", ""):
-        print(json.dumps(payloads, indent=2))
-        return 0
-
-    try:
-        fixtures = load_file(args.fixtures)
-    except FixturesInvalid as e:
-        print(f"REFUSED: {e}")
-        return 1
-
-    resolved = [resolve_payload(p, fixtures) for p in payloads]
-    print(json.dumps(resolved, indent=2))
-
-    # Reported on stderr so the document on stdout stays pipeable, and reported
-    # at all because a fixture that matched nothing is the shape of a rename.
-    still = sorted({f for r in resolved for f in r["unresolved"]})
-    # INTERSECTION, not union. `unused` is per case, and a fixture that filled a
-    # field in case 0 is legitimately unused in case 5 — unioning them reported
-    # a fixture as matching nothing while the document above showed it applied.
-    # "Matched nothing" has to mean nothing ANYWHERE, or the warning is noise
-    # that trains a reader to ignore it.
-    unused_sets = [set(r["unused"]) for r in resolved]
-    unused = sorted(set.intersection(*unused_sets)) if unused_sets else []
-    if still:
-        print(f"{len(still)} field(s) still unrecovered, e.g. {still[:3]}",
-              file=sys.stderr)
-    if unused:
-        print(f"{len(unused)} fixture(s) matched nothing: {unused[:5]} — a "
-              f"renamed element or a typo", file=sys.stderr)
     return 0
 
 
@@ -1568,6 +1455,7 @@ def _workflow_context(args):
     from metis_mcp.workflow import Context
 
     context = Context(workflow=args.workflow, scope=args.scope, args=args,
+                      project=getattr(args, "project", "") or "",
                       allow_unverifiable=getattr(args, "allow_unverifiable", False))
     if getattr(args, "journey", None):
         try:
@@ -1963,21 +1851,6 @@ def cmd_feature_read(args) -> int:
     return 1 if problems else 0
 
 
-def cmd_structure_check(args) -> int:
-    """Is the page tree legal and the data tree complete? Free: no graph."""
-    from metis_mcp.model_sources.structure import (
-        StructureRefused, format_problems, load, validate,
-    )
-    try:
-        structure = load(args.structure)
-    except (OSError, ValueError, StructureRefused) as e:
-        print(f"REFUSED: {args.structure}: {e}")
-        return 1
-    problems = validate(structure)
-    print(format_problems(problems, structure))
-    return 1 if problems else 0
-
-
 def cmd_backfill_validity(args) -> int:
     """Give pre-validity nodes a window (see landing.backfill_validity).
 
@@ -2188,6 +2061,98 @@ def cmd_embed(args) -> int:
         print("Semantic search is live: metis retrieval-bench --hybrid "
               f"--provider {args.provider}")
     return 0
+
+
+def cmd_storage(args) -> int:
+    """Per-project Cypher: write it, check it, replay it.
+
+    The restore path exists so that rebuilding a graph does not always mean
+    re-running extraction. Re-ingest remains correct when the code has moved —
+    which is what `verify` is for, and why `--force` is the only way past it.
+    """
+    from metis_mcp.mbt.graph_session import session
+    from metis_mcp.storage import (
+        StorageRefused, export, read_manifest, projects, restore, storage_dir,
+        verify,
+    )
+
+    def _where() -> FsPath:
+        """`--out`, or the storage directory of the project's own checkout."""
+        if getattr(args, "out", ""):
+            return FsPath(args.out)
+        from code_analysis.project_profile import load_project
+
+        return FsPath(storage_dir(load_project(args.project).repo))
+
+    try:
+        if args.storage_command == "projects":
+            with session() as s:
+                rows = projects(s)
+            if not rows:
+                print("no node carries `m_project`. Nothing has been landed with "
+                      "a project since the property existed.")
+                return 0
+            for row in rows:
+                print(f"  {row['project']:20s} {row['nodes']:6d} node(s)")
+            return 0
+
+        if args.storage_command == "export":
+            out = _where()
+            with session() as s:
+                manifest = export(s, args.project, out,
+                                  schema_source=args.schema, commit=args.commit)
+            print(f"wrote {out}")
+            print(f"  {manifest['counts']['nodes']} node(s), "
+                  f"{manifest['counts']['relationships']} relationship(s)")
+            for name in manifest["files"]:
+                print(f"  {name}")
+            if manifest["unclaimed_nodes"]:
+                # F-10: what was found and not used is named.
+                print(f"  !! {manifest['unclaimed_nodes']} node(s) produced by "
+                      f"this project's episodes carry no `m_project` and are NOT "
+                      f"in this export — re-land them to include them")
+            if not manifest["commit"]:
+                print("  !! no --commit recorded, so `verify` cannot show this "
+                      "matches a checkout and a restore will always be refused")
+            return 0
+
+        source = _where()
+        manifest = read_manifest(source)
+        if manifest is None:
+            print(f"no export at {source}")
+            return 1
+
+        problems = verify(manifest, commit=args.commit, schema_source=args.schema)
+        if args.storage_command == "verify":
+            print(f"{source}: {manifest['project']} — "
+                  f"{manifest['counts']['nodes']} node(s), exported "
+                  f"{manifest['exported_at']}")
+            for problem in problems:
+                print(f"  STALE: {problem}")
+            print("  matches this checkout" if not problems else
+                  "  re-ingest rather than restoring this")
+            return 1 if problems else 0
+
+        if problems and not args.force:
+            print(f"REFUSED: {source} does not match this checkout:")
+            for problem in problems:
+                print(f"  {problem}")
+            print("Re-ingest instead, or pass --force to restore it anyway and "
+                  "accept a graph describing another commit.")
+            return 1
+        with session() as s:
+            manifest = restore(s, source)
+        print(f"restored {manifest['project']} from {source}: "
+              f"{manifest['counts']['nodes']} node(s), "
+              f"{manifest['counts']['relationships']} relationship(s)")
+        if problems:
+            print("  !! restored over a mismatch because --force was given:")
+            for problem in problems:
+                print(f"     {problem}")
+        return 0
+    except StorageRefused as e:
+        print(f"REFUSED: {e}")
+        return 1
 
 
 def cmd_lessons(args) -> int:
@@ -2423,139 +2388,6 @@ def cmd_guide(args) -> int:
     for path in written:
         print(f"  wrote {path}")
     print(f"\n{len(written)} page(s). Each states what it was generated from.")
-    return 0
-
-
-def cmd_data_catalogue(args) -> int:
-    """A database catalogue -> Datasource/Database/Schema/Table/View/Column.
-
-    **Structure only.** X-7a: Métis reads intake sources and never executes
-    against the System Under Test, and the distinction that does the work is
-    that a database read for its structure is an intake source while the same
-    database reached to check a test's outcome is the SUT. There is no mode here
-    that runs a query of the caller's choosing, and `assert_no_row_reads` holds
-    the reader to the catalogue views it declares.
-    """
-    from code_analysis import db_catalogue
-    from metis_mcp.model_sources.data_landing import plan_catalogue
-    from metis_mcp.model_sources.landing import land
-
-    try:
-        if args.fixture:
-            catalogue = db_catalogue.from_fixture(args.fixture)
-        else:
-            catalogue = db_catalogue.read(
-                dialect=args.dialect, dsn=args.dsn,
-                password_env=args.password_env, schemas=args.schema or None)
-    except db_catalogue.CatalogueRefused as e:
-        print(f"REFUSED: {e}")
-        return 1
-
-    tables = sorted(catalogue.table_names())
-    print(f"Catalogue — {catalogue.dialect} {catalogue.database!r}: "
-          f"{len(catalogue.schemas)} schema(s), "
-          f"{len([t for t in tables if '.' not in t])} object(s)")
-
-    plan = plan_catalogue(catalogue, journey=args.journey, repo=args.repo)
-    if not plan.is_legal:
-        print(f"REFUSED: {len(plan.errors)} validation error(s)")
-        for error in plan.errors[:8]:
-            print(f"    {error}")
-        return 1
-    print(f"  planned {len(plan.nodes)} nodes, {len(plan.edges)} edges")
-    if args.dry_run:
-        print("\nNothing was written (--dry-run).")
-        return 0
-
-    with session(args.uri, args.user) as s:
-        return _report_landing(land(s, plan), "catalogue")
-
-
-def cmd_data_queries(args) -> int:
-    """Repository queries -> Method -[:ISSUES]-> Query -[:QUERIES]-> Table.
-
-    A query whose table no catalogue confirms still lands — it is a real thing
-    the application does — and what is missing is the edge, reported as a
-    pending join rather than invented (X-19).
-    """
-    from code_analysis import db_catalogue
-    from metis_mcp.model_sources.data_landing import plan_queries
-    from metis_mcp.model_sources.landing import land
-    from metis_mcp.resolution import findings_for, resolve
-
-    # The STRUCTURAL pack's output, not a model file: `read_source` reads the
-    # latter and dies on `data["states"]`.
-    from metis_mcp.model_sources.sources import _report_from_dict
-
-    report = _report_from_dict(json.loads(FsPath(args.report).read_text()))
-    catalogue = (db_catalogue.from_fixture(args.catalogue)
-                 if args.catalogue else None)
-
-    plan, pending = plan_queries(
-        report, journey=args.journey, repo=args.repo, dialect=args.dialect,
-        catalogue=catalogue)
-    if not plan.is_legal:
-        print(f"REFUSED: {len(plan.errors)} validation error(s)")
-        for error in plan.errors[:8]:
-            print(f"    {error}")
-        return 1
-
-    by_label: dict[str, int] = {}
-    for node in plan.nodes:
-        by_label[node.label] = by_label.get(node.label, 0) + 1
-    print("Queries — " + ", ".join(f"{n} {label}"
-                                   for label, n in sorted(by_label.items())))
-    print("  JpaQuery means no SQL could be produced: raw, reasoned, and "
-          "waiting for a person (T-9d)")
-
-    available = ({"database": catalogue.table_names()} if catalogue else {})
-    resolution = resolve(pending, available)
-    print(f"  joins: {resolution.describe()}")
-    for _, _, detail in findings_for(resolution):
-        print(f"    {detail}")
-
-    if args.dry_run:
-        print("\nNothing was written (--dry-run).")
-        return 0
-    with session(args.uri, args.user) as s:
-        return _report_landing(land(s, plan), "queries")
-
-
-def cmd_page_object(args) -> int:
-    """A page's controls as a class, with the selectors the code names.
-
-    The join between the authored element and the extracted selector runs here
-    (X-19, `element_selector`), so what is printed is what the engine resolves —
-    it used to be done by a dict in a test, which meant the Page Object under
-    test was one Métis could not produce.
-    """
-    import json as _json
-
-    from metis_mcp.model_sources.structure import (
-        elements_for,
-        load as load_structure,
-        selector_resolution,
-    )
-    from metis_mcp.rendering.scaffold import page_object
-
-    structure = load_structure(args.structure)
-    extracted = (_json.loads(FsPath(args.selectors).read_text())
-                 if args.selectors else None)
-    resolution, selectors = selector_resolution(structure, extracted)
-
-    print(f"# selectors: {resolution.describe()}", file=sys.stderr)
-    if extracted is None:
-        print("# the web intake has not run — every method is a stub (X-19: "
-              "proposed, not refuted)", file=sys.stderr)
-
-    pages = [args.page] if args.page else sorted(structure.pages)
-    for page in pages:
-        if page not in structure.pages:
-            print(f"REFUSED: no page {page!r}. Known: "
-                  f"{', '.join(sorted(structure.pages))}")
-            return 1
-        print(page_object(page, elements_for(structure, page, selectors)))
-        print()
     return 0
 
 
@@ -3015,8 +2847,6 @@ def main(argv: list[str] | None = None) -> int:
         ("paths", cmd_paths, "generate covering paths"),
         ("render", cmd_render, "render paths as test cases"),
         ("report", cmd_report, "coverage report"),
-        ("payload", cmd_payload, "machine-readable automation payload"),
-        ("generate", cmd_generate, "automation artefacts for a declared runner"),
     ):
         p = sub.add_parser(name, help=help_text)
         p.add_argument("model", nargs="?", help="model JSON file (omit to read the graph)")
@@ -3028,15 +2858,6 @@ def main(argv: list[str] | None = None) -> int:
                        help=f"maximum setup steps (default {DEFAULT_SETUP_CAP})")
         p.add_argument("--state", help="review-state file (default: <model>.review.json)")
         p.add_argument("--overrides", help="override log (default: <model>.overrides.json)")
-        p.add_argument("--fixtures",
-                       help="authored selectors/values (metis.fixtures/1) to "
-                            "resolve unrecovered fields against")
-        if name == "generate":
-            p.add_argument("--target", default="",
-                           help="declared runner; --list to see them")
-            p.add_argument("--out", help="directory to write into (default: stdout)")
-            p.add_argument("--list", action="store_true",
-                           help="what can be generated, and what is refused")
         p.add_argument("--inventory",
                        help="jvm-test-inventory report; skips transitions an "
                             "existing test already covers (REQ-METIS-PG-01)")
@@ -3136,39 +2957,6 @@ def main(argv: list[str] | None = None) -> int:
     # Built, tested, and until now unreachable: `data_landing`, `db_catalogue`
     # and `rendering/scaffold` had no CLI command and no workflow stage, so the
     # capability existed and nobody could run it.
-    data = sub.add_parser("data", help="the database layer (catalogue, queries)")
-    data_sub = data.add_subparsers(dest="data_command", required=True)
-
-    dcat = data_sub.add_parser(
-        "catalogue", help="read a database catalogue and land its structure")
-    dcat.add_argument("--fixture", default="",
-                      help="a catalogue JSON file; omit to read a live database")
-    dcat.add_argument("--dialect", default="",
-                      help="postgresql | oracle | mysql")
-    dcat.add_argument("--dsn", default="", help="connection string, read-only")
-    dcat.add_argument("--password-env", dest="password_env", default="",
-                      help="NAME of the variable holding the password, never "
-                           "the password itself (PLT-005)")
-    dcat.add_argument("--schema", action="append", default=[],
-                      help="restrict to a schema; repeatable")
-    dcat.add_argument("--journey", default="")
-    dcat.add_argument("--repo", default="")
-    dcat.add_argument("--dry-run", action="store_true")
-    add_graph_args(dcat)
-    dcat.set_defaults(handler=cmd_data_catalogue)
-
-    dqry = data_sub.add_parser(
-        "queries", help="land repository queries, translated where possible")
-    dqry.add_argument("report", help="a structural extraction report (JSON)")
-    dqry.add_argument("--catalogue", default="",
-                      help="catalogue JSON; without it every table is a proposal")
-    dqry.add_argument("--dialect", default="")
-    dqry.add_argument("--journey", default="")
-    dqry.add_argument("--repo", default="")
-    dqry.add_argument("--dry-run", action="store_true")
-    add_graph_args(dqry)
-    dqry.set_defaults(handler=cmd_data_queries)
-
     guide_p = sub.add_parser(
         "guide", help="generate docs/guide/ from the engine")
     guide_p.add_argument("--directory", default="../docs/guide",
@@ -3177,15 +2965,6 @@ def main(argv: list[str] | None = None) -> int:
                          help="regenerate and diff instead of writing; "
                               "non-zero if the guide has drifted")
     guide_p.set_defaults(handler=cmd_guide)
-
-    pobj = sub.add_parser(
-        "page-object", help="render a Page Object for an authored page")
-    pobj.add_argument("structure", help="structure.json")
-    pobj.add_argument("--page", default="", help="one page; omit for all")
-    pobj.add_argument("--selectors", default="",
-                      help="the web intake's {normalised name: selector} JSON; "
-                           "omit and every method is a stub")
-    pobj.set_defaults(handler=cmd_page_object)
 
     spec_build = sub.add_parser(
         "spec-build",
@@ -3250,15 +3029,6 @@ def main(argv: list[str] | None = None) -> int:
                          help="print the markdown instead of landing it")
     add_graph_args(erender)
     erender.set_defaults(handler=cmd_entity_render)
-
-    structure_parser = sub.add_parser(
-        "structure", help="authored page and data structure (§5.2a, §5.2b)")
-    structure_sub = structure_parser.add_subparsers(
-        dest="structure_command", required=True)
-    scheck = structure_sub.add_parser(
-        "check", help="is the tree legal and complete? (free)")
-    scheck.add_argument("structure", help="structure JSON file")
-    scheck.set_defaults(handler=cmd_structure_check)
 
     review_parser = sub.add_parser("review", help="review-as-code decisions")
     review_sub = review_parser.add_subparsers(dest="review_command", required=True)
@@ -3412,7 +3182,7 @@ def main(argv: list[str] | None = None) -> int:
     doctor_parser.set_defaults(handler=cmd_doctor)
 
     init_parser = sub.add_parser(
-        "init", help="scaffold .metis/project.json inside a repository")
+        "init", help="scaffold a project profile in $METIS_HOME/profiles")
     init_parser.add_argument("repo")
     init_parser.add_argument("--project", help="project name (default: directory name)")
     init_parser.add_argument("--force", action="store_true")
@@ -3425,6 +3195,19 @@ def main(argv: list[str] | None = None) -> int:
     analyse_parser.add_argument("--journey", help="which declared journey")
     analyse_parser.add_argument("--surface", default="", choices=("", "api", "ui"))
     analyse_parser.add_argument("--scope", default="")
+    # **A refusal must name a flag the command accepts.** Both of these were
+    # named by messages `analyse` itself produces and existed only on
+    # `workflow run`, so following the advice was impossible: the extract stage
+    # says "pass --service" and M-18 says "pass --allow-unverifiable".
+    analyse_parser.add_argument("--allow-unverifiable", action="store_true",
+                                help="proceed despite guards this checker "
+                                     "cannot verify (M-17). Fail-closed is the "
+                                     "default; this is recorded, not silent.")
+    analyse_parser.add_argument("--service", default="",
+                                help="scope a multi-module report to one "
+                                     "deployable. Required when the report "
+                                     "spans more than one — extraction lists "
+                                     "them when it refuses")
     analyse_parser.add_argument("--commit", default="", help="default: git HEAD")
     analyse_parser.add_argument("--refresh", action="store_true",
                                 help="rebuild the CPG even if it is cached")
@@ -3593,6 +3376,10 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--author", default="")
         p.add_argument("--endpoints",
                        help="structural pack report, for --source code")
+        p.add_argument("--project", default="",
+                       help="the checkout these facts come from. Stamped on "
+                            "every node as `m_project`, and what "
+                            "`storage export --project` selects on")
         p.add_argument("--service",
                        help="scope a multi-module pack report to one deployable. "
                             "Required when the report spans more than one, or the "
@@ -3662,6 +3449,32 @@ def main(argv: list[str] | None = None) -> int:
                          action="store_true",
                          help="re-embed a corpus written by a different model")
     embed_p.set_defaults(handler=cmd_embed)
+
+    storage_p = sub.add_parser(
+        "storage", help="per-project Cypher: export it, verify it, restore it")
+    storage_sub = storage_p.add_subparsers(dest="storage_command", required=True)
+    for name, help_text in (
+            ("export", "write <repo>/.metis/storage/ for one project"),
+            ("verify", "does the stored export match this checkout?"),
+            ("restore", "replay a stored export into the graph"),
+            ("projects", "which projects the graph holds nodes for"),
+    ):
+        sp = storage_sub.add_parser(name, help=help_text)
+        if name != "projects":
+            sp.add_argument("--project", required=True)
+            sp.add_argument("--out", default="",
+                            help="storage directory (default: the project "
+                                 "profile's repo + /.metis/storage)")
+            sp.add_argument("--commit", default="",
+                            help="the commit these facts describe; `verify` "
+                                 "compares it and refuses a restore without it")
+            sp.add_argument("--schema", default="schema",
+                            help="where the generated schema lives")
+        if name == "restore":
+            sp.add_argument("--force", action="store_true",
+                            help="restore over a mismatch, accepting a graph "
+                                 "that describes another commit")
+    storage_p.set_defaults(handler=cmd_storage)
 
     lessons_p = sub.add_parser(
         "lessons", help="land the authored academy (docs/academy/) as Lesson nodes")

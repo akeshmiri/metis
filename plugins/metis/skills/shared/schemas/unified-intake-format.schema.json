@@ -51,8 +51,7 @@
             "confluence",
             "scale",
             "code_repository",
-            "swagger",
-            "database"
+            "swagger"
           ]
         },
         "created_at": {

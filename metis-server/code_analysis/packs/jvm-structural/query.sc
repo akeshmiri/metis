@@ -445,10 +445,26 @@ import java.io.PrintWriter
           def viaName: Option[String] = {
             val answers = constantsNamed.getOrElse(simple, Nil)
               .map(raw => resolveSingle(raw, "", depth + 1)).distinct
-            // One answer, or none. Two different answers is the ambiguity the
-            // old text comparison was reaching for, and it still refuses.
-            if (answers.size == 1 && answers.head != UNRESOLVED) Some(answers.head)
-            else None
+              // **An initialiser that resolves to nothing is NO answer, not a
+              // different one.** `declared` admits any initialiser containing a
+              // string literal, which is right for `PREFIX + "/x"` and wrong
+              // for `List.of("status-store")` or `new CacheStorage<>("...")`.
+              // Counting those as rival answers let an unrelated class poison a
+              // genuine route constant that happened to share its simple name:
+              // on a real service a cache handle and a path definition both
+              // called `EXECUTION_STATUS` took three endpoints of one
+              // controller down, and those three then shared the single trigger
+              // `GET __unresolved__` and failed determinism as a group — a
+              // blocking finding about code that is fine.
+              //
+              // Only reachable through a STATIC IMPORT, where there is no
+              // qualifier to key on and `viaOwner` cannot answer first.
+              // `demo_project`'s StatusPaths/StatusCache/StatusController is
+              // that condition.
+              .filter(_ != UNRESOLVED)
+            // One answer, or none. Two constants that BOTH resolve, to
+            // different routes, is the real ambiguity and still refuses.
+            if (answers.size == 1) Some(answers.head) else None
           }
           viaOwner.orElse(viaName).getOrElse(UNRESOLVED)
         }

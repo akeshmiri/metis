@@ -19,6 +19,28 @@ from metis_mcp.workflow.run import FAILED, HALTED, PASSED
 from metis_mcp.workflow.stages import handler
 
 
+def _land_stamped(session, plan, context):
+    """Land a plan, stamped with the run's project.
+
+    **One place, because there are six landing calls in this module** and a
+    seventh would have to remember. `m_project` is what `storage export`
+    selects on, so a plan that lands unstamped produces nodes no export can
+    claim -- and an export that silently omits them is exactly the shape of
+    failure the property was added to remove.
+
+    A plan that already names a project keeps it: `lessons` sets its own from
+    the corpus README, which is a better answer than the run's.
+    """
+    # Imported here, not at module scope: `land` is a local import in every
+    # handler that uses it, and a module-level one would be the only path in
+    # this file that pulls the graph writer in at import time.
+    from metis_mcp.model_sources.landing import land
+
+    if context is not None and getattr(context, "project", "") and not plan.project:
+        plan.project = context.project
+    return land(session, plan)
+
+
 @handler("extract")
 def _extract(context) -> tuple:
     """§5: recover the model from code.
@@ -114,7 +136,7 @@ def _land(context) -> tuple:
                 f"First: {plan.errors[0]}", (), "")
 
     with session(context.args.uri, context.args.user) as s:
-        outcome = land(s, plan)
+        outcome = _land_stamped(s, plan, context)
     if not outcome.ok:
         return FAILED, outcome.refused, (), ""
     # The evidence the model was derived FROM, landed beside it. Without this
@@ -180,6 +202,99 @@ def _carry_forward(context, result) -> str:
     return note
 
 
+def evidence_repo(structural, context) -> str:
+    """The id namespace for the evidence layer: the REPOSITORY, not the scope.
+
+    **The defect this is named for.** `_land_evidence` passed
+    `context.args.scope`. A monorepo is extracted once and landed once per
+    deployable, so the same report is landed several times under different
+    scopes — and `repo` namespaces every content-derived id in
+    `raw_landing`. Six service-scoped runs of one Athena report therefore
+    produced six disjoint copies of the whole evidence layer: 870 Endpoint nodes
+    for 87 routes, `GET /version` six times with identical anchors, one Class
+    name under six `cls:` ids. Nothing reported it, because each run MERGEd
+    cleanly onto ids no other run had used.
+
+    The report already carries the answer. `repo` is a field of the pack
+    contract, set by the extractor from the checkout it parsed, which is exactly
+    the "one repository" the namespacing comment in `raw_landing` describes.
+
+    The scope is the fallback only when the report does not say, so a report
+    predating the field still lands somewhere deterministic rather than under
+    the empty string.
+    """
+    return (getattr(structural, "repo", "") or ""
+            or getattr(context.args, "scope", "") or "")
+
+
+def _belongs_to(node, service: str) -> bool:
+    """Is this recovered fact part of the deployable the run is modelling?
+
+    By its anchor path, which is the only thing a fact carries that says where
+    in the tree it came from — the same basis `raw_landing.service_of` uses, so
+    the two cannot disagree about which service a file belongs to.
+    """
+    if node is None:
+        return False
+    anchor = (node.properties.get("anchor_file") or "")
+    return anchor.split("/", 1)[0] == service
+
+
+def _land_unmodelled(context, gaps, nodes_by_id) -> str:
+    """One `Finding` per user-facing fact the model cannot reach (X-6c).
+
+    **The inversion this makes.** The evidence layer used to justify itself as
+    the denominator — "these 34 endpoints exist and 20 have no transition" was
+    a question only the graph could answer. That is true, and it is the wrong
+    shape: an endpoint with no behavioural model is a DEFECT to close, not a
+    fact to keep. As a finding it enters the review queue, carries a remedy, and
+    stops existing when somebody models the behaviour.
+
+    `unmodelled` is not a new type — it already means "the source could not
+    model this" and was used only for `@ControllerAdvice` mappings, whose
+    findings pointed at nothing. These carry an `ABOUT` edge.
+
+    Best-effort, like everything else this function supplements: a run without a
+    graph reports nothing rather than failing the stage that succeeded.
+    """
+    from metis_mcp.mbt.finding_writer import FindingRecord, load, plan_findings
+    from metis_mcp.mbt.graph_session import GraphNotConfigured, session
+
+    # **Scoped to the service this run models, and that is not a detail.**
+    # `_land_evidence` lands the WHOLE report — every service's endpoints —
+    # while the model it is landed beside covers one. Asked unscoped, "nothing
+    # reaches this from the model" is trivially true of the other five services
+    # and produced 475 findings for 14 real gaps on Athena. An endpoint is only
+    # a gap for the run that was supposed to model it.
+    service = getattr(context.args, "service", "") or ""
+    if service:
+        gaps = [g for g in gaps if _belongs_to(nodes_by_id.get(g[0]), service)]
+
+    # `unreachable_surface` returns `(id, label, reason)` — the reason is the
+    # sentence it already composed about why nothing reaches this node, so it is
+    # carried verbatim rather than re-worded here.
+    records = [
+        FindingRecord(
+            finding_type="unmodelled", severity="advisory", detail=reason,
+            remedy="model the behaviour, or record why this entry point is out "
+                   "of scope",
+            about_label=label, about_id=node_id)
+        for node_id, label, reason in gaps]
+    if not records:
+        return ""
+    try:
+        with session() as s:
+            written = load(s, plan_findings(
+                records, project=getattr(context, "project", "") or "",
+                job_id=getattr(context.args, "job_id", "workflow"),
+                source_connector="evidence"))
+    except GraphNotConfigured:
+        return "; unmodelled findings not landed — no graph configured"
+    except Exception as e:      # a supplement must not fail the stage it serves
+        return f"; unmodelled findings not landed — {type(e).__name__}: {e}"
+    return f", {written['findings']} unmodelled finding(s)"
+
+
 def _land_evidence(context, episode_id: str, model_plan=None) -> str:
     """Land the processed intake the model was derived FROM (§8.2, D-12).
 
@@ -217,20 +332,28 @@ def _land_evidence(context, episode_id: str, model_plan=None) -> str:
         return ""
 
     try:
+        # **One namespace, computed once.** The nodes and the edges that point at
+        # them must agree about `repo` or the edges MATCH nothing: the planner
+        # looked up `ep:e00b38ab…` (repo = the scope) while landing had written
+        # `ep:04bc259f…` (repo = the report), so 20 routes ended up with
+        # transitions and an Endpoint and no `DERIVED_FROM` between them.
+        # `land` reports that as UNMATCHED and does not fail, which is why a
+        # single local is the fix rather than remembering to pass the same thing
+        # three times.
+        repo = evidence_repo(structural, context)
         plan = plan_raw_landing(
             structural,
             journey=getattr(context.args, "journey", "") or "",
-            repo=getattr(context.args, "scope", "") or "",
+            repo=repo,
             behaviour=reports.get("behaviour"),
             job_id=getattr(context.args, "job_id", "workflow"))
-        scope = getattr(context.args, "scope", "") or ""
-        derived = _plan_derivation_edges(plan, context, structural, scope)
-        payload = _plan_payload_edges(plan, context, structural, scope)
+        derived = _plan_derivation_edges(plan, context, structural, repo)
+        payload = _plan_payload_edges(plan, context, structural, repo)
         if not plan.is_legal:
             return (f"; evidence layer REFUSED — {len(plan.errors)} error(s), "
                     f"first: {plan.errors[0]}")
         with session() as s:
-            outcome = land(s, plan)
+            outcome = _land_stamped(s, plan, context)
     except GraphNotConfigured:
         return "; evidence layer not landed — no graph configured"
     except Exception as e:  # a supplement must not fail the stage it supplements
@@ -248,7 +371,11 @@ def _land_evidence(context, episode_id: str, model_plan=None) -> str:
     # X-19: joins whose other half may or may not be here yet. Run on every
     # landing, because the whole point is that a join is made as soon as the
     # missing piece exists rather than by re-running the intake that proposed it.
-    note += _resolve_pending(getattr(context, "pending_joins", ()) or ())
+    # `_resolve_pending` was here — X-19's deferred joins. All four `JoinKind`s
+    # joined labels that the 2026-08-31 re-baseline staged out (Table, Query,
+    # Route, Page, UiElement), so the mechanism had no subject left. The
+    # principle it served survives as `Finding`: a join that cannot be made is
+    # recorded as work, not dropped and not invented.
 
     gaps = facts.unreachable_surface(all_nodes, all_edges)
     stranded = facts.disconnected(all_nodes, all_edges)
@@ -256,6 +383,15 @@ def _land_evidence(context, episode_id: str, model_plan=None) -> str:
         counts = Counter(label for _, label, _ in gaps)
         note += (", !! " + " ".join(f"{n} {lab}" for lab, n in sorted(counts.items()))
                  + " user-facing and unreachable from the model")
+        # **Landed, not just printed.** This count was a line in a log: an
+        # endpoint recovered from code that no transition explains is work
+        # somebody has to do, and a number in a run note is not a work item —
+        # it is gone the moment the terminal scrolls. It lands as a `Finding`
+        # of the type that already means "the source could not model this",
+        # pointing AT the fact it is about, so it appears in the same review
+        # queue as everything else and closes when the behaviour is modelled.
+        note += _land_unmodelled(
+            context, gaps, {n.properties["id"]: n for n in all_nodes})
     if stranded:
         counts = Counter(label for _, label in stranded)
         note += (", !! " + " ".join(f"{n} {lab}" for lab, n in sorted(counts.items()))
@@ -321,109 +457,6 @@ def _plan_derivation_edges(plan, context, structural, repo: str) -> int:
     return planned
 
 
-def _corroboration_findings(context) -> list:
-    """Does a transition's claimed method really call what the model says?
-
-    **`behavior_model.corroborate_transition` had no caller** — which is why the
-    call graph defaulted to off, and why D-13's "remove them rather than let the
-    ontology accrete" clause was live. The database intake gave `Method`/`CALLS`
-    a reason to exist, and this is the reader.
-
-    A mismatch is a genuine code-versus-model disagreement and is surfaced as an
-    advisory finding, never resolved toward either side (I-8, S-10): a precedence
-    rule would decide a question only a person can.
-
-    Best-effort by design. A run without a call graph corroborates nothing and
-    says nothing, which is correct — an absent evidence layer is not a finding
-    about the code.
-    """
-    from metis_mcp.mbt.finding_writer import FindingRecord
-    from metis_mcp.mbt.graph_session import GraphNotConfigured, session
-
-    model = getattr(context, "model", None)
-    if model is None:
-        return []
-    try:
-        from metis_mcp.behavior_model import corroborate_transition
-        from metis_mcp.model_sources.landing import graph_transition_id
-
-        out = []
-        with session() as s:
-            if not list(s.run("MATCH (:Method)-[:CALLS]->(:Method) "
-                              "RETURN 1 AS x LIMIT 1")):
-                return []       # no call graph landed; nothing to corroborate
-            for tid, transition in model.transitions.items():
-                method = getattr(transition, "implementing_method_id", "")
-                callees = list(getattr(transition, "expected_callees", ()) or ())
-                if not method or not callees:
-                    continue
-                verdict = corroborate_transition(
-                    s, graph_transition_id(model, tid), method, callees)
-                if not verdict.corroborated:
-                    out.append(FindingRecord(
-                        finding_type="corroboration", severity="advisory",
-                        detail=verdict.reason, about_label="Transition",
-                        about_id=tid))
-        return out
-    except GraphNotConfigured:
-        return []
-    except Exception:
-        # A supplement must not fail the stage it supplements.
-        return []
-
-
-def _resolve_pending(pending) -> str:
-    """Settle what the graph can now settle, and report the rest (X-19).
-
-    **What is available comes from the graph, not from this run.** A catalogue
-    landed last week confirms a join proposed today, which is the behaviour the
-    engine exists for — asking the run would make resolution depend on the order
-    somebody happened to ingest things in.
-
-    An intake absent from the graph is `None` rather than an empty set, because
-    "has not run" and "has run and does not contain it" are different answers and
-    only the second is a refutation.
-    """
-    if not pending:
-        return ""
-
-    from metis_mcp.mbt.graph_session import GraphNotConfigured, session
-    from metis_mcp.model_sources.landing import land
-    from metis_mcp.resolution import findings_for, resolve
-    from metis_mcp.resolution.joins import edges_for
-
-    try:
-        with session() as s:
-            tables = [r["n"] for r in s.run(
-                "MATCH (t:Table|View) RETURN t.name AS n")]
-            available = {"database": set(tables)} if tables else {}
-            outcome = resolve(pending, available)
-
-            ids = {r["n"]: r["i"] for r in s.run(
-                "MATCH (t:Table|View) RETURN t.name AS n, t.id AS i")}
-            planned = edges_for(outcome, lambda name: ids.get(name, ""))
-            if planned:
-                from metis_mcp.model_sources.landing import (LandingPlan,
-                                                             PlannedEdge)
-
-                plan = LandingPlan(episode_id="")
-                plan.edges = [PlannedEdge(from_label=f, from_id=fi, rel_type=r,
-                                          to_label=tl, to_id=ti)
-                              for f, fi, r, tl, ti in planned if ti]
-                land(s, plan)
-    except GraphNotConfigured:
-        return "; joins not resolved — no graph configured"
-    except Exception as e:      # a supplement must not fail the stage it serves
-        return f"; joins not resolved — {type(e).__name__}: {e}"
-
-    note = f", joins {outcome.describe()}"
-    if outcome.refuted:
-        # Never summarised away: a refuted proposal is a wrong belief somebody
-        # holds, and it is fixed by a person rather than by running something.
-        note += f" (!! {len(findings_for(outcome))} reported)"
-    return note
-
-
 def _endpoint_ids(context) -> tuple[str, ...]:
     """The Endpoint node ids this run recovered, for `RestServer -[:EXPOSES]->`.
 
@@ -448,16 +481,15 @@ def _endpoint_ids(context) -> tuple[str, ...]:
 def _plan_payload_edges(plan, context, structural, repo: str) -> dict:
     """The three edges the ontology has always catalogued and nothing wrote.
 
-    `test_ontology.EVIDENCE_LAYER` names `Transition-[:EXERCISES]->Parameter` as
-    `Parameter`'s reader, `-[:REQUIRES]->Field` as `Field`'s and
-    `-[:EXPECTS]->Class` as `Class`'s — and all three were **zero** in a real
-    graph. The catalogue documented readers that did not exist, so the payload a
+    `test_ontology.EVIDENCE_LAYER` named `-[:REQUIRES]->Field` as `Field`'s
+    reader and `-[:EXPECTS]->Class` as `Class`'s — and both were **zero** in a
+    real graph. (`-[:EXERCISES]->Parameter` was the third; `Parameter` has since
+    been staged out, its content being the transition's own `c_inputs`.) The catalogue documented readers that did not exist, so the payload a
     generated case has to build was reachable from the endpoint and not from the
     behaviour that exercises it.
 
     Each edge is a join that already exists rather than a new inference:
 
-      EXERCISES  the endpoint's own parameters, via `endpoints_by_handler`
       EXPECTS    the endpoint's declared response type, same join
       REQUIRES   the fields of the types those parameters carry — the constraints
                  a fixture must satisfy or deliberately violate (GD-3)
@@ -469,7 +501,7 @@ def _plan_payload_edges(plan, context, structural, repo: str) -> dict:
     from metis_mcp.model_sources.landing import graph_transition_id
     from metis_mcp.model_sources.raw_landing import (
         class_id, class_label_for, endpoints_by_handler, mapping_id,
-        parameter_id)
+        )
 
     model = getattr(context, "model", None)
     if model is None:
@@ -493,7 +525,7 @@ def _plan_payload_edges(plan, context, structural, repo: str) -> dict:
     by_simple = _index_by_simple(set(fields_by_owner))
     surface = getattr(context.args, "surface", "") or model.id.rsplit("-", 1)[-1]
     label = _transition_label(surface)
-    counts = {"EXERCISES": 0, "REQUIRES": 0, "EXPECTS": 0, "DERIVED_FROM": 0}
+    counts = {"REQUIRES": 0, "EXPECTS": 0, "DERIVED_FROM": 0}
 
     # Keyed the same way `endpoints_by_handler` keys: handler fullName + verb.
     # The two packs identify an entry point differently and this is the existing
@@ -513,14 +545,12 @@ def _plan_payload_edges(plan, context, structural, repo: str) -> dict:
             continue
         source = graph_transition_id(model, tid)
 
+        # **The loop stays; the `EXERCISES` edge does not.** It pointed at a
+        # `Parameter` node carrying the same five values as this parameter's
+        # entry in the transition's `c_inputs`, and the label was staged out for
+        # exactly that. What the loop is still for is the edge below: the TYPE a
+        # parameter carries is on `Class`, which no property duplicates.
         for parameter in getattr(endpoint, "parameters", ()) or ():
-            # Keyed on the ENDPOINT NODE id, exactly as `_plan_endpoints` does.
-            # Keyed on the raw pack id instead, every one of these edges would
-            # merge nothing and `land` would report them all unmatched.
-            pid = parameter_id(repo, node_id, getattr(parameter, "name", ""),
-                               getattr(parameter, "location", ""))
-            plan.edges.append(_edge(label, source, "EXERCISES", "Parameter", pid))
-            counts["EXERCISES"] += 1
             # The TYPE this parameter carries: what a fixture has to populate,
             # and what it has to break to reach a 400. One edge per type rather
             # than one per field, since X-6d put the fields on the type.
@@ -659,12 +689,18 @@ def _land_findings(context, result) -> str:
     from metis_mcp.mbt.graph_session import GraphNotConfigured, session
 
     records = from_validation(result, context.model)
-    records += _corroboration_findings(context)
+    # `_corroboration_findings` was here. It asked whether a transition's claimed
+    # method really calls what the model says, and it was the only reader of the
+    # `Method`/`CALLS` layer — a layer the live graph held zero `CALLS` edges of.
+    # Both went in the 2026-08-31 re-baseline: a requirement is not stated about
+    # a method, and code-versus-model disagreement is what `drift` and
+    # `divergence` report, from facts the model actually carries.
     if not records:
         return ""
     try:
         plan = plan_load(
-            context.model, journey=getattr(context, "journey", "") or context.model.id,
+            context.model, project=getattr(context, "project", "") or "",
+            journey=getattr(context, "journey", "") or context.model.id,
             surface=getattr(context, "surface", "api"), version=1,
             commit=getattr(context, "commit", "") or "",
             episode=getattr(context, "episode", "") or "workflow",
@@ -929,13 +965,13 @@ def _knowledge_land(context) -> tuple:
     glossary_result = None
     with session(context.args.uri, context.args.user) as s:
         if glossary_plan is not None:
-            glossary_result = land(s, glossary_plan)
+            glossary_result = _land_stamped(s, glossary_plan, context)
             if not glossary_result.ok:
                 return FAILED, glossary_result.refused, (), ""
-        behaviour_result = land(s, behaviour)
+        behaviour_result = _land_stamped(s, behaviour, context)
         if not behaviour_result.ok:
             return FAILED, behaviour_result.refused, (), ""
-        documentation_result = land(s, documentation)
+        documentation_result = _land_stamped(s, documentation, context)
     if not documentation_result.ok:
         return FAILED, documentation_result.refused, (), ""
 

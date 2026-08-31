@@ -63,7 +63,6 @@ def test_the_anchor_carries_the_identifier_its_own_system_uses():
     ("swagger", "OpenApiItem", "document_id"),
     ("scale", "ZephyrItem", "zephyr_key"),
     ("code_repository", "CodeItem", "repo_id"),
-    ("database", "DatasourceItem", "datasource_id"),
 ])
 def test_every_extractor_has_an_anchor(system, label, prop):
     """Taken from what a producer actually emits, not what the source is

@@ -117,11 +117,18 @@ def test_every_layer_of_the_intake_becomes_nodes():
     # `Field` is absent on purpose since X-6d: a scalar field is a property of
     # its type, not a node. What must still be true is that the fields are THERE
     # — asserted below rather than dropped from the list silently.
+    #
+    # `Method` left the list in the 2026-08-31 re-baseline. It is asserted absent
+    # for the same reason `Field` is: a layer that stopped landing must be seen
+    # to have stopped, not quietly fall off a list of things to check.
     labels = _labels(_plan())
-    for label in ("Endpoint", "Parameter", "Class", "Method",
+    for label in ("Endpoint", "Class",
                   "DeclaredOutcome", "Check", "ExceptionMapping"):
         assert labels[label] >= 1, f"nothing landed for {label}"
     assert "Field" not in labels, "a field is a property of its type (X-6d)"
+    assert "Method" not in labels, "a requirement is not stated about a method"
+    assert "Parameter" not in labels, (
+        "an input is a value in the transition's `c_inputs`, not a node")
 
 
 def test_a_types_fields_travel_on_the_type():
@@ -190,20 +197,81 @@ def test_two_repositories_declaring_one_type_stay_two_nodes():
     assert class_id("the pilot estate", "RecordDto") != class_id("other", "RecordDto")
 
 
+def test_the_journey_is_not_part_of_an_evidence_id():
+    """One repository landed under two journeys is one set of nodes.
+
+    This is the invariant the monorepo case depends on: the same report, landed
+    once per deployable, must MERGE. It passed before the fix below — the bug
+    was never here, it was in what the caller passed as `repo`.
+    """
+    core = plan_raw_landing(_structural(), journey="core", repo=REPO,
+                            behaviour=_behaviour())
+    tms = plan_raw_landing(_structural(), journey="tms", repo=REPO,
+                           behaviour=_behaviour())
+
+    core_ids = {n.properties["id"] for n in core.nodes if n.label != "Episode"}
+    tms_ids = {n.properties["id"] for n in tms.nodes if n.label != "Episode"}
+    assert core_ids == tms_ids, (
+        f"{len(core_ids ^ tms_ids)} id(s) differ between two journeys")
+
+
+def test_the_evidence_layer_is_namespaced_by_the_repository_not_the_scope():
+    """**The defect.** `_land_evidence` passed `context.args.scope` as `repo`.
+
+    A monorepo is extracted once and landed once per deployable, and `repo`
+    namespaces every content-derived id in this module — so six service-scoped
+    runs of one Athena report produced six disjoint copies of the whole evidence
+    layer: 870 Endpoint nodes for 87 routes, `GET /version` six times with
+    identical anchors, one Class name under six `cls:` ids. Nothing reported it,
+    because each run MERGEd cleanly onto ids no other run had used.
+
+    `test_re_landing_the_same_report_is_a_no_op` could not catch it: it re-lands
+    with the same `repo`, which is the case that already worked.
+    """
+    from types import SimpleNamespace
+
+    from metis_mcp.workflow.handlers import evidence_repo
+
+    report = _structural()
+    core = SimpleNamespace(args=SimpleNamespace(scope="athena-boot-core"))
+    tms = SimpleNamespace(args=SimpleNamespace(scope="athena-boot-tms"))
+
+    assert evidence_repo(report, core) == evidence_repo(report, tms), (
+        "two deployables of one checkout must share an id namespace")
+    assert evidence_repo(report, core) == report.repo, (
+        "the repository is what the report says it parsed")
+
+
+def test_a_report_that_names_no_repository_still_lands_deterministically():
+    """The fallback is the scope, not the empty string: a report predating the
+    field must still land somewhere named rather than under ''."""
+    from types import SimpleNamespace
+
+    from metis_mcp.workflow.handlers import evidence_repo
+
+    report = _structural()
+    report.repo = ""
+    context = SimpleNamespace(args=SimpleNamespace(scope="athena-boot-core"))
+    assert evidence_repo(report, context) == "athena-boot-core"
+
+
 # --------------------------------------------------------------------------
 # REQ-CGA-010: nothing external is invented.
 # --------------------------------------------------------------------------
 
 def test_a_parameter_typed_by_a_jdk_class_gets_no_edge_and_no_stub_node():
     """`int` and `java.lang.Long` are not declared here. A `Class` node for them
-    would be a fabricated node; an edge to one would dangle."""
+    would be a fabricated node; an edge to one would dangle.
+
+    The `Parameter-[:OF_TYPE]->Class` edge this used to count went with the
+    label. What must still hold is the half that was ever about invention: no
+    stub type, and the unresolved reference reported rather than dropped —
+    checked by the test below.
+    """
     plan = _plan()
     class_names = {n.properties["name"] for n in plan.nodes if n.label == "Class"}
     assert "RecordDto" in class_names
     assert not {"int", "Long", "String"} & class_names
-
-    # The body parameter resolves; the `int` query parameter does not.
-    assert _edges(plan)["Parameter-OF_TYPE->Class"] == 1
 
 
 def test_the_unresolved_type_is_reported_rather_than_dropped_silently():
@@ -211,12 +279,20 @@ def test_the_unresolved_type_is_reported_rather_than_dropped_silently():
     assert any("does not declare" in why for _, why in plan.skipped)
 
 
-def test_the_type_name_survives_on_the_parameter_even_with_no_class_node():
-    """Nothing is lost — only the traversal is absent, correctly."""
+def test_the_unresolved_type_is_still_counted_without_the_parameter_node():
+    """**The half of REQ-CGA-010 that is not about the edge.**
+
+    A type this repository does not declare gets no stub node, and X-5a says the
+    count dropped is always reported. Both counts came from `link_types`, which
+    made the edge and counted in one pass; removing `Parameter` removed the edge
+    and would have removed the count with it, silently.
+
+    The demo's `int` query parameter is the unresolved one.
+    """
     plan = _plan()
-    query = next(n for n in plan.nodes
-                 if n.label == "Parameter" and n.properties["location"] == "query")
-    assert query.properties["type_name"] == "int"
+    reported = [why for what, why in plan.skipped if "does not declare" in why]
+    assert reported, "an unresolved type reference must be reported (X-5a)"
+    assert any("no stub Class is invented" in why for why in reported)
 
 
 def test_a_generic_response_mentions_every_type_it_names():
@@ -261,25 +337,6 @@ def test_a_guard_reaches_the_check_that_justifies_it():
 # D-13: the call graph is landed ahead of its reader, reversibly.
 # --------------------------------------------------------------------------
 
-def test_the_call_graph_is_left_out_by_default_and_the_handlers_stay():
-    """**"Off" means bounded, not absent, and that distinction was a bug.**
-
-    This asserted `Method == 0` with the flag off, and the endpoint's
-    `HANDLED_BY` was suppressed alongside — consistent, but it meant a graph
-    without the call graph could not say which method serves a route, and
-    `ExceptionMapping -[:HANDLED_BY]-> Method` had no such guard at all.
-
-    What is dropped is the call graph, whose only reader
-    (`behavior_model.corroborate`) is called by nothing; what stays is every
-    method something points at. On a real service that is 17 of 199.
-    """
-    assert _labels(_plan(include_call_graph=True))["Method"] == 1
-    off = _plan(include_call_graph=False)
-    assert _labels(off)["Method"] == 1, "the handler is referenced, so it stays"
-    assert _edges(off)["Endpoint-HANDLED_BY->Method"] == 1, (
-        "the edge that made dropping every method wrong in the first place")
-
-
 def test_the_default_leaves_the_call_graph_out():
     """D-13 chose to land it ahead of its reader. The reader never arrived, and
     182 unreferenced nodes per service is what the choice costs."""
@@ -289,38 +346,6 @@ def test_the_default_leaves_the_call_graph_out():
 
     default = inspect.signature(plan_raw_landing).parameters["include_call_graph"].default
     assert default is False
-
-
-def test_dropping_the_call_graph_is_reported_not_silent():
-    """A graph that quietly lost its call graph looks exactly like a codebase
-    whose methods call nothing (X-5a).
-
-    The fixture's one method IS the handler, so nothing is dropped and nothing is
-    reported — which is the honest behaviour and worth pinning. The report is
-    asserted where something is actually dropped: a second, unreferenced method.
-    """
-    from code_analysis.contract import MethodFact
-
-    plan = _plan(include_call_graph=False)
-    assert not any("call graph is not landed" in why for _, why in plan.skipped), (
-        "nothing was dropped, so nothing should be claimed")
-
-    extra = _structural().methods + [
-        MethodFact(id="c.Helper.hidden:V()", name="hidden", type_name="Helper",
-                   signature="V()", anchor=A)]
-    noisy = _plan(include_call_graph=False, methods=extra)
-    assert any("call graph is not landed" in why for _, why in noisy.skipped), (
-        noisy.skipped)
-
-
-def test_leaving_out_the_call_graph_keeps_the_rest_intact():
-    plan = _plan(include_call_graph=False)
-    assert plan.is_legal, plan.errors
-    labels = _labels(plan)
-    assert labels["Endpoint"] == 1 and labels["Class"] >= 1
-    # The handler survives: it is referenced, and "off" bounds the call graph
-    # rather than deleting every method (see the test above).
-    assert _edges(plan)["Endpoint-HANDLED_BY->Method"] == 1
 
 
 # --------------------------------------------------------------------------
@@ -438,3 +463,44 @@ def test_the_parallel_arrays_are_gone_from_the_endpoint():
     endpoint = next(n for n in plan.nodes if n.label == "Endpoint")
     assert not {"security_schemes", "security_expressions", "security_roles"} \
         & set(endpoint.properties)
+
+
+def test_the_edge_planner_and_the_landing_agree_on_endpoint_ids():
+    """**The regression this caught, one fix later.**
+
+    `plan_raw_landing` writes Endpoint nodes and `endpoints_by_handler` computes
+    the ids that `DERIVED_FROM` edges MATCH against. Both take `repo`, and the
+    caller passed the report's repo to the first and the run's scope to the
+    second — so landing wrote `ep:04bc259f…` and the planner looked up
+    `ep:e00b38ab…`. Twenty routes ended up with transitions, an Endpoint, and no
+    edge between them. `land` reports UNMATCHED and does not fail, so nothing
+    stopped it.
+
+    This pins the contract rather than the caller: given one `repo`, every id
+    the planner will look up must be an id the landing actually wrote.
+    """
+    from metis_mcp.model_sources.raw_landing import endpoints_by_handler
+
+    plan = plan_raw_landing(_structural(), journey="core", repo=REPO,
+                            behaviour=_behaviour())
+    landed = {n.properties["id"] for n in plan.nodes if n.label == "Endpoint"}
+    looked_up = set(endpoints_by_handler(_structural(), REPO).values())
+
+    assert looked_up, "fixture drift: no handler-keyed endpoints to check"
+    assert looked_up <= landed, (
+        f"{len(looked_up - landed)} endpoint id(s) the edge planner will MATCH "
+        f"on were never landed — those edges merge nothing and are reported "
+        f"only as UNMATCHED")
+
+
+def test_a_different_repo_makes_the_two_disagree():
+    """The mirror, so the test above cannot pass vacuously: the ids ARE
+    repo-sensitive, which is why passing two different values broke the join."""
+    from metis_mcp.model_sources.raw_landing import endpoints_by_handler
+
+    plan = plan_raw_landing(_structural(), journey="core", repo=REPO,
+                            behaviour=_behaviour())
+    landed = {n.properties["id"] for n in plan.nodes if n.label == "Endpoint"}
+    other = set(endpoints_by_handler(_structural(), "a-deployable-scope").values())
+
+    assert other and not (other <= landed)

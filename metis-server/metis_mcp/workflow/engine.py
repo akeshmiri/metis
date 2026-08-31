@@ -66,6 +66,11 @@ class Context:
 
     workflow: str
     scope: str
+    # Which project this run belongs to, stamped onto every node it lands as
+    # `m_project`. Distinct from `scope`: a scope is one deployable
+    # (`athena-boot-core`), a project is the checkout they all come from
+    # (`athena`), and `storage export` works on the second.
+    project: str = ""
     args: Any = None
     model: Any = None
     drafts: list = field(default_factory=list)

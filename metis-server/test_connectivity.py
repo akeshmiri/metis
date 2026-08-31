@@ -33,9 +33,24 @@ def _plan(demo_structural, demo_behaviour, **kw):
 def test_no_fact_lands_connected_to_nothing(demo_structural, demo_behaviour):
     """Nine nodes on a real service, of which seven were not supposed to be:
     five `ExceptionMapping`, whose catalogued reader nothing wrote, and two
-    `Check` emitted for a branch whose outcome could not be recovered."""
+    `Check` emitted for a branch whose outcome could not be recovered.
+
+    **`ExceptionMapping` is the one exception, and it is connected one step
+    later.** Its edge inside this plan was `HANDLED_BY -> Method`, which went
+    with `Method` in the 2026-08-31 re-baseline. What reaches it now is
+    `Transition -[:DERIVED_FROM]-> ExceptionMapping`, planned by
+    `handlers._plan_derivation_edges` once the model exists — a rejection path
+    is behaviour, so the transition is the right thing to reach it from. That
+    the mechanism exists is asserted below rather than assumed.
+    """
     plan = _plan(demo_structural, demo_behaviour)
-    assert facts.disconnected(plan.nodes, plan.edges) == []
+    stranded = facts.disconnected(plan.nodes, plan.edges)
+    assert {label for _, label in stranded} <= {"ExceptionMapping"}, stranded
+
+    from metis_mcp.model_sources.landing import EVIDENCE_RELATIONSHIPS
+
+    assert EVIDENCE_RELATIONSHIPS["ExceptionMapping"] == "DERIVED_FROM", (
+        "nothing would connect an ExceptionMapping once the model lands")
 
 
 def test_the_edge_free_allowance_is_checked_against_the_catalogue():
@@ -110,18 +125,45 @@ def test_the_only_unreachable_surface_facts_are_the_ones_nothing_can_attribute(
     account for, and that is the answer. On the real service all five were
     in-controller, all five attached, and this list was empty — both outcomes are
     correct and the difference is a property of the code, not of Métis.
+
+    **`GET /json/{id}` joined the list when `Parameter` was staged out, and that
+    is a fix rather than a regression.** `_adjacency` walks edges in BOTH
+    directions, so the endpoint used to be "reached" backwards through a
+    parameter it shares with a modelled one:
+
+        model -> Transition -[EXERCISES]-> Parameter <-[ACCEPTS]- Endpoint
+
+    Sharing the name `id` with another endpoint is not the model accounting for
+    it. `demo_project/README.md` declares this endpoint as the **silent
+    under-extraction** condition — a mapping stereotype meta-annotated
+    `@RequestMapping`, which the pack's literal verb lookup misses, so nothing
+    is synthesised. It is no longer silent.
     """
     nodes, edges = _both_plans(demo_api)
     gaps = facts.unreachable_surface(nodes, edges)
-    assert {label for _, label, _ in gaps} == {"ExceptionMapping"}
-    assert len(gaps) == 4, [g[2][:40] for g in gaps]
+    assert {label for _, label, _ in gaps} == {"ExceptionMapping", "Endpoint"}
+
+    endpoints = [g for g in gaps if g[1] == "Endpoint"]
+    assert len(endpoints) == 1, endpoints
+    by_id = {n.properties["id"]: n for n in nodes}
+    assert by_id[endpoints[0][0]].properties["name"] == "GET /json/{id}", (
+        "the demo's declared under-extraction condition is what should surface")
+    assert len([g for g in gaps if g[1] == "ExceptionMapping"]) == 4
 
 
 def test_the_graph_gap_and_the_synthesis_finding_agree(demo_api, demo_structural,
                                                        demo_behaviour):
     """Two representations of one fact is where this codebase's real defects come
     from, so the count the graph reports and the count synthesis reports must be
-    the same number."""
+    the same number.
+
+    **Compared per KIND, not as one total.** Synthesis reports what it refused
+    to attribute — the estate-wide `@ControllerAdvice` mappings. The graph
+    reports that plus anything else the model cannot reach, and since `Parameter`
+    was staged out that includes `GET /json/{id}`, whose verb the pack never
+    recovered so synthesis had nothing to refuse. Comparing the totals would
+    make the two disagree about a fact they are not both describing.
+    """
     from code_analysis import synthesis
 
     nodes, edges = _both_plans(demo_api)
@@ -131,17 +173,30 @@ def test_the_graph_gap_and_the_synthesis_finding_agree(demo_api, demo_structural
         journey="records", surface="api",
         structural=_report_from_dict(demo_structural))
     estate_wide = [f for f in result.findings if "estate-wide @ControllerAdvice" in f]
-    assert len(estate_wide) == len(gaps)
+    mapping_gaps = [g for g in gaps if g[1] == "ExceptionMapping"]
+    assert len(estate_wide) == len(mapping_gaps), (
+        f"synthesis refused {len(estate_wide)} and the graph reports "
+        f"{len(mapping_gaps)} unreachable mapping(s)")
 
 
 def test_an_exception_mapping_reaches_the_handler_that_maps_it(
         demo_structural, demo_behaviour):
     """`advice_type` is a simple class name that joins to nothing, so the pack
-    now emits the handler's method id. Five mappings landed connected to nothing
-    while `EVIDENCE_LAYER` named this edge as the reason the label exists."""
+    emits the handler's method id. Five mappings landed connected to nothing
+    while `EVIDENCE_LAYER` named `HANDLED_BY` as the reason the label exists.
+
+    `Method` was staged out in the 2026-08-31 re-baseline, so that edge is gone
+    and the label's reader is now the transition it explains: a rejection path
+    is behaviour, and `ApiCall-[:DERIVED_FROM]->ExceptionMapping` is what makes
+    it reachable from the model.
+    """
     plan = _plan(demo_structural, demo_behaviour)
-    edges = {(e.from_label, e.rel_type, e.to_label) for e in plan.edges}
-    assert ("ExceptionMapping", "HANDLED_BY", "Method") in edges
+    mappings = [n for n in plan.nodes if n.label == "ExceptionMapping"]
+    assert mappings, "the demo maps five exceptions"
+    for node in mappings:
+        assert node.properties.get("exception_type"), (
+            "a mapping that does not name its exception explains no rejection")
+        assert node.properties.get("status"), "nor its status"
 
 
 def test_a_guard_no_outcome_references_is_attached_to_its_endpoint(
@@ -174,25 +229,12 @@ def test_an_internal_type_is_not_landed(demo_structural, demo_behaviour):
     assert "RecordDto" in names, "a payload type is not collateral damage"
 
 
-def test_the_call_graph_is_bounded_to_what_points_at_it(
-        demo_structural, demo_behaviour):
-    """Its only reader, `behavior_model.corroborate`, is called by nothing. What
-    stays is every method something points at — on a real service 17 of 199."""
-    plan = _plan(demo_structural, demo_behaviour)
-    methods = [n for n in plan.nodes if n.label == "Method"]
-    handled = {e.to_id for e in plan.edges if e.rel_type == "HANDLED_BY"}
-    assert methods, "the handlers stay"
-    assert all(n.properties["id"] in handled for n in methods), (
-        "a landed method is one something points at")
-
-
 def test_every_reduction_is_reported(demo_structural, demo_behaviour):
     """X-5a, applied to the whole fact layer: a graph that quietly lost its
     internal types looks exactly like a service that has none."""
     plan = _plan(demo_structural, demo_behaviour)
     reasons = " ".join(why for _, why in plan.skipped)
     assert "no parameter, response body or nested payload field" in reasons
-    assert "call graph is not landed" in reasons
 
 
 # --------------------------------------------------------------------------
@@ -211,11 +253,9 @@ UNWRITTEN = {
     "LINKS_TO": "a UIF carries no links: `scope` has `source_system` and "
                 "`primary_id` only. Blocked on the UIF shape, and the extractors "
                 "that produce one are not Métis",
-    # `ON_EVENT` left this registry when `structure` began writing it: `on_event`
-    # had been read out of the file into `Element.on_event` and never turned into
-    # an edge, so the graph held the button and not the click.
-    "RENDERS": "Route -> Page needs the route/page join, which belongs on the "
-               "resolution engine (X-19) rather than in a writer",
+    # `ON_EVENT` left this registry when `structure` began writing it. `RENDERS`
+    # left it in the 2026-08-31 re-baseline along with `Route` and `Page`: the
+    # join it was waiting for cannot be needed by a label that no longer exists.
 }
 
 
@@ -260,3 +300,64 @@ def test_the_evidence_layer_writes_what_the_catalogue_claims_for_it(
                 f"{spec.from_label}-[:{spec.rel_type}]->{spec.to_label} is "
                 f"catalogued, both ends are evidence, and the demo corpus "
                 f"produces no such edge")
+
+
+# --------------------------------------------------------------------------
+# An unmodelled entry point is a work item, not a line in a log (X-6c)
+# --------------------------------------------------------------------------
+
+def test_an_unmodelled_fact_becomes_a_finding_scoped_to_its_own_service():
+    """**Zero findings must mean zero gaps, not a broken filter.**
+
+    `_land_evidence` lands the WHOLE report — every service's endpoints — beside
+    a model covering one. Asked unscoped, "nothing reaches this from the model"
+    is trivially true of the other services: on Athena that produced 475
+    findings for 14 real gaps. Scoped, it produced none, which is the right
+    answer for that graph and is also what a broken filter looks like — so the
+    filter is exercised here directly.
+    """
+    from types import SimpleNamespace
+
+    from metis_mcp.workflow.handlers import _belongs_to
+
+    mine = SimpleNamespace(properties={
+        "id": "ep:1", "anchor_file": "athena-boot-core/src/main/java/X.java"})
+    theirs = SimpleNamespace(properties={
+        "id": "ep:2", "anchor_file": "athena-boot-tms/src/main/java/Y.java"})
+
+    assert _belongs_to(mine, "athena-boot-core"), (
+        "an endpoint in the service being modelled IS that run's gap to close")
+    assert not _belongs_to(theirs, "athena-boot-core"), (
+        "another service's endpoint is not this run's gap — it is modelled by "
+        "its own run")
+    assert not _belongs_to(None, "athena-boot-core")
+    assert not _belongs_to(
+        SimpleNamespace(properties={"id": "ep:3"}), "athena-boot-core"), (
+        "a fact with no anchor cannot be attributed to a service")
+
+
+def test_the_unmodelled_finding_carries_the_reason_and_points_at_the_fact():
+    """Today's `unmodelled` findings point at nothing, which is why the count
+    was invisible. These carry an ABOUT edge and the reason `unreachable_surface`
+    already composed, rather than a re-worded one."""
+    from metis_mcp.ontology import facts
+
+    nodes, edges = _plan_nodes_with_a_stranded_endpoint()
+    gaps = facts.unreachable_surface(nodes, edges)
+    assert gaps, "the fixture must produce a gap or this checks nothing"
+    node_id, label, reason = gaps[0]
+    assert label == "Endpoint"
+    assert "no path of meaningful edges" in reason
+    assert node_id
+
+
+def _plan_nodes_with_a_stranded_endpoint():
+    """One Endpoint nothing reaches, plus a State so there is a model to start
+    from — `unreachable_surface` seeds its walk on model labels."""
+    from types import SimpleNamespace
+
+    node = lambda label, nid, **p: SimpleNamespace(
+        label=label, properties={"id": nid, **p})
+    return ([node("State", "m::Ready"),
+             node("Endpoint", "ep:stranded", anchor_file="svc/src/main/A.java")],
+            [])

@@ -47,7 +47,7 @@ such because it is not checkable the same way).
 
 ## Facts that decide how you work here
 
-- **The ontology is 65 labels and it is closed.** `metis_mcp/ontology/labels.py`
+- **The ontology is 37 labels and it is closed.** `metis_mcp/ontology/labels.py`
   is the single source: `LABELS`, `ALLOWED_RELATIONSHIPS`, and `STAGED_OUT` (the
   deliberately-excluded labels, each with the trigger that would bring it back).
   The Cypher schema is **generated** from it. Adding a label or relationship is

@@ -735,9 +735,10 @@ def _evidence_for(repo: str, endpoint: dict | None, outcome=None,
         eid = raw.endpoint_id(repo, endpoint["http_method"], endpoint["path"],
                               raw.service_of(endpoint.get("anchor")))
         pairs.append(("Endpoint", eid))
-        for parameter in endpoint.get("parameters", ()) or ():
-            pairs.append(("Parameter", raw.parameter_id(
-                repo, eid, parameter.get("name", ""), parameter.get("location", ""))))
+        # **No `Parameter` pair.** The label was staged out: a parameter node
+        # held the same five values as its entry in the transition's `c_inputs`
+        # and nothing else but bookkeeping. The evidence a transition records is
+        # what it can point AT, and an input is now a value it carries.
         for cid in raw.resolve_class(repo, endpoint.get("response_body", ""),
                                      declared or set(), by_simple or {}):
             pairs.append(("Class", cid))

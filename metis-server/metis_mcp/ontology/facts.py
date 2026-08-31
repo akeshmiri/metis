@@ -81,11 +81,15 @@ SUPPORTING = "supporting"
 INTERNAL = "internal"
 
 # Labels that are user-facing whatever the graph looks like. A caller invokes an
-# Endpoint, sends a Parameter, and is answered with a DeclaredOutcome or the
-# status an ExceptionMapping produces. None of that depends on an edge existing,
-# which is the point: these are the labels whose disconnection is a finding.
+# Endpoint and is answered with a DeclaredOutcome or the status an
+# ExceptionMapping produces. None of that depends on an edge existing, which is
+# the point: these are the labels whose disconnection is a finding.
+#
+# `Parameter` was here until it was staged out. What a caller sends is still
+# surface — it is now a value inside the transition's `c_inputs` rather than a
+# node, and a property cannot be disconnected from anything.
 INHERENTLY_SURFACE = frozenset({
-    "Endpoint", "Parameter", "DeclaredOutcome", "ExceptionMapping",
+    "Endpoint", "DeclaredOutcome", "ExceptionMapping",
 })
 
 # Labels that are user-facing when a payload chain reaches them, and internal

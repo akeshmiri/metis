@@ -6,17 +6,15 @@
 
 ```
 usage: metis-mbt [-h]
-                 {paths,render,report,payload,generate,knowledge,feature,glossary,spec-requirement,intent,data,guide,page-object,spec-build,feature-derive,intake,entity,structure,review,override,coverage-gap,validate,drift,publish,ac-mine,doctor,init,analyse,properties,frameworks,ui,reconcile,divergence,spec,sources,land,findings,persist,workflow,backfill-validity,retrieval-bench,embed,lessons} ...
+                 {paths,render,report,knowledge,feature,glossary,spec-requirement,intent,guide,spec-build,feature-derive,intake,entity,review,override,coverage-gap,validate,drift,publish,ac-mine,doctor,init,analyse,properties,frameworks,ui,reconcile,divergence,spec,sources,land,findings,persist,workflow,backfill-validity,retrieval-bench,embed,storage,lessons} ...
 
 CLI for the MBT engine (application spec §9.4, first slice).
 
 positional arguments:
-  {paths,render,report,payload,generate,knowledge,feature,glossary,spec-requirement,intent,data,guide,page-object,spec-build,feature-derive,intake,entity,structure,review,override,coverage-gap,validate,drift,publish,ac-mine,doctor,init,analyse,properties,frameworks,ui,reconcile,divergence,spec,sources,land,findings,persist,workflow,backfill-validity,retrieval-bench,embed,lessons}
+  {paths,render,report,knowledge,feature,glossary,spec-requirement,intent,guide,spec-build,feature-derive,intake,entity,review,override,coverage-gap,validate,drift,publish,ac-mine,doctor,init,analyse,properties,frameworks,ui,reconcile,divergence,spec,sources,land,findings,persist,workflow,backfill-validity,retrieval-bench,embed,storage,lessons}
     paths               generate covering paths
     render              render paths as test cases
     report              coverage report
-    payload             machine-readable automation payload
-    generate            automation artefacts for a declared runner
     knowledge           the knowledge-centre file (§4.5): check it, compare it
     feature             the specification as Gherkin (one Requirement, one
                         Feature)
@@ -24,15 +22,12 @@ positional arguments:
     spec-requirement    a spec-document feature + an EARS statement -> a
                         Requirement
     intent              the intent file: needs and how they behave (§4.1)
-    data                the database layer (catalogue, queries)
     guide               generate docs/guide/ from the engine
-    page-object         render a Page Object for an authored page
     spec-build          build Endpoint / Page / Action from a specification's
                         contracts
     feature-derive      group specifications into features, from evidence
     intake              land a UIF document (§3.2 stage 2)
     entity              business-entity specifications (§4.6a)
-    structure           authored page and data structure (§5.2a, §5.2b)
     review              review-as-code decisions
     override            edit a model (spec §17)
     coverage-gap        what existing tests already cover (REQ-METIS-PG-01)
@@ -43,7 +38,7 @@ positional arguments:
                         gate
     ac-mine             mine a model from acceptance criteria (spec §4.5)
     doctor              is this machine ready to extract? (run this first)
-    init                scaffold .metis/project.json inside a repository
+    init                scaffold a project profile in $METIS_HOME/profiles
     analyse             repository -> approval gate, in one command
     properties          what each node property is for — the call, or the
                         behaviour
@@ -62,6 +57,7 @@ positional arguments:
     retrieval-bench     measure search against questions whose answers are
                         known
     embed               populate `embedding` so semantic search has vectors
+    storage             per-project Cypher: export it, verify it, restore it
     lessons             land the authored academy (docs/academy/) as Lesson
                         nodes
 

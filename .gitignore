@@ -58,7 +58,6 @@ metis-server/.metis/runs/
 # the source it was built from. `code_analysis.engine` keeps the artefacts it
 # actually reuses under the target repo's .metis/cache/ instead.
 workspace/
-.DS_Store
 
 # Generated automation artefacts and anything else scratch. `metis generate
 # --out tmp/testcases/<model>` writes here.

@@ -22,6 +22,7 @@ from metis_mcp.ontology.labels import (
     ANY_LABEL,
     BASELINE_EXEMPT,
     LABELS,
+    PROJECT_PROPERTY,
     RELATIONSHIP_TYPES,
 )
 
@@ -119,9 +120,16 @@ def constraints_cypher(edition: str = COMMUNITY) -> str:
         # one edge per node, restating a fact the node already carries, and two
         # representations that can disagree. This session has spent most of its
         # time on exactly that class of defect.
+        # `m_project` joins them for the same reason: "everything belonging to
+        # this project" is what `storage export` asks, once per label, and
+        # without an index it is a full scan of a graph that holds every project
+        # a deployment has ingested. Episode gets it too -- it is exempt from the
+        # baseline because it cannot point at itself, not because it belongs to
+        # no project.
         indexed = list(dict.fromkeys(
-            (*spec.indexed, *(() if label in BASELINE_EXEMPT
-                              else ("lifecycle_state", "source_episode_id")))
+            (*spec.indexed, PROJECT_PROPERTY,
+             *(() if label in BASELINE_EXEMPT
+               else ("lifecycle_state", "source_episode_id")))
         ))
         for prop in indexed:
             lines.append(

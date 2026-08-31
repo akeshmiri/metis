@@ -1,16 +1,23 @@
 """
 The ontology (application spec §8.2, §8.3).
 
-Sixty-five labels in eight layers: a **control-flow** model (State, Transition and
-friends), the **evidence** layer it is derived from (Endpoint, Parameter, Class,
-Field, Method, DeclaredOutcome, Check, ExceptionMapping, Route), a small
-**business** layer (BusinessArea, BusinessEntity) giving the nouns a criterion
-uses a definition of their own, the **Web structure** (UiElement and its ten
-specialisations) and **data** (Datasource, Database, Schema, DbObject, Column)
-layers holding what a test acts on and what it must set up, the **intake
-anchors** (JiraItem and its five siblings) recording which artefact in the world
-a requirement came from, and the **documents** (SpecDocument, EntityDocument)
-that are rendered into the graph rather than into files beside it.
+Thirty-seven labels in six layers: the **behaviour** model (State, Transition and
+its two surfaces, Check, DeclaredOutcome, Action), the **requirement** chain
+(Intent, Specification, Requirement, AcceptanceCriterion, Feature, Scenario,
+TestCase), the **data a transition references** (Class, Enum, Endpoint,
+ExceptionMapping, SecurityScheme), a **knowledge** layer
+(BusinessArea, BusinessEntity, and the academy's Lesson/Passage/Topic) giving
+the nouns a criterion uses a definition of their own, the **process** records
+(Finding, Episode, Component and its two surfaces, NeedReview), and the
+**intake anchors** (JiraItem and its four siblings) recording which artefact in
+the world a requirement came from.
+
+**It was 65.** The 2026-08-31 re-baseline staged out 28 that described a
+SOURCE rather than a requirement, or that a property already said: the whole database layer, which no
+transition could reach; the UI widget taxonomy, which was an authored tree of
+controls rather than behaviour; and `Method`/`Function`. Métis is a requirement
+tool over a state machine — code is where requirements are recovered FROM, and a
+label earns a node when a requirement question needs it as one.
 
 **This module is the single source for two of the four governance places** the
 spec's D-2 rule names: the structural validator reads it directly, and the Cypher
@@ -21,7 +28,7 @@ The remaining two -- the catalogue in §8.2/§8.3 of the specification, and this
 docstring -- are human-readable and are checked against this module by
 test_ontology.py.
 
-Why sixty-five, and why that number should worry you: see D-1 and the note in
+Why thirty-seven, and why that number should worry you: see D-1 and the note in
 `test_ontology`. A label is included only when something writes it AND something
 reads it -- the second half is the one that is easy to skip, and a writer alone
 is how an ontology accretes. §8.7 lists the deliberately-excluded labels with
@@ -37,6 +44,26 @@ BASELINE_REQUIRED = ("id", "source_episode_id", "name")
 # The one exception, and it is structural rather than a concession: an Episode is
 # the provenance record every other node points at, so it cannot point at one.
 BASELINE_EXEMPT = {"Episode"}
+
+# ---- Which project a node belongs to --------------------------------------
+#
+# **The graph is one database holding many projects, and nothing said which.**
+# Measured before this existed: of 5,672 nodes, 443 carried a `model_id` and
+# 5,229 carried nothing project-shaped at all -- the whole evidence layer
+# (Endpoint, Class, Method, Parameter) and every Lesson. "Everything belonging
+# to Athena" was not expressible, so a per-project export could not be defined,
+# let alone checked.
+#
+# **Not in `BASELINE_REQUIRED`, deliberately.** Making it required would reject
+# every plan that predates it, including ones a deployment has already landed
+# from. It is stamped by `landing.land` from `LandingPlan.project` and is empty
+# when a plan does not name one -- which `storage export` REPORTS rather than
+# skipping, because a partial export that looks complete is the failure mode
+# this whole property exists to remove.
+#
+# `m_` for metadata about the record rather than about the system under test:
+# `c_` is how to call it, `b_` is what it does, `x_` is where it came from.
+PROJECT_PROPERTY = "m_project"
 
 # Lifecycle values (spec §8.6). Generation reads only `Approved` (D-10).
 LIFECYCLE_STATES = ("Quarantine", "Approved", "Disputed", "Rejected", "Deprecated")
@@ -356,14 +383,6 @@ LABELS: dict[str, LabelSpec] = {
             # source and get one label, not two.
         ),
         LabelSpec(
-            "DatasourceItem", "Evidence anchor for one analysed database schema",
-            required=("datasource_id",),
-            indexed=("datasource_id",),
-            # Beside `Datasource` (the configured connection) and `Database`
-            # (the instance), not instead of either: this is the intake record
-            # of having read one, which outlives any particular reading.
-        ),
-        LabelSpec(
             "CodeItem", "Evidence anchor for one analysed source tree at one revision",
             required=("repo_id",),
             indexed=("repo_id", "revision"),
@@ -671,148 +690,7 @@ LABELS: dict[str, LabelSpec] = {
             # you could not ask "every version of records-api" — the estate
             # would read as 13 components today and 26 after the next commit.
         ),
-        LabelSpec(
-            "Page", "One screen of a web surface; its states are the conditions it shows",
-            required=("component",),
-            indexed=("component", "surface"),
-            enums={"b_surface": ("ui",)},
-            # D-1 demands a writer and a reader, and both are real.
-            #
-            # **Writer:** `code_analysis/react_ui_synthesis.py`, from the 9 real
-            # screens the react-ui pack recovers. **Reader:** the Web pattern
-            # query — "which pages does this component have, and what condition
-            # is each in" — which is the question the surface exists to answer
-            # and which nothing could ask while the screen name survived only as
-            # a substring inside a transition id.
-            #
-            # A Page is a *grouping* node, deliberately not a link in the
-            # `State -> Transition -> State` spine: a walk never passes through
-            # one, so path generation stays surface-agnostic.
-        ),
-        # ------------------------------------------------------------------
-        # The Web structure layer: what is ON a page (spec §5.2a).
-        # ------------------------------------------------------------------
-        #
-        # The Web counterpart of the API evidence layer. `Endpoint`/`Parameter`/
-        # `Field` are what an API call is made OF; these are what a UI
-        # interaction is made of, and a `UiAction` transition points at one with
-        # `DERIVED_FROM` exactly as an `ApiCall` points at its `Endpoint`.
-        #
-        # **Writer:** `model_sources.web_structure`, from a checked-in file --
-        # the same discipline as the glossary, and for the same reason. No pack
-        # identifies component TYPES: `react-ui` recovers screens, routes and
-        # status variables, `js-ui` recovers `addEventListener` bindings whose
-        # element selector its own comment calls "frequently NOT recoverable",
-        # and neither can tell a `<DataGrid>` from a hand-rolled
-        # `<div role="table">`. A person knows; the file is where they say so.
-        #
-        # **Reader:** the Gherkin renderer, which shows a Feature the controls
-        # its scenarios act on; the impact query; and -- the strongest one --
-        # test design. A paginated table needs boundary cases and a sortable
-        # column needs order cases, which is a question `mbt.techniques` can only
-        # ask if the structure is in the graph.
-        #
-        # **One family, ten specialisations, on the `Transition` precedent.** A
-        # specialisation is written INSTEAD of its parent, so `MATCH (t:Table)`
-        # is exact, `label_expression("UiElement")` is "every element", and a
-        # bare `:UiElement` keeps meaning something useful -- an element whose
-        # type nobody has established, which is a worklist rather than a synonym
-        # for all of them.
-        LabelSpec(
-            "UiElement", "One thing on a page whose type has not been established",
-            required=("element_type",),
-            indexed=("element_type", "page", "lifecycle_state"),
-            enums={"lifecycle_state": LIFECYCLE_STATES},
-        ),
-        LabelSpec("Menu", "A navigation or command grouping", specialises="UiElement"),
-        LabelSpec(
-            "UiTable", "A tabular listing of records on a page",
-            specialises="UiElement",
-            # `Table` unqualified is the DATABASE table, which is what it means
-            # in this repo's history and in most of engineering. The UI one is
-            # qualified because it is the newer claim on the word, and because
-            # `MATCH (t:Table)` returning page controls would be a trap.
-        ),
-        LabelSpec("Form", "A set of inputs submitted together", specialises="UiElement"),
-        LabelSpec("Dialog", "A modal surface raised over a page", specialises="UiElement"),
-        LabelSpec(
-            "Row", "One record's line in a table, and the controls it carries",
-            specialises="UiElement",
-            # Not a data row. A `Row` node per record would be data masquerading
-            # as structure; this is the row TEMPLATE -- what every row offers,
-            # which is what a test needs to know.
-        ),
-        LabelSpec(
-            "Pagination", "A table's paging control",
-            specialises="UiElement",
-            # Its own label because it is a test-design dimension, not decoration:
-            # a paginated listing has first/last/empty/overflow cases that an
-            # unpaginated one does not, and nothing could ask which tables
-            # paginate while this was a boolean inside a description.
-        ),
-        LabelSpec("Sort", "A table's ordering control", specialises="UiElement"),
-        LabelSpec(
-            "Action", "An affordance a person can invoke — the thing a click lands on",
-            specialises="UiElement",
-            # What a `UiAction` transition is DERIVED_FROM. The transition is the
-            # behaviour; this is the button.
-        ),
-        LabelSpec(
-            "Event", "The interaction that invokes an action (click, submit, change)",
-            specialises="UiElement",
-        ),
-        LabelSpec(
-            "Navigation", "A control that moves to another page",
-            specialises="UiElement",
-            # Distinct from `Route`, which is the frontend's URL definition. A
-            # `Route` says the path `/records/{id}` renders a page; a
-            # `Navigation` is the link on some other page that goes there.
-        ),
 
-        # ------------------------------------------------------------------
-        # The data layer: what a test has to set up, and what it disturbs.
-        # ------------------------------------------------------------------
-        #
-        # **Writer:** `model_sources.data_structure`, from a checked-in file --
-        # a catalogue read from a live database is the obvious future writer and
-        # is not this. **Reader:** the impact query ("which criteria touch this
-        # column"), and test design: a case whose Given is "a record exists in
-        # Archived state" needs to know where that state is stored, and nothing
-        # could answer it while the schema lived outside the graph.
-        #
-        # `DbObject` is the base and the same argument `UiElement` makes: the
-        # user's list ends in "and other database elements like function, view,
-        # ...", and an open-ended list is exactly what a specialisation hierarchy
-        # handles well -- an object whose kind nobody classified stays
-        # `:DbObject` and is a worklist, rather than forcing a new label per
-        # object type the moment one appears.
-        LabelSpec(
-            "Datasource", "A configured connection through which statements run",
-            required=("dialect",),
-            indexed=("dialect",),
-            # Separate from `Database` because they are not one thing: several
-            # datasources (read-write, read-replica, a test fixture) commonly
-            # address one database, and which one a test used is a real fact
-            # about that test.
-        ),
-        LabelSpec("Database", "One database instance", indexed=("name",)),
-        LabelSpec("Schema", "A named grouping of objects within a database",
-                  indexed=("name",)),
-        LabelSpec(
-            "DbObject", "A database object whose kind has not been established",
-            required=("object_type",),
-            indexed=("object_type", "name"),
-        ),
-        LabelSpec("Table", "A stored relation", specialises="DbObject"),
-        LabelSpec("View", "A derived relation", specialises="DbObject"),
-        LabelSpec("Function", "A callable routine", specialises="DbObject"),
-        LabelSpec(
-            "Column", "One column, with the constraints declared on it",
-            required=("data_type",),
-            indexed=("name", "data_type"),
-            # The same role `Field` plays for a payload: these are the variants a
-            # fixture must satisfy or violate (GD-3), on the storage side.
-        ),
 
         LabelSpec(
             "Scenario", "One covering walk: setup plus a single validated transition",
@@ -925,21 +803,6 @@ LABELS: dict[str, LabelSpec] = {
             # collapsing them is what hid the dual-mount defect.
         ),
         LabelSpec(
-            "Parameter", "One input an endpoint reads: where it rides and what it must be",
-            required=("location",),
-            # Kept in step with `code_analysis.contract.PARAMETER_LOCATIONS`,
-            # which is the vocabulary the adapter maps into. `cookie` was added
-            # there and not here, so a document the adapter read cleanly was
-            # then refused by the ontology gate — two lists for one fact, and
-            # the failure lands at the boundary between them.
-            enums={"location": ("path", "query", "header", "body", "form", "cookie")},
-            indexed=("location", "required"),
-            # Promoted from `Transition.inputs_json` — a JSON *string*, because
-            # a list of records cannot be a Neo4j property. D-1 held this back
-            # "until something actually queries one"; the control-flow layer's
-            # EXERCISES edge is that reader.
-        ),
-        LabelSpec(
             "Class", "One declared type: a controller, a service, or a payload schema",
             indexed=("package",),
             # **Deliberately doubles as the payload schema.** A DTO *is* a class;
@@ -962,43 +825,6 @@ LABELS: dict[str, LabelSpec] = {
             # boundary analysis; a field of this type has exactly N partitions
             # and they are enumerable — which is a different kind of test-design
             # input, not a variation on the same one.
-        ),
-        # ------------------------------------------------------------------
-        # What the application asks the database (X-19a).
-        # ------------------------------------------------------------------
-        LabelSpec(
-            "Query", "One thing the application asks a database, with the "
-                     "statement it sends",
-            required=("query", "form"),
-            may_be_empty=("query",),
-            indexed=("dialect", "form", "confidence"),
-            enums={"form": ("derived", "native", "jpql", "opaque"),
-                   "confidence": ("catalogue-confirmed",
-                                  "naming-strategy-proposed", "unresolved")},
-            # **Written as its dialect**, never as `:Query` — see the
-            # specialisations below. `query` may be empty on an opaque one: the
-            # statement is genuinely unknown, and "" is the honest form of that
-            # where a guessed SQL string would look runnable and be wrong.
-        ),
-        # A dialect per label, so `MATCH (q:Oracle)` reads as it should. They
-        # specialise `Query` so `label_expression("Query")` answers the
-        # estate-wide question — twice in one week a hardcoded parent label
-        # matched nothing here and both times it cost a real edge, and a service
-        # that talks to two databases is the normal case rather than the odd one.
-        LabelSpec("Postgres", "A query sent to PostgreSQL", specialises="Query"),
-        LabelSpec("Oracle", "A query sent to Oracle", specialises="Query"),
-        LabelSpec("MySql", "A query sent to MySQL", specialises="Query"),
-        LabelSpec(
-            "JpaQuery", "A repository call whose statement could not be "
-                        "recovered — carried raw, for a person to complete",
-            specialises="Query",
-            # The tier that exists so nothing is guessed. A derived name Métis
-            # cannot parse, or JPQL whose entity the catalogue has not confirmed,
-            # lands here with its reason rather than as invented SQL.
-        ),
-        LabelSpec(
-            "Method", "One method, from Layer 1's structural pass",
-            indexed=("type_name",),
         ),
         LabelSpec(
             "DeclaredOutcome", "One observable result of an entry point, as recovered",
@@ -1039,6 +865,16 @@ LABELS: dict[str, LabelSpec] = {
             # that stops being enough.
         ),
         LabelSpec(
+            "Action", "An affordance a person can invoke — the thing a click lands on",
+            # What a `UiAction` transition is DERIVED_FROM. The transition is the
+            # behaviour; this is the button.
+            #
+            # **A root label now.** It specialised `UiElement`, which was staged
+            # out with the rest of the widget taxonomy: Métis records the
+            # affordance a behaviour acts on, not the tree of controls it sits
+            # in. Nothing else specialised it, so the chain loses no link.
+        ),
+        LabelSpec(
             "Check", "One condition evaluated on a path — a guard's own evidence",
             required=("expression",),
             indexed=("dimension_class", "order"),
@@ -1050,11 +886,6 @@ LABELS: dict[str, LabelSpec] = {
             # What makes "which exception becomes a 400" evidence rather than
             # inference: the pilot estate maps four distinct exceptions onto 400 and only
             # one of them is bean validation.
-        ),
-        LabelSpec(
-            "Route", "One frontend route: the path that renders a page",
-            required=("path",),
-            indexed=("path",),
         ),
     )
 }
@@ -1079,7 +910,6 @@ ALLOWED_RELATIONSHIPS: tuple[RelationshipSpec, ...] = (
     RelationshipSpec("ConfluenceItem", "REPRESENTS", "Requirement", "System-of-record source"),
     RelationshipSpec("OpenApiItem", "REPRESENTS", "Requirement", "System-of-record source"),
     RelationshipSpec("ZephyrItem", "REPRESENTS", "Requirement", "System-of-record source"),
-    RelationshipSpec("DatasourceItem", "REPRESENTS", "Requirement", "System-of-record source"),
     RelationshipSpec("CodeItem", "REPRESENTS", "Requirement", "System-of-record source"),
     # A document describes exactly one thing and cites the criteria it renders.
     # `CITES` is what makes the round trip checkable: a rendered rule can be
@@ -1127,7 +957,6 @@ ALLOWED_RELATIONSHIPS: tuple[RelationshipSpec, ...] = (
     # exactly what D-1's "named reader" half exists to prevent.
     RelationshipSpec("RestServer", "EXPOSES", "Endpoint", "The entry points it serves"),
     RelationshipSpec("RestServer", "CONTAINS", "Transition", "Its behaviour at one commit"),
-    RelationshipSpec("WebServer", "HAS_PAGE", "Page", "The screens it serves"),
     RelationshipSpec("WebServer", "CONTAINS", "Transition", "Its behaviour at one commit"),
     # ---- the code side reaching the SAME Specification, by its own edge ----
     #
@@ -1159,66 +988,8 @@ ALLOWED_RELATIONSHIPS: tuple[RelationshipSpec, ...] = (
                      "This interaction starts that API flow; the UI continues (M-5a)"),
     RelationshipSpec("UiAction", "INVOKES", "ApiCall",
                      "This UI outcome rendered that API outcome (M-5a, M-5b)"),
-    RelationshipSpec("Component", "HAS_PAGE", "Page",
-                     "A screen this web component presents"),
-    RelationshipSpec("Page", "SHOWS", "State",
-                     "A condition this page can be observed in (M-2, M-3)"),
 
-    # ---- the Web structure tree ---------------------------------------------
-    #
-    # `HAS_ELEMENT` throughout, so "every control on this page, at any depth" is
-    # one variable-length query rather than a union over container types. The
-    # triples are explicit rather than `UiElement -> UiElement`: the containment
-    # rules are real (a Row belongs to a Table, not to a Menu), and cataloguing
-    # them is what makes a modelling error a refused write instead of a silent
-    # shape nobody notices.
-    *[RelationshipSpec(container, "HAS_ELEMENT", element,
-                       "A control this surface presents")
-      for container, elements in (
-          # `UiElement` is the generic, and it is here so an element whose type
-          # nothing established is discoverable. All ten of its specialisations
-          # carried this edge and the parent carried none -- so `Transition`
-          # stays reachable through `COVERS` while an unclassified UI element
-          # could not be found and resolved, which is the entire reason a
-          # generic label is kept.
-          ("Page", ("UiElement", "Menu", "UiTable", "Form", "Dialog", "Action",
-                    "Event", "Navigation")),
-          ("Menu", ("Action", "Event", "Navigation", "Dialog")),
-          ("UiTable", ("Action", "Event", "Navigation", "Dialog",
-                       "Row", "Pagination", "Sort")),
-          ("Form", ("Action", "Event", "Navigation", "Dialog")),
-          # A dialog with no controls cannot be dismissed, and a row with none is
-          # inert. Neither was in the original list; both are what makes the
-          # other rules usable, and they are named here rather than assumed.
-          ("Dialog", ("Action", "Event", "Navigation")),
-          ("Row", ("Action", "Event", "Navigation", "Dialog")),
-          ("Pagination", ("Action", "Event")),
-          ("Sort", ("Action", "Event")),
-      ) for element in elements],
-    # ---- the data tree ------------------------------------------------------
-    RelationshipSpec("Datasource", "CONNECTS_TO", "Database",
-                     "Which database this connection addresses"),
-    RelationshipSpec("Database", "HAS_SCHEMA", "Schema", "A grouping it contains"),
-    *[RelationshipSpec(container, "HAS_OBJECT", kind, "An object it contains")
-      for container in ("Schema", "Database")
-      for kind in ("Table", "View", "Function", "DbObject")],
-    *[RelationshipSpec(relation, "HAS_COLUMN", "Column", "A column it declares")
-      for relation in ("Table", "View")],
-    # What a criterion's data actually lives in. The same shape as
-    # `AcceptanceCriterion-[:REFERENCES]->BusinessEntity`, one layer down: an
-    # entity is what the business calls it, a table is where it is kept.
-    RelationshipSpec("BusinessEntity", "STORED_IN", "Table",
-                     "Where this business noun is persisted"),
 
-    # `ON_EVENT` and `RENDERS` below are the UI surface's own joins, and nothing
-    # writes either: `engine.extract` runs the two JVM packs whatever a profile's
-    # surface says, so react-ui and js-ui have never produced a fact. Both packs
-    # now declare `status: unwired` in their manifests. Wiring pack selection by
-    # surface is what gives these writers.
-    RelationshipSpec("Action", "ON_EVENT", "Event",
-                     "The interaction that invokes this action"),
-    RelationshipSpec("Navigation", "NAVIGATES_TO", "Page",
-                     "Where this control goes"),
     # The join to behaviour, mirroring `Transition-[:DERIVED_FROM]->Endpoint`.
     RelationshipSpec("Transition", "DERIVED_FROM", "Action",
                      "The control this interaction was recovered from"),
@@ -1263,10 +1034,6 @@ ALLOWED_RELATIONSHIPS: tuple[RelationshipSpec, ...] = (
                      "A declared security requirement a caller must satisfy. "
                      "Replaces the parallel `security_*` arrays, which could not "
                      "express a scheme with more than one role"),
-    RelationshipSpec("Endpoint", "ACCEPTS", "Parameter", "What a caller must send"),
-    RelationshipSpec("Parameter", "OF_TYPE", "Class",
-                     "The payload schema — the same node as the declared type"),
-    RelationshipSpec("Endpoint", "RETURNS", "Class", "The declared response body type"),
     # **The nested payload.** Without this a DTO field whose type is another DTO
     # was a dead end: `MfaServiceRequest.answers` named `AnswerDto` in a string
     # property and reached it through nothing, so the payload a test case has to
@@ -1276,28 +1043,10 @@ ALLOWED_RELATIONSHIPS: tuple[RelationshipSpec, ...] = (
     RelationshipSpec("Class", "OF_TYPE", "Class",
                      "A field of this type is itself a declared type — the "
                      "nested payload. Which field is on `f_<name>_type`"),
-    RelationshipSpec("Class", "DECLARES_METHOD", "Method", "Its methods"),
-    RelationshipSpec("Endpoint", "HANDLED_BY", "Method", "The handler behind the route"),
-    RelationshipSpec("Method", "CALLS", "Method", "A resolved call edge (Layer 1)"),
-    # X-19a. `ISSUES` is the path a transition reaches a table by:
-    # ApiCall -> Endpoint -> HANDLED_BY -> Method -> CALLS* -> Method -> ISSUES.
-    RelationshipSpec("Method", "ISSUES", "Query",
-                     "A query this method sends to a database"),
-    # Every table a query touches, so a join names both rather than one.
-    RelationshipSpec("Query", "QUERIES", "Table",
-                     "A table this query reads or writes"),
-    RelationshipSpec("Query", "QUERIES", "View", "A view this query reads"),
-    RelationshipSpec("Query", "USES", "Column",
-                     "A column this query names — a test-design input, because "
-                     "it is what a fixture has to populate"),
     RelationshipSpec("Endpoint", "DECLARES", "DeclaredOutcome",
                      "A result this entry point can produce"),
     RelationshipSpec("DeclaredOutcome", "GUARDED_BY", "Check",
                      "The condition selecting this outcome"),
-    RelationshipSpec("ExceptionMapping", "HANDLED_BY", "Method",
-                     "The @ExceptionHandler that maps it"),
-    RelationshipSpec("Route", "RENDERS", "Page", "The page this frontend route shows"),
-    RelationshipSpec("Page", "CALLS", "Endpoint", "An API call this page makes"),
 
     # ---- evidence -> control flow, the join between the two layers ---------
     #
@@ -1311,8 +1060,6 @@ ALLOWED_RELATIONSHIPS: tuple[RelationshipSpec, ...] = (
                      "The recovered outcome this transition represents"),
     RelationshipSpec("Transition", "DERIVED_FROM", "ExceptionMapping",
                      "The exception→status mapping behind a derived rejection"),
-    RelationshipSpec("Transition", "EXERCISES", "Parameter",
-                     "An input this transition sends (replaces inputs_json)"),
     # Was `-> Field` until X-6d flattened a field onto its type. The claim is
     # weaker and honest: the TYPE whose constraints a case must satisfy or
     # violate, with which field carrying which constraint on `f_<name>_*`.
@@ -1339,6 +1086,91 @@ RELATIONSHIP_TYPES = tuple(dict.fromkeys(r.rel_type for r in ALLOWED_RELATIONSHI
 # Spec §8.7 — excluded, each with the trigger that would bring it back. Kept in
 # code so the staging plan is checkable, not just prose.
 STAGED_OUT: dict[str, str] = {
+    # ----------------------------------------------------------------------
+    # The 2026-08-31 re-baseline: Métis is a requirement tool over a state
+    # machine, and a label earns a node when a REQUIREMENT question needs it as
+    # one. Measured before removing anything: a transition could reach only nine
+    # labels, the whole database layer was reachable from no transition at all,
+    # and 69% of a real project's graph (971 of 1,417 nodes on Athena) was code
+    # structure. The bar is the one `Field` and `Role` below already state.
+    #
+    # Every entry names what would bring it back. None of them is "somebody
+    # wants the data" — the code is still there and still readable; the trigger
+    # is a question the MODEL cannot answer without the label.
+    # ----------------------------------------------------------------------
+    #
+    # ---- the database layer: nothing pointed at it from a transition --------
+    "Table": "a requirement is stated ABOUT a table — a criterion whose subject "
+             "is the stored relation rather than the behaviour that writes it",
+    "View": "as Table; a requirement distinguishes a derived relation from a "
+            "stored one",
+    "Column": "a criterion constrains one column rather than the payload field "
+              "that carries it",
+    "Schema": "two schemas hold the same table name and a requirement has to "
+              "say which",
+    "Database": "one journey spans two databases and a requirement depends on "
+                "which it reached",
+    "Datasource": "a requirement is about the CONNECTION — pooling, timeout, "
+                  "read-only routing — rather than about what is stored",
+    "DbObject": "an object whose kind is unestablished has to be reviewed as "
+                "such, rather than reported as a finding",
+    "Query": "a requirement is about the statement sent, not the behaviour it "
+             "implements. `Transition-[:CONSTRAINED_BY]->Check` carries the "
+             "condition; this would carry the SQL",
+    "JpaQuery": "as Query, for a statement that could not be recovered",
+    "Postgres": "as Query, per dialect", "Oracle": "as Query, per dialect",
+    "MySql": "as Query, per dialect",
+    "DatasourceItem": "a Requirement is traced to a database schema as its "
+                      "system of record, the way JiraItem traces one to an issue",
+    #
+    # ---- the UI structure layer: authored widget taxonomy -------------------
+    # `Action` survives — a `UiAction` transition is DERIVED_FROM the affordance
+    # it acts on, which is a behavioural fact. The tree the affordance sits in
+    # is not.
+    "Page": "a requirement is about the SCREEN rather than about a behaviour on "
+            "it. A ui State already carries its page as a property, which is "
+            "what tells two states on different screens apart",
+    "UiElement": "an element needs a review state or an edge of its own — "
+                 "something must point AT one control rather than at the "
+                 "interaction with it",
+    "Form": "a requirement constrains a submission as a unit — cross-field "
+            "validation stated over the form rather than over each input",
+    "Dialog": "a modal's presence is itself a required outcome, distinct from "
+              "the state it announces",
+    "Menu": "navigation structure is a requirement — 'this action is reachable "
+            "from that menu' rather than 'this action exists'",
+    "Navigation": "as Menu, for a control that moves between pages",
+    "UiTable": "a requirement is about the listing as a control (paging, "
+               "ordering) rather than about the records it shows",
+    "Row": "a requirement is about one record's line and its controls",
+    "Pagination": "paging behaviour is required in its own right", 
+    "Sort": "ordering behaviour is required in its own right",
+    "Event": "the interaction that invokes an action becomes distinguishable "
+             "from the action — a requirement that says 'on blur' rather than "
+             "'when invoked'",
+    "Route": "a requirement is about the URL a screen answers on, rather than "
+             "about what the screen then does",
+    #
+    # ---- the input a transition sends ---------------------------------------
+    # A parameter node carried name, location, required, type_name and
+    # constraints — the same five values as its entry in the transition's
+    # `c_inputs`, plus an id and an episode. It was promoted OUT of
+    # `inputs_json` when something needed it as a node, and the property was
+    # never withdrawn, so the graph held one fact twice. Measured: 245 nodes on
+    # a real service saying what a property already said.
+    #
+    # This is the `Field` case one level up, and the trigger is the same shape.
+    "Parameter": "something must point at ONE input rather than at the "
+                 "interaction that sends it — a per-parameter review state, or "
+                 "an edge whose target is a single input rather than the type "
+                 "it carries",
+    #
+    # ---- code structure -----------------------------------------------------
+    "Method": "a requirement is stated about a method. It was landed for "
+              "`Endpoint-[:HANDLED_BY]->Method` and a `CALLS` graph that the "
+              "live graph held ZERO edges of — 96 nodes supporting a traversal "
+              "with nothing to traverse",
+    "Function": "as Method, for a callable that is not a class member",
     # A field was its own node until X-6d: 68 of them on a real twelve-endpoint
     # service, saying what four properties say, and never queried individually.
     # What a test-designer asks is "what values does this type accept", which is

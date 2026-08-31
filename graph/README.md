@@ -28,9 +28,16 @@ every emitted file already carries in its header.
 
 **Not here: anything recovered from code.** States and transitions extracted by
 the Joern packs have no file — their source is the service's own source tree,
-and re-extraction is how they are refreshed (RD-9: re-ingest, never migrate).
-Putting a recovered model here would create a second copy that goes stale the
-moment the code moves.
+and re-extraction is how they are refreshed. Putting a recovered model here
+would create a second copy that goes stale the moment the code moves.
+
+A project's graph MAY be kept as Cypher, at `<repo>/.metis/storage/`, written by
+`metis storage export`. That is a restore file, not a second source: its manifest
+records the commit and the ontology it came from, `metis storage verify` compares
+them against the checkout, and a rebuild re-ingests rather than restoring when
+they disagree. The rule is **restore when the file matches, re-ingest when it
+does not** — RD-9's "re-ingest, never migrate" was about the v1 → v2 engine
+cutover (completed at `61814dc`), not about keeping a backup.
 
 **Not here either: `metis-server/demo_project/` and `demo_data/`.** Those are
 test fixtures, asserted against line by line by `test_extraction.py` — the demo

@@ -152,6 +152,7 @@ SET mv:NeedReview
 SET mv.journey = $journey, mv.surface = $surface, mv.version = $version,
     mv.component = $component,
     mv.commit_sha = $commit, mv.source_episode_id = $episode,
+    mv.m_project = $m_project,
     mv.name = $id, mv.lifecycle_state = 'Quarantine'
 """
 
@@ -193,6 +194,7 @@ SET f:NeedReview
 SET f.finding_type = $finding_type, f.severity = $severity, f.detail = $detail,
     f.remedy = $remedy, f.resolution = $resolution, f.name = $finding_type,
     f.source_episode_id = $episode, f.model_id = $model_id,
+    f.m_project = $m_project,
     f.lifecycle_state = 'Quarantine'
 """
 
@@ -221,7 +223,8 @@ def _about_id(model: Model, about: str) -> str:
     return ensure_namespaced(model.id, about)
 
 
-def plan_load(model: Model, *, journey: str, surface: str, version: int,
+def plan_load(model: Model, *, project: str = "",
+              journey: str, surface: str, version: int,
               commit: str, episode: str, findings: list[FindingRecord],
               run_id: str = "", engine: str = "",
               source_fingerprint: str = "",
@@ -251,6 +254,7 @@ def plan_load(model: Model, *, journey: str, surface: str, version: int,
         MODEL_VERSION_CYPHER.replace("$COMPONENT_LABEL", component_label), {
             "id": version_id, "journey": journey, "surface": surface,
             "version": version, "component": model.id, "commit": commit,
+            "m_project": project,
             "episode": episode}))
     plan.versions = 1
 
@@ -279,6 +283,12 @@ def plan_load(model: Model, *, journey: str, surface: str, version: int,
 
     for finding in sorted(findings, key=lambda f: (f.finding_type, f.about_id)):
         plan.statements.append(("finding", FINDING_CYPHER, {
+            # Findings do not go through `landing.land`, so the
+            # central stamp does not reach them. Without this the
+            # 128 findings a real extraction produces are absent
+            # from `storage export` — present in the graph, missing
+            # from the file it claims can restore it.
+            "m_project": project,
             "id": finding.id, "finding_type": finding.finding_type,
             "severity": finding.severity, "detail": finding.detail,
             "remedy": finding.remedy, "resolution": OPEN,
@@ -320,7 +330,8 @@ SET e.t_recorded = $t_recorded, e.source_connector = $source_connector,
 """
 
 
-def plan_findings(findings: list[FindingRecord], *, job_id: str = "manual",
+def plan_findings(findings: list[FindingRecord], *, project: str = "",
+                  job_id: str = "manual",
                   source_connector: str = "retrieval-bench",
                   t_recorded: str = "") -> LoadPlan:
     """A plan for findings that belong to no model.
@@ -358,6 +369,12 @@ def plan_findings(findings: list[FindingRecord], *, job_id: str = "manual",
 
     for finding in sorted(findings, key=lambda f: (f.finding_type, f.about_id)):
         plan.statements.append(("finding", FINDING_CYPHER, {
+            # Findings do not go through `landing.land`, so the
+            # central stamp does not reach them. Without this the
+            # 128 findings a real extraction produces are absent
+            # from `storage export` — present in the graph, missing
+            # from the file it claims can restore it.
+            "m_project": project,
             "id": finding.id, "finding_type": finding.finding_type,
             "severity": finding.severity, "detail": finding.detail,
             "remedy": finding.remedy, "resolution": OPEN,

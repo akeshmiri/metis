@@ -66,7 +66,9 @@ ANCHORS: dict[str, tuple[str, str]] = {
     "swagger": ("OpenApiItem", "document_id"),
     "scale": ("ZephyrItem", "zephyr_key"),
     "code_repository": ("CodeItem", "repo_id"),
-    "database": ("DatasourceItem", "datasource_id"),
+    # `database` -> `DatasourceItem` was the sixth. It went with the database
+    # layer in the 2026-08-31 re-baseline: a Requirement traced to a schema as
+    # its system of record is the trigger that would bring the anchor back.
 }
 
 NOT_EARS = "intake_not_ears"

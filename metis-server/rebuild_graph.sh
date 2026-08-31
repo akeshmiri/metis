@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Rebuild the graph from committed sources (application spec RD-9: re-ingest,
-# never migrate).
+# Rebuild the graph: restore from a project's stored Cypher when one matches
+# this checkout, and re-ingest from committed sources when it does not.
 #
 # **Everything this needs is in this repository.** That sentence was here before
 # and it was not true: the script read a `.specify/specs` directory under a hardcoded
@@ -24,7 +24,20 @@
 # model in a loop with a canned rationale, which is how an estate ends up
 # "approved" with nobody having read anything.
 #
-# Usage:  METIS_NEO4J_PASSWORD=... ./rebuild_graph.sh [--wipe]
+# Usage:  METIS_NEO4J_PASSWORD=... ./rebuild_graph.sh [--wipe] [--academy-only|--demo]
+#
+# **A fresh database gets the academy and nothing else.** Creating a graph and
+# filling it with `demo_project/` means a first `ask` or `search_knowledge` is
+# answered out of fixtures -- Records, Contracts, a login example -- none of
+# which the person asking has any reason to care about, and all of which rank
+# alongside their real work once they land some. The demo corpus is what the
+# TEST SUITE needs; it is not what a new install needs, and the two were the
+# same thing only because one script did both.
+#
+# So: an EMPTY database defaults to academy-only, and says so. A non-empty one
+# keeps the full rebuild, because that is a rebuild of something that already
+# had the demo in it. `--demo` forces the full corpus into a fresh graph;
+# `--academy-only` forces the short path into a populated one.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -58,7 +71,23 @@ DOM_FACTS="$WORK/dom.json"
 
 cypher() { docker exec -i "$CONTAINER" cypher-shell -u "$METIS_NEO4J_USER" -p "$METIS_NEO4J_PASSWORD" "$@"; }
 
-if [ "${1:-}" = "--wipe" ]; then
+ACADEMY_ONLY=0
+WANT_DEMO=0
+WIPE=0
+for arg in "$@"; do
+  case "$arg" in
+    --wipe)         WIPE=1 ;;
+    --academy-only) ACADEMY_ONLY=1 ;;
+    --demo)         WANT_DEMO=1 ;;
+    *) echo "unknown option: $arg" >&2
+       echo "usage: $0 [--wipe] [--academy-only|--demo]" >&2; exit 2 ;;
+  esac
+done
+if [ "$ACADEMY_ONLY" = 1 ] && [ "$WANT_DEMO" = 1 ]; then
+  echo "--academy-only and --demo contradict each other" >&2; exit 2
+fi
+
+if [ "$WIPE" = 1 ]; then
   # Deliberate, announced, and counted before and after -- a destructive step
   # that reports nothing is how a wipe goes unnoticed until something reads.
   before=$(cypher --format plain "MATCH (n) RETURN count(n) AS n;" | tail -1)
@@ -68,6 +97,51 @@ if [ "${1:-}" = "--wipe" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# **Restore beats re-ingest when the file matches, and only then.**
+#
+# The old rule was re-ingest and never migrate, cited as RD-9. That citation was
+# wider than the rule: RD-9 belonged to the v1 -> v2 engine migration (completed
+# at 61814dc) and said "do not transform v1 nodes into v2 nodes, re-extract
+# instead". It never said a project may not keep a restore file.
+#
+# `verify` is what makes this safe: it compares the export's commit and ontology
+# against this checkout, and a mismatch falls through to re-ingest rather than
+# restoring a graph that describes code nobody is running.
+if [ -n "${METIS_RESTORE_FROM:-}" ]; then
+  echo "==> restore: ${METIS_RESTORE_FROM}"
+  if $PY -m metis_mcp.mbt.cli storage verify --project "${METIS_RESTORE_PROJECT:?set METIS_RESTORE_PROJECT alongside METIS_RESTORE_FROM}" \
+       --out "$METIS_RESTORE_FROM" --commit "${METIS_RESTORE_COMMIT:-}" 2>&1 | sed 's/^/    /'; then
+    $PY -m metis_mcp.mbt.cli storage restore --project "$METIS_RESTORE_PROJECT" \
+        --out "$METIS_RESTORE_FROM" --commit "${METIS_RESTORE_COMMIT:-}" 2>&1 | sed 's/^/    /'
+    echo
+    echo "==> done. Restored from stored Cypher; no stage below was run."
+    exit 0
+  fi
+  echo "    the export does not match this checkout — re-ingesting instead."
+  echo
+fi
+
+# **Counted, not assumed.** "Is this database fresh" is a question with an
+# answer in the database, and the alternative -- a marker file, a first-run
+# flag -- would say "fresh" about a graph somebody else had already filled.
+existing=$(cypher --format plain "MATCH (n) RETURN count(n) AS n;" | tail -1 | tr -d '[:space:]')
+if [ "$WANT_DEMO" = 0 ] && [ "$ACADEMY_ONLY" = 0 ] && [ "${existing:-0}" = "0" ]; then
+  ACADEMY_ONLY=1
+  echo "==> fresh database ($existing nodes): landing the academy only."
+  echo "    Pass --demo to build the demo corpus into it instead."
+  echo
+fi
+
+if [ "$ACADEMY_ONLY" = 1 ]; then
+  echo "==> academy-only: skipping extraction and every demo stage."
+  echo "    Schema and docs/academy/ are all that will be written."
+  echo
+fi
+
+# ---------------------------------------------------------------------------
+# The demo stages. Bodies are left un-indented inside these guards on purpose:
+# re-indenting a hundred lines would bury the one-line change that skips them.
+if [ "$ACADEMY_ONLY" = 0 ]; then
 echo "==> 0/5  extract from the demo corpus (the packs, not a scratch file)"
 #
 # Preflight ignores the graph check on purpose: extraction is database-free, and
@@ -103,6 +177,8 @@ EOF
 # `:Transition`, so the generic label is a worklist of transitions nothing has
 # classified. Nodes landed before that rule carry both; strip the generic one so
 # the worklist means what it says.
+fi   # end demo extraction (stage 0)
+
 echo "==> 1/5  reconcile labels on any pre-existing nodes"
 cypher "MATCH (t:Transition) WHERE t:ApiCall OR t:UiAction REMOVE t:Transition
         RETURN count(t) AS relabelled;" 2>/dev/null | tail -1 | sed 's/^/    stripped generic label from /'
@@ -125,6 +201,7 @@ echo "    constraints: $(cypher --format plain 'SHOW CONSTRAINTS YIELD name RETU
 # — every count doubled, nothing reported, because MERGE cannot dedupe ids that
 # differ.
 
+if [ "$ACADEMY_ONLY" = 0 ]; then
 echo "==> 3/5  the API model, from the query packs (extraction_method: static_analysis)"
 #
 # `--allow-unverifiable` is deliberate and narrower than it looks.
@@ -184,6 +261,8 @@ echo "==> 4/5  acceptance criteria (the intent side)"
 # demo_project/openapi.json documents 200, and a person settles that.
 $PY demo_data/land_spec_criteria.py "$DEMO/specs" | sed 's/^/    /'
 
+fi   # end demo models and criteria (stages 3, 3b, 3c, 4)
+
 echo "==> 4b/5  the academy (Métis's own material, as a source like any other)"
 # `docs/academy/` lands as `Lesson` through the ordinary landing path, into the
 # SAME graph as everything above. That is the point rather than an economy: the
@@ -199,6 +278,7 @@ if ! $PY -m metis_mcp.mbt.cli lessons --job-id rebuild 2>&1 | sed 's/^/    /'; t
   echo "    !! the academy did not land — continuing; the demo graph is unaffected"
 fi
 
+if [ "$ACADEMY_ONLY" = 0 ]; then
 echo "==> 5/5  cross-surface INVOKES proposals (M-5a)"
 if [ ! -f "$UI_FACTS" ]; then
   echo "    !! $UI_FACTS absent — no INVOKES proposals."
@@ -246,13 +326,61 @@ with session() as s:
 EOF
 fi
 
+fi   # end cross-surface proposals (stage 5)
+
+# **Unnumbered because it runs in BOTH modes and after all of them.** Vectors
+# belong to whatever landed, and the academy-only path lands embeddable nodes
+# (Lesson, Passage) just as the demo path lands criteria and specifications.
+#
+# **Why this stage exists.** A rebuild left every vector index live and empty, so
+# `--hybrid` returned keyword results and said nothing about it — the exact
+# silent success `cmd_embed`'s own docstring was written about, reintroduced one
+# level up by the script that creates the graph. Measured on the academy: keyword
+# ranks 23 of 36 questions first, hybrid 29.
+echo
+echo "==> embeddings"
+# One resolver. `--provider` is required and `load_provider` never defaults, so
+# the spec has to come from somewhere — and re-deriving "environment, then the
+# config file" in shell would be a second answer to the question
+# `configured_provider_spec` already answers, which is the mistake the password
+# block at the top of this script exists to avoid.
+SPEC="$(PYTHONPATH=. $PY -c \
+  'from metis_mcp.retrieval import configured_provider_spec as f; print(f())' \
+  2>/dev/null || true)"
+if [ -z "$SPEC" ]; then
+  # Reported, never silent -- and not an error. A default install has no
+  # provider and keyword search is the supported answer, not a degradation.
+  echo "    no embedding provider configured — skipped, and semantic search"
+  echo "    will fall back to keyword until one is named:"
+  echo "      export METIS_EMBEDDING_PROVIDER=metis_mcp.providers.static:Potion"
+  echo "    or  \"embedding\": {\"provider\": \"...\"}  in ~/.metis/config.json"
+  echo "    The bundled option needs its extra:  uv pip install -e \".[embeddings]\""
+elif ! $PY -m metis_mcp.mbt.cli embed --provider "$SPEC" 2>&1 | sed 's/^/    /'; then
+  # Non-fatal for the reason 3b and 4b are: a graph with no vectors is a graph
+  # that answers by keyword, not a failed rebuild.
+  echo "    !! embedding failed — the graph is landed and searchable by keyword"
+fi
+
 echo
 echo "==> done. Everything is at Quarantine."
 cypher --format plain "MATCH (n) RETURN labels(n) AS labels, count(*) AS n ORDER BY n DESC;"
 echo
-echo "Unclassified transitions (the :Transition worklist):"
-cypher --format plain "MATCH (t:Transition) RETURN count(t) AS needs_classifying;"
-echo
-echo "Nothing is approved, and that is correct: G1 is a human decision (F-8), and"
-echo "a rebuild that approved its own output would defeat the gate it ran through."
-echo "Review with:  metis review export --journey <j> --surface <s> -o r.json"
+
+# The closing advice differs by mode because the next step does. Telling someone
+# who has just built an academy-only graph to export a model review names a
+# model that is not there.
+if [ "$ACADEMY_ONLY" = 1 ]; then
+  echo "This graph holds the academy and the schema. No model, no demo corpus."
+  echo "Lessons land at Quarantine like every other source (S-4)."
+  echo
+  echo "Questions about Métis are answered through the MCP surface (\`ask\`,"
+  echo "\`search_knowledge\`). To check what it retrieves:  metis retrieval-bench"
+  echo "To build a model from a repository:  metis init <repo> && metis analyse <repo>"
+else
+  echo "Unclassified transitions (the :Transition worklist):"
+  cypher --format plain "MATCH (t:Transition) RETURN count(t) AS needs_classifying;"
+  echo
+  echo "Nothing is approved, and that is correct: G1 is a human decision (F-8), and"
+  echo "a rebuild that approved its own output would defeat the gate it ran through."
+  echo "Review with:  metis review export --journey <j> --surface <s> -o r.json"
+fi

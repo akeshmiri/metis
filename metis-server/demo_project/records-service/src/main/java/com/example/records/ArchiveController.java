@@ -1,5 +1,7 @@
 package com.example.records;
 
+import static com.example.records.RoutePaths.ARCHIVE;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -15,6 +17,9 @@ import org.springframework.web.bind.annotation.RestController;
  *    here instead of resolving one.
  * 2. **`@ResponseStatus` sets the outcome**, so the annotated path is exercised
  *    distinctly from status-by-construction.
+ * 3. **The method's constant arrives by static import**, so it has no qualifier
+ *    at the use site and must resolve by simple name — which is what makes
+ *    {@link ArchiveCache}'s name collision reachable.
  *
  * This route is absent from `openapi.json` on purpose — the "code-only"
  * deviation.
@@ -24,8 +29,6 @@ import org.springframework.web.bind.annotation.RestController;
 public class ArchiveController {
 
     static final String BASE = "/record";
-    private static final String ID_SEGMENT = "/{id}";
-    private static final String ARCHIVE = ID_SEGMENT + "/archive";
 
     private final RecordService service;
 

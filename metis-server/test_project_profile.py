@@ -245,3 +245,42 @@ def test_eviction_on_an_absent_directory_is_not_an_error(tmp_path):
     from code_analysis.engine import _evict
 
     assert _evict(tmp_path / "nope", keep=2, current="x") == 0
+
+
+def test_a_profile_that_exists_actually_loads(tmp_path, monkeypatch):
+    """**The success path had no test, and it raised.** `load_for` referenced an
+    unassigned `stray`, so every profile that resolved died with `NameError` —
+    `metis analyse` on any project. The only existing test asserts the
+    MISSING-profile refusal, which raises before reaching that line."""
+    import json
+
+    home = tmp_path / "home"
+    (home / "profiles").mkdir(parents=True)
+    (home / "profiles" / "some-repo.json").write_text(json.dumps(GOOD))
+    monkeypatch.setenv("METIS_HOME", str(home))
+
+    profile = load_for(tmp_path / "some-repo")
+    assert profile.project == GOOD["project"]
+    assert profile.notes == [], "a checkout with no in-repo profile has nothing to report"
+
+
+def test_an_in_repo_profile_is_reported_and_not_read(tmp_path, monkeypatch):
+    """F-10: what was found and not used is named. Two locations for one fact is
+    two answers that can disagree, and the ignored one is exactly the one
+    somebody just edited."""
+    import json
+
+    home = tmp_path / "home"
+    (home / "profiles").mkdir(parents=True)
+    (home / "profiles" / "some-repo.json").write_text(json.dumps(GOOD))
+    monkeypatch.setenv("METIS_HOME", str(home))
+
+    repo = tmp_path / "some-repo"
+    (repo / ".metis").mkdir(parents=True)
+    (repo / ".metis" / "project.json").write_text('{"project": "stale"}')
+
+    profile = load_for(repo)
+    assert profile.project == GOOD["project"], "the stray file must not be read"
+    assert len(profile.notes) == 1
+    assert "was ignored" in profile.notes[0]
+    assert str(repo / ".metis" / "project.json") in profile.notes[0]

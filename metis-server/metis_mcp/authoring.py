@@ -72,6 +72,27 @@ def payload_shape(type_name: str) -> dict:
     return {"ok": True, **(shape or {})}
 
 
+def _inputs_of(raw) -> list[dict]:
+    """A transition's `c_inputs` as the parameter dicts a recipe reads.
+
+    Tolerant of the empty and the malformed on purpose: a recipe missing its
+    query parameters is a worse answer than one that says so, but an exception
+    here would take out the whole tool for one bad row. `_recipe.build` already
+    marks what it could not recover.
+    """
+    import json
+
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        return [p for p in raw if isinstance(p, dict)]
+    try:
+        loaded = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    return [p for p in loaded if isinstance(p, dict)] if isinstance(loaded, list) else []
+
+
 def call_recipe(journey: str, route: str = "") -> dict:
     """How to exercise an endpoint: the call, and what makes it fail.
 
@@ -80,17 +101,25 @@ def call_recipe(journey: str, route: str = "") -> dict:
     (T-9c): a single valid value is one case, where the space is what a case is
     chosen from.
     """
+    # **Asked of the BEHAVIOUR, not of the endpoint.** This walked
+    # `Endpoint-[:ACCEPTS]->Parameter` until `Parameter` was staged out: a
+    # parameter node carried the same five values as its entry in the
+    # transition's `c_inputs` and nothing else but bookkeeping, so the graph
+    # held one fact twice.
+    #
+    # The consequence is deliberate and is the whole direction of the tool: an
+    # endpoint no transition models has no recipe, because there is no modelled
+    # behaviour to exercise. It is reported as an `unmodelled` Finding instead
+    # of being answered with a call nobody has specified.
     rows = _rows(f"""
-        MATCH (e:Endpoint)
-        OPTIONAL MATCH (t:{_TRANSITION})-[:DERIVED_FROM]->(e)
-        OPTIONAL MATCH (e)-[:ACCEPTS]->(p:Parameter)
-        OPTIONAL MATCH (e)-[:ACCEPTS]->(:Parameter {{location:'body'}})-[:OF_TYPE]->(b)
+        MATCH (t:{_TRANSITION})-[:DERIVED_FROM]->(e:Endpoint)
+        OPTIONAL MATCH (t)-[:EXPECTS|REQUIRES]->(b:{_TYPE})
         OPTIONAL MATCH (e)-[:SECURED_BY]->(sec:SecurityScheme)
-        WITH e, collect(DISTINCT properties(p)) AS params,
+        WITH e, t.c_inputs AS inputs,
              collect(DISTINCT b.id) AS bodies,
              collect(DISTINCT t.c_outcome_status) AS statuses,
              collect(DISTINCT properties(sec)) AS security
-        RETURN properties(e) AS endpoint, params, bodies, statuses, security
+        RETURN properties(e) AS endpoint, inputs, bodies, statuses, security
         ORDER BY e.path, e.http_method""")
 
     rejections = [(str(r["status"]), r["cause"]) for r in _rows(
@@ -103,7 +132,10 @@ def call_recipe(journey: str, route: str = "") -> dict:
         wanted = f"{endpoint.get('http_method')} {endpoint.get('path')}"
         if route and route.strip() != wanted:
             continue
-        endpoint["parameters"] = [p for p in row["params"] if p]
+        # `c_inputs` is the flat form of exactly what `Parameter` nodes held:
+        # name, location, required, type_name, constraints. Decoded through
+        # `ontology.facts` so the encoder and the reader cannot drift.
+        endpoint["parameters"] = _inputs_of(row["inputs"])
         # Injected from the SECURED_BY traversal, as `parameters` is from
         # ACCEPTS. It used to ride on the endpoint as parallel arrays that could
         # not express a scheme with two roles.
@@ -150,10 +182,35 @@ def auth_facts(journey: str) -> dict:
         "s.scheme AS scheme, s.expression AS expression, "
         "coalesce(s.roles, []) AS roles, s.source AS source "
         "ORDER BY e.path, s.expression")
-    headers = _rows(
-        "MATCH (e:Endpoint)-[:ACCEPTS]->(p:Parameter {location:'header'}) "
-        "RETURN p.name AS name, count(DISTINCT e) AS endpoints, "
-        "p.required AS required ORDER BY endpoints DESC, p.name")
+    # **Counted from the behaviour, and decoded here rather than in Cypher.**
+    # This read `Endpoint-[:ACCEPTS]->Parameter{location:'header'}` until
+    # `Parameter` was staged out. The same facts live in the transition's
+    # `c_inputs`, which is JSON — and this deployment is Community with no APOC,
+    # so there is no `fromJsonList` to filter with. Pulling the rows and
+    # counting in Python is the honest version of that constraint; the
+    # alternative was a string `CONTAINS` that would match a header named inside
+    # somebody's description.
+    from collections import Counter
+
+    seen_by: dict[str, set] = {}
+    required_of: dict[str, bool] = {}
+    for row in _rows(f"""
+            MATCH (t:{_TRANSITION})-[:DERIVED_FROM]->(e:Endpoint)
+            RETURN t.c_inputs AS inputs, e.id AS endpoint"""):
+        for parameter in _inputs_of(row["inputs"]):
+            if parameter.get("location") != "header":
+                continue
+            name = parameter.get("name", "")
+            seen_by.setdefault(name, set()).add(row["endpoint"])
+            # Required anywhere is required: a header one call may omit and
+            # another may not is still one a caller has to know about.
+            required_of[name] = required_of.get(name, False) or bool(
+                parameter.get("required"))
+    headers = sorted(
+        ({"name": name, "endpoints": len(endpoints),
+          "required": required_of.get(name, False)}
+         for name, endpoints in seen_by.items()),
+        key=lambda h: (-h["endpoints"], h["name"]))
     total = (_rows("MATCH (e:Endpoint) RETURN count(e) AS n") or [{"n": 0}])[0]["n"]
 
     return {
@@ -288,15 +345,95 @@ _TRIGGER_NOISE = ("metis", "métis", "academy", "lesson")
 # and reports `no transitions for journey ''`.
 _NEEDS_JOURNEY = frozenset({"journey_walkthrough"})
 
+# The corpus roots, as Cypher. A `Topic` with no parent that has lessons beneath
+# it is an academy's root, and `lessons.system_of` names it after the SYSTEM the
+# corpus documents -- `topic:metis`, `topic:athena`.
+_CORPUS_ROOTS = """
+MATCH (l:Lesson)-[:BELONGS_TO]->(:Topic)-[:BELONGS_TO*0..]->(root:Topic)
+WHERE NOT (root)-[:BELONGS_TO]->(:Topic)
+RETURN DISTINCT toLower(root.name) AS name
+"""
 
-def _for_search(question: str) -> str:
-    """The question with its routing words removed, or unchanged if that empties it."""
+
+def corpus_words(session) -> frozenset:
+    """Every system this graph holds an academy about.
+
+    **`_ACADEMY_WORDS` names one system, and the graph holds as many as somebody
+    lands.** A second corpus -- `system: athena` -- landed, embedded and
+    correctly ranked by `search_knowledge`, was unreachable through `ask`: no
+    word in a question about Athena appears in a hand-listed vocabulary about
+    Métis, so the question fell through to unroutable. That is the exact failure
+    `_ask_academy` was written to fix, reproduced one corpus later, because the
+    fix was a list rather than a lookup.
+
+    Read from the graph rather than configured. The name is already declared,
+    once, in the corpus's own `README.md`, and `lessons.system_of` refuses a
+    corpus that does not declare it -- so the routing vocabulary and the topic
+    tree cannot disagree about what a corpus is called.
+    """
+    try:
+        return frozenset(r["name"] for r in session.run(_CORPUS_ROOTS)
+                         if (r["name"] or "").strip())
+    except Exception:                              # noqa: BLE001 - routing aid
+        return frozenset()                         # never worth an error
+
+
+def _for_search(question: str, extra_noise=()) -> str:
+    """The question with its routing words removed, or unchanged if that empties it.
+
+    `extra_noise` carries the corpus names this graph actually holds. The reason
+    is the one measured for "Métis" and applies to any corpus name: the word that
+    ROUTES a question to a corpus appears in every document in it, so it says
+    nothing about WHICH document answers, and leaving it in pulls the ranking
+    toward whichever lesson repeats the name most.
+    """
     import re
 
-    stripped = re.sub(r"\b(" + "|".join(_TRIGGER_NOISE) + r")\b", " ",
+    from metis_mcp.retrieval import fold
+
+    extra = {w for w in extra_noise if w} | {fold(w) for w in extra_noise if w}
+    words = tuple(_TRIGGER_NOISE) + tuple(sorted(extra))
+    stripped = re.sub(r"\b(" + "|".join(re.escape(w) for w in words) + r")\b", " ",
                       question, flags=re.IGNORECASE)
     stripped = re.sub(r"\s+", " ", stripped).strip(" ,.?!")
     return stripped or question
+
+
+_CORPUS_LESSONS = """
+MATCH (l:Lesson)-[:BELONGS_TO]->(:Topic)-[:BELONGS_TO*0..]->(root:Topic)
+WHERE toLower(root.name) = $name AND NOT (root)-[:BELONGS_TO]->(:Topic)
+RETURN collect(DISTINCT l.id) AS ids
+"""
+
+
+def _named_corpus(session, text: str) -> str:
+    """The corpus this question names, or `""` if it names none.
+
+    Only a corpus NAME scopes an answer. A question matching `_ACADEMY_WORDS`
+    alone -- "why is everything sitting in Quarantine" -- names no system and is
+    searched across everything, which is what it was before a second corpus
+    existed.
+    """
+    # **Folded on both sides.** A corpus root is named from its own README, so
+    # `system: métis` is as legal as `system: metis`, and a reader typing
+    # `Metis` on an English keyboard must still reach it. This is the same
+    # accent problem `retrieval.fold` exists for, and getting it wrong here
+    # scoped "how does Métis model Athena" to Athena alone, because only the
+    # unaccented name matched.
+    from metis_mcp.retrieval import fold
+
+    folded = fold(text)
+    named = [w for w in corpus_words(session)
+             if w in text or fold(w) in folded]
+    # Two corpus names in one question scopes to neither: "how does Métis model
+    # Athena" is a question about the pair, and picking one of them would answer
+    # half of it while looking certain.
+    return named[0] if len(named) == 1 else ""
+
+
+def _lessons_in(session, corpus: str) -> frozenset:
+    row = session.run(_CORPUS_LESSONS, {"name": corpus}).single()
+    return frozenset((row or {}).get("ids") or ())
 
 
 def _academy_hits(session, question: str, limit: int = 5) -> list[dict]:
@@ -321,18 +458,61 @@ def _academy_hits(session, question: str, limit: int = 5) -> list[dict]:
         # must not make `ask` unusable — keyword still answers.
         provider = None
 
+    query = _for_search(question, corpus_words(session))
+
+    # **A question that names a corpus is answered from that corpus.** Asked
+    # "what is Athena and what does it collect", search returned
+    # `What Métis does not do` first -- a confident answer from the wrong system,
+    # which is worse than no answer. Scoping fixes it at the only point where the
+    # intent is known.
+    #
+    # The window widens when scoped, because filtering the top 5 of a mixed
+    # ranking can leave nothing: the right lesson placed 6th is a truncation
+    # artefact, not an absence.
+    corpus = _named_corpus(session, question.lower())
+    keep = _lessons_in(session, corpus) if corpus else None
+    window = limit * 4 if keep else limit
+
+    def finish(rows):
+        rows = [r for r in rows if r.get("label") == "Lesson"]
+        if keep is not None:
+            rows = [r for r in rows if r.get("id") in keep]
+        return rows[:limit]
+
     if provider is not None:
         try:
             hits = [h.__dict__ if hasattr(h, "__dict__") else dict(h)
-                    for h in hybrid_search(session, _for_search(question),
-                                           provider=provider, limit=limit)]
-            return [h for h in hits if h.get("label") == "Lesson"]
+                    for h in hybrid_search(session, query,
+                                           provider=provider, limit=window)]
+            return finish(hits)
         except RetrievalRefused:
             # A corpus embedded with another model. Refusing the whole question
             # would be worse than answering it the way a default install does.
             pass
-    return [h for h in search_knowledge(session, _for_search(question), limit=limit)
-            if h.get("label") == "Lesson"]
+    return finish(search_knowledge(session, query, limit=window))
+
+
+def _names_a_system(text: str) -> bool:
+    """Does this question name a system some academy in this graph documents?
+
+    The hand-listed vocabulary stays: `g1`, `quarantine`, `lifecycle_state` and
+    the rest name Métis without saying "Métis", and no corpus root would supply
+    them. What the graph adds is the corpus NAMES, so landing an academy makes
+    `ask` able to route to it without an edit here.
+    """
+    if any(w in text for w in _ACADEMY_WORDS):
+        return True
+    from metis_mcp.mbt.graph_session import GraphNotConfigured, session
+
+    from metis_mcp.retrieval import fold
+
+    folded = fold(text)
+    try:
+        with session() as s:
+            return any(name in text or fold(name) in folded
+                       for name in corpus_words(s))
+    except (GraphNotConfigured, Exception):        # noqa: BLE001 - routing aid
+        return False
 
 
 def _ask_academy(question: str):
@@ -416,9 +596,14 @@ def _academy_suggestion(question: str) -> dict | None:
     return {
         "lesson": hits[0]["id"],
         "title": hits[0].get("name", ""),
-        "note": "not an answer — the academy is about Métis itself, and nothing "
-                "checked that this question is. Ask again naming Métis to have it "
-                "answered from there.",
+        # **The note used to name Métis.** With a second corpus landed it told a
+        # reader asking about Athena that "the academy is about Métis itself" and
+        # to "ask again naming Métis" — false, and advice that would not have
+        # worked. What is true of any corpus is that nothing checked the question
+        # belongs to it, which is the whole reason this is a suggestion.
+        "note": "not an answer — no tool routed this question, and nothing "
+                "checked that the corpus this came from is the right one. Name "
+                "the system you are asking about to have it answered from there.",
     }
 
 
@@ -469,8 +654,7 @@ def ask(question: str, journey: str = "") -> dict:
     # still wins, and a question with no academy word still gets the product
     # tool's own failure rather than a lesson: `_ask_academy` returning `None`
     # falls through to exactly the behaviour that was there before.
-    if (routed in _NEEDS_JOURNEY and not journey
-            and any(w in text for w in _ACADEMY_WORDS)):
+    if routed in _NEEDS_JOURNEY and not journey and _names_a_system(text):
         academy = _ask_academy(question)
         if academy is not None:
             return academy
@@ -489,7 +673,7 @@ def ask(question: str, journey: str = "") -> dict:
                      "add that is not in it is not something Métis recovered"),
         }
 
-    if any(w in text for w in _ACADEMY_WORDS):
+    if _names_a_system(text):
         academy = _ask_academy(question)
         if academy is not None:
             return academy

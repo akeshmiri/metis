@@ -477,6 +477,19 @@ def validate_report(report: ExtractionReport) -> list[str]:
                 f"endpoint {endpoint.id}: handler {endpoint.handler_method_id!r} "
                 f"is not an emitted method"
             )
+        # **The location vocabulary is enforced here now.** It used to be an
+        # enum on the `Parameter` label, checked by the ontology gate at
+        # landing; the label was staged out because a parameter node held what
+        # the transition's `c_inputs` already holds. The vocabulary did not go
+        # with it — `cookie` was once added to `PARAMETER_LOCATIONS` and not to
+        # the enum, and a document the adapter read cleanly was then refused at
+        # landing. One list, checked where the fact enters.
+        for parameter in endpoint.parameters or ():
+            if parameter.location not in PARAMETER_LOCATIONS:
+                errors.append(
+                    f"endpoint {endpoint.id}: parameter {parameter.name!r} is "
+                    f"located in {parameter.location!r}, which is not one of "
+                    f"{', '.join(PARAMETER_LOCATIONS)}")
 
     known_checks = {c.id for c in report.checks}
     for outcome in report.outcomes:

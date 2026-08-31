@@ -35,7 +35,6 @@ import hashlib
 from datetime import datetime, timezone
 
 from metis_mcp.model_sources.landing import LandingPlan, PlannedEdge, PlannedNode
-from metis_mcp.model_sources.structure import normalised_page_name
 from metis_mcp.ontology import validate, validate_relationship
 
 # Everything in this layer is evidence about one repository, so ids are namespaced
@@ -48,6 +47,37 @@ def _ident(*parts: str) -> str:
     """A short, content-derived id (D-8). Deterministic across runs."""
     basis = "|".join(p or "" for p in parts)
     return hashlib.sha256(basis.encode()).hexdigest()[:_ID_LEN]
+
+
+def unresolved_in(repo: str, expression: str, declared, by_simple) -> int:
+    """How many type names in `expression` this repository does not declare.
+
+    Split out from `link_types` when the edges it created were removed: the edge
+    and the count were one operation, and only the edge was obsolete. A JDK type
+    gets no stub node (REQ-CGA-010) and the fact that one was named still has to
+    be reported rather than dropped (X-5a).
+    """
+    resolved = resolve_class(repo, expression, declared, by_simple)
+    return max(len(type_names_in(expression)) - len(resolved), 0)
+
+
+def normalised_page_name(name: str) -> str:
+    """The join basis between a router screen and an authored page.
+
+    `RecordDetailPage` and `record-detail` both reduce to `recorddetail`.
+
+    **No plural handling, deliberately.** The demo's `RecordListPage` does NOT
+    meet `records-list`, and that refutation is the right answer: stripping an
+    `s` is an open-ended guess, and it would silently marry a `Records` page to
+    a `Record` route on some estate where those are different screens. A
+    reviewer gets a finding naming both sides instead.
+
+    Lived in `model_sources.structure` until the UI structure layer was staged
+    out. It is a pure string reduction with one caller left, so it moved here
+    rather than keeping a module alive for it.
+    """
+    flat = "".join(ch for ch in (name or "").casefold() if ch.isalnum())
+    return flat[:-4] if flat.endswith("page") and len(flat) > 4 else flat
 
 
 def endpoint_id(repo: str, http_method: str, path: str, service: str = "") -> str:
@@ -74,14 +104,6 @@ def class_id(repo: str, name: str) -> str:
 
 def field_id(repo: str, type_name: str, name: str) -> str:
     return f"fld:{_ident(repo, type_name, name)}"
-
-
-def method_id(repo: str, full_name: str) -> str:
-    return f"mth:{_ident(repo, full_name)}"
-
-
-def parameter_id(repo: str, endpoint: str, name: str, location: str) -> str:
-    return f"prm:{_ident(repo, endpoint, name, location)}"
 
 
 def security_id(repo: str, endpoint: str, scheme: str, expression: str) -> str:
@@ -529,17 +551,6 @@ def _plan_types(plan, add_node, add_edge, base, report, repo,
                          class_label_for(nested in enum_types),
                          class_id(repo, nested))
 
-    # **"Off" means bounded, not absent.** Returning here landed no `Method` at
-    # all while `Endpoint -[:HANDLED_BY]-> Method` and
-    # `ExceptionMapping -[:HANDLED_BY]-> Method` were still planned, so both would
-    # have merged nothing — the flag was written before either edge existed.
-    #
-    # What stays is what something points at: the twelve handlers and the five
-    # exception handlers. What goes is the call graph, which on a real service was
-    # 199 methods and 180 CALLS edges landed for a reader — `behavior_model.
-    # corroborate` — that **nothing calls**, and which needs 17 of them when it
-    # finally does. D-13 chose to land it ahead of that reader; the reader has not
-    # arrived, and 182 unreferenced nodes is what the choice costs per service.
     if skipped_types:
         # X-5a: never silent. A jump in this count means a payload chain broke,
         # not that the service got smaller.
@@ -549,65 +560,13 @@ def _plan_types(plan, add_node, add_edge, base, report, repo,
             "them, so the model can lead you to none of it — landed only with "
             "compact=False"))
 
-    referenced = {getattr(e, "handler_method_id", "")
-                  for e in getattr(report, "endpoints", ()) or ()}
-    referenced |= {getattr(m, "handler_method_id", "")
-                   for m in getattr(report, "exception_mappings", ()) or ()}
-    referenced.discard("")
-
-    methods = list(getattr(report, "methods", ()) or ())
-    if not include_call_graph:
-        kept = [m for m in methods if m.id in referenced]
-        dropped = len(methods) - len(kept)
-        if dropped:
-            # Never silent (X-5a): a graph that quietly lost its call graph looks
-            # exactly like a codebase whose methods call nothing.
-            plan.skipped.append((
-                f"{dropped} method(s) and their CALLS edges",
-                "the call graph is not landed by default — its only reader, "
-                "`behavior_model.corroborate`, is called by nothing, and the "
-                "handlers something does point at are kept. Pass "
-                "include_call_graph=True to land it"))
-        methods = kept
-
-    for method in methods:
-        mid = method_id(repo, method.id)
-        add_node("Method", {
-            **base(mid, getattr(method, "name", "")),
-            "type_name": getattr(method, "type_name", ""),
-            "signature": getattr(method, "signature", ""),
-            **_anchor_props(getattr(method, "anchor", None)),
-        })
-        # `fullName` is `<pkg>.<Type>.<name>:<sig>`, so the declaring type's FQN
-        # is the qualifier with the method name removed.
-        simple = getattr(method, "type_name", "")
-        fq = (method.id.rsplit(":", 1)[0].rsplit(".", 1)[0]
-              if ":" in method.id else simple)
-        if simple:
-            owner_fq = fq or simple
-            cid = class_id(repo, owner_fq)
-            fq_names.add(owner_fq)
-            # **`:Enum` or `:Class`, and getting it wrong here merges nothing.**
-            # An enum with a method (`fromValue`, `getLabel`) already has its node
-            # from the members pass carrying `:Enum`, because a specialisation
-            # replaces its parent. Planning this edge against `:Class`
-            # regardless passed the ontology check — `is_allowed` walks the
-            # specialisation chain — and then matched no node: three
-            # DECLARES_METHOD edges reported as unmatched, which is the same
-            # defect a hardcoded `:Transition` produces against `:ApiCall`.
-            enum_owner = owner_fq in enum_types
-            if cid not in seen:
-                seen.add(cid)
-                add_node(class_label_for(enum_owner),
-                         {**base(cid, simple), "package": fq})
-            add_edge(class_label_for(enum_owner), cid,
-                     "DECLARES_METHOD", "Method", mid)
-
-    known = {method_id(repo, m.id) for m in methods}
-    for call in getattr(report, "calls", ()) or ():
-        caller, callee = method_id(repo, call.caller_id), method_id(repo, call.callee_id)
-        if caller in known and callee in known:
-            add_edge("Method", caller, "CALLS", "Method", callee)
+    # **The call graph and the `Method` layer are gone.** `Method` was staged
+    # out in the 2026-08-31 re-baseline: it was landed for
+    # `Endpoint-[:HANDLED_BY]->Method` and a `CALLS` graph whose only reader
+    # (`behavior_model.corroborate`) was called by nothing — 96 nodes on a real
+    # service supporting a traversal the live graph held ZERO edges of. A
+    # requirement is not stated about a method; the handler a route resolves to
+    # is still known, as the join key `endpoints_by_handler` builds.
 
     return seen, _index_by_simple(fq_names)
 
@@ -702,31 +661,34 @@ def _plan_endpoints(plan, add_node, add_edge, base, report, repo,
             })
             add_edge("Endpoint", eid, "SECURED_BY", "SecurityScheme", sid)
 
+        # **`Parameter` nodes were here.** Each carried name, location,
+        # required, type_name and constraints — the same five values the
+        # transition already holds in `c_inputs`, plus bookkeeping. It was
+        # promoted out of `inputs_json` when something needed it as a node and
+        # the property was never withdrawn, so the graph held one fact twice.
+        # Staged out; `authoring._inputs_of` is the one decoder now.
+        #
+        # `Endpoint-[:RETURNS]->Class` went with it: its only reader was the
+        # endpoint-centric `call_recipe`, which asks the transition now. The
+        # type a payload carries is still reached, by
+        # `Transition-[:EXPECTS|REQUIRES]->Class`, planned once the model exists.
+        #
+        # The types themselves are unaffected — they are landed by the types
+        # pass from the report, and compaction still decides what to keep by
+        # what the report's parameters reference.
+        #
+        # **The unresolved-type count is still taken** (X-5a: the count dropped
+        # is always reported). It came from the two `link_types` calls that made
+        # those edges; the edges are gone and the question is not — a payload
+        # naming a type this repository does not declare is a traversal a reader
+        # will look for and not find, and silence is what REQ-CGA-010 refuses.
         for parameter in getattr(endpoint, "parameters", ()) or ():
-            pid = parameter_id(repo, eid, parameter.name, parameter.location)
-            add_node("Parameter", {
-                **base(pid, parameter.name),
-                "location": parameter.location,
-                "type_name": getattr(parameter, "type_name", ""),
-                "required": bool(getattr(parameter, "required", True)),
-                "constraints": list(getattr(parameter, "constraints", ()) or ()),
-            })
-            add_edge("Endpoint", eid, "ACCEPTS", "Parameter", pid)
-            # The schema link, and the reason `Class` doubles as the schema: this
-            # is how a generator walks parameter -> type -> field constraints.
-            external += link_types("Parameter", pid, "OF_TYPE",
-                                   getattr(parameter, "type_name", ""))
-
-        external += link_types("Endpoint", eid, "RETURNS",
-                               getattr(endpoint, "response_body", ""))
+            external += unresolved_in(repo, getattr(parameter, "type_name", ""),
+                                      declared, by_simple)
+        external += unresolved_in(repo, getattr(endpoint, "response_body", ""),
+                                  declared, by_simple)
 
         # No longer conditional on the call graph: a referenced method is landed
-        # whether or not the call graph is. The condition was correct when "off"
-        # meant no `Method` node existed at all, and became a reason the handler
-        # was unreachable the moment "off" started meaning "bounded".
-        if getattr(endpoint, "handler_method_id", ""):
-            add_edge("Endpoint", eid, "HANDLED_BY", "Method",
-                     method_id(repo, endpoint.handler_method_id))
 
     if external:
         plan.skipped.append((
@@ -744,14 +706,6 @@ def _plan_endpoints(plan, add_node, add_edge, base, report, repo,
             "advice_type": mapping.advice_type,
             **_anchor_props(getattr(mapping, "anchor", None)),
         })
-        # The catalogued reader for this label, and it was never written:
-        # `advice_type` is a simple class name that joins to nothing, so five
-        # mappings landed connected to nothing while EVIDENCE_LAYER named this
-        # edge as the reason the label exists.
-        handler = getattr(mapping, "handler_method_id", "")
-        if handler:
-            add_edge("ExceptionMapping", mid, "HANDLED_BY", "Method",
-                     method_id(repo, handler))
 
 
 def _plan_behaviour(plan, add_node, add_edge, base, behaviour, repo,

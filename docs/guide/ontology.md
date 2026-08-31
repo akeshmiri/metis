@@ -4,7 +4,7 @@
 
 *Generated from `metis_mcp/ontology/labels.py`.*
 
-65 labels, 120 relationships, 21 staged out.
+37 labels, 53 relationships, 49 staged out.
 
 The ontology is **closed**. Adding a label or a relationship is a reviewed change under D-2, not an edit — four places have to agree, and the Cypher schema is generated from `labels.py` so two of them cannot drift apart.
 
@@ -18,61 +18,33 @@ The ontology is **closed**. Adding a label or a relationship is a reviewed chang
 - `Check`
 - `Class` — written instead as `Enum`
 - `CodeItem`
-- `Column`
 - `Component` — written instead as `RestServer`, `WebServer`
 - `ConfluenceItem`
-- `Database`
-- `Datasource`
-- `DatasourceItem`
-- `DbObject` — written instead as `Function`, `Table`, `View`
 - `DeclaredOutcome`
-- `Dialog`
 - `Endpoint`
 - `EntityDocument`
 - `Enum`
 - `Episode`
-- `Event`
 - `ExceptionMapping`
 - `Feature`
 - `Finding`
-- `Form`
-- `Function`
 - `Intent`
 - `JiraItem`
-- `JpaQuery`
 - `Lesson`
-- `Menu`
-- `Method`
-- `MySql`
-- `Navigation`
 - `NeedReview`
 - `OpenApiItem`
-- `Oracle`
-- `Page`
-- `Pagination`
-- `Parameter`
 - `Passage`
-- `Postgres`
-- `Query` — written instead as `JpaQuery`, `MySql`, `Oracle`, `Postgres`
 - `Requirement`
 - `RestServer`
-- `Route`
-- `Row`
 - `Scenario`
-- `Schema`
 - `SecurityScheme`
-- `Sort`
 - `SpecDocument`
 - `Specification`
 - `State`
-- `Table`
 - `TestCase`
 - `Topic`
 - `Transition` — written instead as `ApiCall`, `UiAction`
 - `UiAction`
-- `UiElement` — written instead as `Action`, `Dialog`, `Event`, `Form`, `Menu`, `Navigation`, `Pagination`, `Row`, `Sort`, `UiTable`
-- `UiTable`
-- `View`
 - `WebServer`
 - `ZephyrItem`
 
@@ -82,121 +54,54 @@ The ontology is **closed**. Adding a label or a relationship is a reviewed chang
 - `AcceptanceCriterion` -[:REFERENCES]-> `BusinessEntity`
 - `AcceptanceCriterion` -[:VALIDATES]-> `Transition`
 - `Action` -[:IMPLEMENTS]-> `Specification`
-- `Action` -[:ON_EVENT]-> `Event`
 - `BusinessEntity` -[:BELONGS_TO]-> `BusinessArea`
-- `BusinessEntity` -[:STORED_IN]-> `Table`
-- `Class` -[:DECLARES_METHOD]-> `Method`
 - `Class` -[:OF_TYPE]-> `Class`
 - `CodeItem` -[:REPRESENTS]-> `Requirement`
 - `Component` -[:CONTAINS]-> `State`
 - `Component` -[:CONTAINS]-> `Transition`
 - `Component` -[:EXPOSES]-> `Endpoint`
-- `Component` -[:HAS_PAGE]-> `Page`
 - `ConfluenceItem` -[:REPRESENTS]-> `Requirement`
-- `Database` -[:HAS_OBJECT]-> `DbObject`
-- `Database` -[:HAS_OBJECT]-> `Function`
-- `Database` -[:HAS_OBJECT]-> `Table`
-- `Database` -[:HAS_OBJECT]-> `View`
-- `Database` -[:HAS_SCHEMA]-> `Schema`
-- `Datasource` -[:CONNECTS_TO]-> `Database`
-- `DatasourceItem` -[:REPRESENTS]-> `Requirement`
 - `DeclaredOutcome` -[:GUARDED_BY]-> `Check`
-- `Dialog` -[:HAS_ELEMENT]-> `Action`
-- `Dialog` -[:HAS_ELEMENT]-> `Event`
-- `Dialog` -[:HAS_ELEMENT]-> `Navigation`
-- `Endpoint` -[:ACCEPTS]-> `Parameter`
 - `Endpoint` -[:CONSTRAINED_BY]-> `Check`
 - `Endpoint` -[:DECLARES]-> `DeclaredOutcome`
-- `Endpoint` -[:HANDLED_BY]-> `Method`
 - `Endpoint` -[:IMPLEMENTS]-> `Specification`
-- `Endpoint` -[:RETURNS]-> `Class`
 - `Endpoint` -[:SECURED_BY]-> `SecurityScheme`
 - `EntityDocument` -[:CITES]-> `AcceptanceCriterion`
 - `EntityDocument` -[:DESCRIBES]-> `BusinessEntity`
-- `ExceptionMapping` -[:HANDLED_BY]-> `Method`
 - `Feature` -[:HAS_SCENARIO]-> `Scenario`
 - `Finding` -[:ABOUT]-> `*`
-- `Form` -[:HAS_ELEMENT]-> `Action`
-- `Form` -[:HAS_ELEMENT]-> `Dialog`
-- `Form` -[:HAS_ELEMENT]-> `Event`
-- `Form` -[:HAS_ELEMENT]-> `Navigation`
 - `Intent` -[:SPECIFIED_BY]-> `Specification`
 - `JiraItem` -[:LINKS_TO]-> `JiraItem`
 - `JiraItem` -[:REPRESENTS]-> `Requirement`
 - `Lesson` -[:BELONGS_TO]-> `Topic`
 - `Lesson` -[:CONTAINS]-> `Passage`
-- `Menu` -[:HAS_ELEMENT]-> `Action`
-- `Menu` -[:HAS_ELEMENT]-> `Dialog`
-- `Menu` -[:HAS_ELEMENT]-> `Event`
-- `Menu` -[:HAS_ELEMENT]-> `Navigation`
-- `Method` -[:CALLS]-> `Method`
-- `Method` -[:ISSUES]-> `Query`
-- `Navigation` -[:NAVIGATES_TO]-> `Page`
 - `OpenApiItem` -[:REPRESENTS]-> `Requirement`
-- `Page` -[:CALLS]-> `Endpoint`
-- `Page` -[:HAS_ELEMENT]-> `Action`
-- `Page` -[:HAS_ELEMENT]-> `Dialog`
-- `Page` -[:HAS_ELEMENT]-> `Event`
-- `Page` -[:HAS_ELEMENT]-> `Form`
-- `Page` -[:HAS_ELEMENT]-> `Menu`
-- `Page` -[:HAS_ELEMENT]-> `Navigation`
-- `Page` -[:HAS_ELEMENT]-> `UiElement`
-- `Page` -[:HAS_ELEMENT]-> `UiTable`
-- `Page` -[:SHOWS]-> `State`
-- `Pagination` -[:HAS_ELEMENT]-> `Action`
-- `Pagination` -[:HAS_ELEMENT]-> `Event`
-- `Parameter` -[:OF_TYPE]-> `Class`
-- `Query` -[:QUERIES]-> `Table`
-- `Query` -[:QUERIES]-> `View`
-- `Query` -[:USES]-> `Column`
 - `Requirement` -[:BELONGS_TO]-> `BusinessArea`
 - `Requirement` -[:HAS_AC]-> `AcceptanceCriterion`
 - `Requirement` -[:REALISED_BY]-> `Feature`
 - `RestServer` -[:CONTAINS]-> `Transition`
 - `RestServer` -[:EXPOSES]-> `Endpoint`
-- `Route` -[:RENDERS]-> `Page`
-- `Row` -[:HAS_ELEMENT]-> `Action`
-- `Row` -[:HAS_ELEMENT]-> `Dialog`
-- `Row` -[:HAS_ELEMENT]-> `Event`
-- `Row` -[:HAS_ELEMENT]-> `Navigation`
 - `Scenario` -[:COVERS]-> `Transition`
 - `Scenario` -[:GENERATED_FROM]-> `Component`
 - `Scenario` -[:PRODUCES]-> `TestCase`
-- `Schema` -[:HAS_OBJECT]-> `DbObject`
-- `Schema` -[:HAS_OBJECT]-> `Function`
-- `Schema` -[:HAS_OBJECT]-> `Table`
-- `Schema` -[:HAS_OBJECT]-> `View`
-- `Sort` -[:HAS_ELEMENT]-> `Action`
-- `Sort` -[:HAS_ELEMENT]-> `Event`
 - `SpecDocument` -[:CITES]-> `AcceptanceCriterion`
 - `SpecDocument` -[:DESCRIBES]-> `Component`
 - `Specification` -[:HAS_AC]-> `AcceptanceCriterion`
 - `Specification` -[:REALISED_BY]-> `Feature`
 - `Specification` -[:SPECIFIES]-> `Requirement`
 - `State` -[:WHEN]-> `Transition`
-- `Table` -[:HAS_COLUMN]-> `Column`
 - `Topic` -[:BELONGS_TO]-> `Topic`
 - `Transition` -[:CONSTRAINED_BY]-> `Check`
 - `Transition` -[:DERIVED_FROM]-> `Action`
 - `Transition` -[:DERIVED_FROM]-> `DeclaredOutcome`
 - `Transition` -[:DERIVED_FROM]-> `Endpoint`
 - `Transition` -[:DERIVED_FROM]-> `ExceptionMapping`
-- `Transition` -[:EXERCISES]-> `Parameter`
 - `Transition` -[:EXPECTS]-> `Class`
 - `Transition` -[:REQUIRES]-> `Class`
 - `Transition` -[:THEN]-> `State`
 - `UiAction` -[:INVOKES]-> `ApiCall`
 - `UiAction` -[:TRIGGERS]-> `ApiCall`
-- `UiTable` -[:HAS_ELEMENT]-> `Action`
-- `UiTable` -[:HAS_ELEMENT]-> `Dialog`
-- `UiTable` -[:HAS_ELEMENT]-> `Event`
-- `UiTable` -[:HAS_ELEMENT]-> `Navigation`
-- `UiTable` -[:HAS_ELEMENT]-> `Pagination`
-- `UiTable` -[:HAS_ELEMENT]-> `Row`
-- `UiTable` -[:HAS_ELEMENT]-> `Sort`
-- `View` -[:HAS_COLUMN]-> `Column`
 - `WebServer` -[:CONTAINS]-> `Transition`
-- `WebServer` -[:HAS_PAGE]-> `Page`
 - `ZephyrItem` -[:REPRESENTS]-> `Requirement`
 
 ## Staged out
@@ -205,22 +110,50 @@ Deliberately excluded. Each names the trigger that would bring it back — an ab
 
 - **`Alert`** — operational data enters scope
 - **`Capability`** — a backlog hierarchy is actually queried
+- **`Column`** — a criterion constrains one column rather than the payload field that carries it
 - **`Constitution`** — formal governance is adopted
 - **`Constraint`** — formal governance is adopted
+- **`Database`** — one journey spans two databases and a requirement depends on which it reached
+- **`Datasource`** — a requirement is about the CONNECTION — pooling, timeout, read-only routing — rather than about what is stored
+- **`DatasourceItem`** — a Requirement is traced to a database schema as its system of record, the way JiraItem traces one to an issue
+- **`DbObject`** — an object whose kind is unestablished has to be reviewed as such, rather than reported as a finding
 - **`Defect`** — operational data enters scope
+- **`Dialog`** — a modal's presence is itself a required outcome, distinct from the state it announces
 - **`Epic`** — a backlog hierarchy is actually queried
+- **`Event`** — the interaction that invokes an action becomes distinguishable from the action — a requirement that says 'on blur' rather than 'when invoked'
 - **`Field`** — a field needs an identity of its own — a per-field review state, or an edge that must point at one field rather than at its type
+- **`Form`** — a requirement constrains a submission as a unit — cross-field validation stated over the form rather than over each input
+- **`Function`** — as Method, for a callable that is not a class member
 - **`Goal`** — a backlog hierarchy is actually queried
 - **`Incident`** — operational data enters scope
+- **`JpaQuery`** — as Query, for a statement that could not be recovered
 - **`Logs`** — operational data enters scope
+- **`Menu`** — navigation structure is a requirement — 'this action is reachable from that menu' rather than 'this action exists'
+- **`Method`** — a requirement is stated about a method. It was landed for `Endpoint-[:HANDLED_BY]->Method` and a `CALLS` graph that the live graph held ZERO edges of — 96 nodes supporting a traversal with nothing to traverse
 - **`Metrics`** — operational data enters scope
 - **`MicroRequirement`** — a concrete need appears
+- **`MySql`** — as Query, per dialect
+- **`Navigation`** — as Menu, for a control that moves between pages
+- **`Oracle`** — as Query, per dialect
+- **`Page`** — a requirement is about the SCREEN rather than about a behaviour on it. A ui State already carries its page as a property, which is what tells two states on different screens apart
+- **`Pagination`** — paging behaviour is required in its own right
+- **`Parameter`** — something must point at ONE input rather than at the interaction that sends it — a per-parameter review state, or an edge whose target is a single input rather than the type it carries
+- **`Postgres`** — as Query, per dialect
+- **`Query`** — a requirement is about the statement sent, not the behaviour it implements. `Transition-[:CONSTRAINED_BY]->Check` carries the condition; this would carry the SQL
 - **`Release`** — execution results are ingested and release reporting is required
 - **`Repository`** — impact analysis needs code structure in the graph, not just anchors
 - **`Revision`** — property-level history is designed AND something writes it — an integer `revision` property is what is used now
 - **`Role`** — something asks what ELSE requires a given role — a shared identity across endpoints, rather than a string repeated on each scheme
+- **`Route`** — a requirement is about the URL a screen answers on, rather than about what the screen then does
+- **`Row`** — a requirement is about one record's line and its controls
 - **`Run`** — two generation runs need comparing IN THE GRAPH — F-3's comparability half, which the run file cannot answer across scopes
+- **`Schema`** — two schemas hold the same table name and a requirement has to say which
+- **`Sort`** — ordering behaviour is required in its own right
+- **`Table`** — a requirement is stated ABOUT a table — a criterion whose subject is the stored relation rather than the behaviour that writes it
 - **`TestCycle`** — execution results are ingested
 - **`TestDesign`** — a concrete need appears
 - **`TestExecution`** — execution results are ingested (spec C-10's trigger)
 - **`TestSuite`** — a concrete need appears
+- **`UiElement`** — an element needs a review state or an edge of its own — something must point AT one control rather than at the interaction with it
+- **`UiTable`** — a requirement is about the listing as a control (paging, ordering) rather than about the records it shows
+- **`View`** — as Table; a requirement distinguishes a derived relation from a stored one

@@ -38,6 +38,7 @@ CREATE INDEX acceptance_criterion_source_episode_id_lookup IF NOT EXISTS FOR (n:
 CREATE CONSTRAINT action_id_unique IF NOT EXISTS FOR (n:Action) REQUIRE n.id IS UNIQUE;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT action_source_episode_id_required IF NOT EXISTS FOR (n:Action) REQUIRE n.source_episode_id IS NOT NULL;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT action_name_required IF NOT EXISTS FOR (n:Action) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT action_element_type_required IF NOT EXISTS FOR (n:Action) REQUIRE n.element_type IS NOT NULL;
 CREATE INDEX action_m_project_lookup IF NOT EXISTS FOR (n:Action) ON (n.m_project);
 CREATE INDEX action_lifecycle_state_lookup IF NOT EXISTS FOR (n:Action) ON (n.lifecycle_state);
 CREATE INDEX action_source_episode_id_lookup IF NOT EXISTS FOR (n:Action) ON (n.source_episode_id);
@@ -107,6 +108,17 @@ CREATE INDEX code_item_m_project_lookup IF NOT EXISTS FOR (n:CodeItem) ON (n.m_p
 CREATE INDEX code_item_lifecycle_state_lookup IF NOT EXISTS FOR (n:CodeItem) ON (n.lifecycle_state);
 CREATE INDEX code_item_source_episode_id_lookup IF NOT EXISTS FOR (n:CodeItem) ON (n.source_episode_id);
 
+// Column — One column, with the constraints declared on it
+CREATE CONSTRAINT column_id_unique IF NOT EXISTS FOR (n:Column) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT column_source_episode_id_required IF NOT EXISTS FOR (n:Column) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT column_name_required IF NOT EXISTS FOR (n:Column) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT column_data_type_required IF NOT EXISTS FOR (n:Column) REQUIRE n.data_type IS NOT NULL;
+CREATE INDEX column_name_lookup IF NOT EXISTS FOR (n:Column) ON (n.name);
+CREATE INDEX column_data_type_lookup IF NOT EXISTS FOR (n:Column) ON (n.data_type);
+CREATE INDEX column_m_project_lookup IF NOT EXISTS FOR (n:Column) ON (n.m_project);
+CREATE INDEX column_lifecycle_state_lookup IF NOT EXISTS FOR (n:Column) ON (n.lifecycle_state);
+CREATE INDEX column_source_episode_id_lookup IF NOT EXISTS FOR (n:Column) ON (n.source_episode_id);
+
 // Component — One deployable component at one commit (spec D-6)
 CREATE CONSTRAINT component_id_unique IF NOT EXISTS FOR (n:Component) REQUIRE n.id IS UNIQUE;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT component_source_episode_id_required IF NOT EXISTS FOR (n:Component) REQUIRE n.source_episode_id IS NOT NULL;
@@ -136,6 +148,46 @@ CREATE INDEX confluence_item_m_project_lookup IF NOT EXISTS FOR (n:ConfluenceIte
 CREATE INDEX confluence_item_lifecycle_state_lookup IF NOT EXISTS FOR (n:ConfluenceItem) ON (n.lifecycle_state);
 CREATE INDEX confluence_item_source_episode_id_lookup IF NOT EXISTS FOR (n:ConfluenceItem) ON (n.source_episode_id);
 
+// Database — One database instance
+CREATE CONSTRAINT database_id_unique IF NOT EXISTS FOR (n:Database) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT database_source_episode_id_required IF NOT EXISTS FOR (n:Database) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT database_name_required IF NOT EXISTS FOR (n:Database) REQUIRE n.name IS NOT NULL;
+CREATE INDEX database_name_lookup IF NOT EXISTS FOR (n:Database) ON (n.name);
+CREATE INDEX database_m_project_lookup IF NOT EXISTS FOR (n:Database) ON (n.m_project);
+CREATE INDEX database_lifecycle_state_lookup IF NOT EXISTS FOR (n:Database) ON (n.lifecycle_state);
+CREATE INDEX database_source_episode_id_lookup IF NOT EXISTS FOR (n:Database) ON (n.source_episode_id);
+
+// Datasource — A configured connection through which statements run
+CREATE CONSTRAINT datasource_id_unique IF NOT EXISTS FOR (n:Datasource) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT datasource_source_episode_id_required IF NOT EXISTS FOR (n:Datasource) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT datasource_name_required IF NOT EXISTS FOR (n:Datasource) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT datasource_dialect_required IF NOT EXISTS FOR (n:Datasource) REQUIRE n.dialect IS NOT NULL;
+CREATE INDEX datasource_dialect_lookup IF NOT EXISTS FOR (n:Datasource) ON (n.dialect);
+CREATE INDEX datasource_m_project_lookup IF NOT EXISTS FOR (n:Datasource) ON (n.m_project);
+CREATE INDEX datasource_lifecycle_state_lookup IF NOT EXISTS FOR (n:Datasource) ON (n.lifecycle_state);
+CREATE INDEX datasource_source_episode_id_lookup IF NOT EXISTS FOR (n:Datasource) ON (n.source_episode_id);
+
+// DatasourceItem — Evidence anchor for one analysed database schema
+CREATE CONSTRAINT datasource_item_id_unique IF NOT EXISTS FOR (n:DatasourceItem) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT datasource_item_source_episode_id_required IF NOT EXISTS FOR (n:DatasourceItem) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT datasource_item_name_required IF NOT EXISTS FOR (n:DatasourceItem) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT datasource_item_datasource_id_required IF NOT EXISTS FOR (n:DatasourceItem) REQUIRE n.datasource_id IS NOT NULL;
+CREATE INDEX datasource_item_datasource_id_lookup IF NOT EXISTS FOR (n:DatasourceItem) ON (n.datasource_id);
+CREATE INDEX datasource_item_m_project_lookup IF NOT EXISTS FOR (n:DatasourceItem) ON (n.m_project);
+CREATE INDEX datasource_item_lifecycle_state_lookup IF NOT EXISTS FOR (n:DatasourceItem) ON (n.lifecycle_state);
+CREATE INDEX datasource_item_source_episode_id_lookup IF NOT EXISTS FOR (n:DatasourceItem) ON (n.source_episode_id);
+
+// DbObject — A database object whose kind has not been established
+CREATE CONSTRAINT db_object_id_unique IF NOT EXISTS FOR (n:DbObject) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT db_object_source_episode_id_required IF NOT EXISTS FOR (n:DbObject) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT db_object_name_required IF NOT EXISTS FOR (n:DbObject) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT db_object_object_type_required IF NOT EXISTS FOR (n:DbObject) REQUIRE n.object_type IS NOT NULL;
+CREATE INDEX db_object_object_type_lookup IF NOT EXISTS FOR (n:DbObject) ON (n.object_type);
+CREATE INDEX db_object_name_lookup IF NOT EXISTS FOR (n:DbObject) ON (n.name);
+CREATE INDEX db_object_m_project_lookup IF NOT EXISTS FOR (n:DbObject) ON (n.m_project);
+CREATE INDEX db_object_lifecycle_state_lookup IF NOT EXISTS FOR (n:DbObject) ON (n.lifecycle_state);
+CREATE INDEX db_object_source_episode_id_lookup IF NOT EXISTS FOR (n:DbObject) ON (n.source_episode_id);
+
 // DeclaredOutcome — One observable result of an entry point, as recovered
 CREATE CONSTRAINT declared_outcome_id_unique IF NOT EXISTS FOR (n:DeclaredOutcome) REQUIRE n.id IS UNIQUE;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT declared_outcome_source_episode_id_required IF NOT EXISTS FOR (n:DeclaredOutcome) REQUIRE n.source_episode_id IS NOT NULL;
@@ -147,6 +199,15 @@ CREATE INDEX declared_outcome_discriminator_lookup IF NOT EXISTS FOR (n:Declared
 CREATE INDEX declared_outcome_m_project_lookup IF NOT EXISTS FOR (n:DeclaredOutcome) ON (n.m_project);
 CREATE INDEX declared_outcome_lifecycle_state_lookup IF NOT EXISTS FOR (n:DeclaredOutcome) ON (n.lifecycle_state);
 CREATE INDEX declared_outcome_source_episode_id_lookup IF NOT EXISTS FOR (n:DeclaredOutcome) ON (n.source_episode_id);
+
+// Dialog — A modal surface raised over a page
+CREATE CONSTRAINT dialog_id_unique IF NOT EXISTS FOR (n:Dialog) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT dialog_source_episode_id_required IF NOT EXISTS FOR (n:Dialog) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT dialog_name_required IF NOT EXISTS FOR (n:Dialog) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT dialog_element_type_required IF NOT EXISTS FOR (n:Dialog) REQUIRE n.element_type IS NOT NULL;
+CREATE INDEX dialog_m_project_lookup IF NOT EXISTS FOR (n:Dialog) ON (n.m_project);
+CREATE INDEX dialog_lifecycle_state_lookup IF NOT EXISTS FOR (n:Dialog) ON (n.lifecycle_state);
+CREATE INDEX dialog_source_episode_id_lookup IF NOT EXISTS FOR (n:Dialog) ON (n.source_episode_id);
 
 // Endpoint — One HTTP entry point as recovered from code (Layer 2)
 CREATE CONSTRAINT endpoint_id_unique IF NOT EXISTS FOR (n:Endpoint) REQUIRE n.id IS UNIQUE;
@@ -194,6 +255,15 @@ CREATE INDEX episode_job_id_lookup IF NOT EXISTS FOR (n:Episode) ON (n.job_id);
 CREATE INDEX episode_checkpoint_status_lookup IF NOT EXISTS FOR (n:Episode) ON (n.checkpoint_status);
 CREATE INDEX episode_m_project_lookup IF NOT EXISTS FOR (n:Episode) ON (n.m_project);
 
+// Event — The interaction that invokes an action (click, submit, change)
+CREATE CONSTRAINT event_id_unique IF NOT EXISTS FOR (n:Event) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT event_source_episode_id_required IF NOT EXISTS FOR (n:Event) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT event_name_required IF NOT EXISTS FOR (n:Event) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT event_element_type_required IF NOT EXISTS FOR (n:Event) REQUIRE n.element_type IS NOT NULL;
+CREATE INDEX event_m_project_lookup IF NOT EXISTS FOR (n:Event) ON (n.m_project);
+CREATE INDEX event_lifecycle_state_lookup IF NOT EXISTS FOR (n:Event) ON (n.lifecycle_state);
+CREATE INDEX event_source_episode_id_lookup IF NOT EXISTS FOR (n:Event) ON (n.source_episode_id);
+
 // ExceptionMapping — An @ExceptionHandler's exception → status mapping
 CREATE CONSTRAINT exception_mapping_id_unique IF NOT EXISTS FOR (n:ExceptionMapping) REQUIRE n.id IS UNIQUE;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT exception_mapping_source_episode_id_required IF NOT EXISTS FOR (n:ExceptionMapping) REQUIRE n.source_episode_id IS NOT NULL;
@@ -227,6 +297,24 @@ CREATE INDEX finding_m_project_lookup IF NOT EXISTS FOR (n:Finding) ON (n.m_proj
 CREATE INDEX finding_lifecycle_state_lookup IF NOT EXISTS FOR (n:Finding) ON (n.lifecycle_state);
 CREATE INDEX finding_source_episode_id_lookup IF NOT EXISTS FOR (n:Finding) ON (n.source_episode_id);
 
+// Form — A set of inputs submitted together
+CREATE CONSTRAINT form_id_unique IF NOT EXISTS FOR (n:Form) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT form_source_episode_id_required IF NOT EXISTS FOR (n:Form) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT form_name_required IF NOT EXISTS FOR (n:Form) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT form_element_type_required IF NOT EXISTS FOR (n:Form) REQUIRE n.element_type IS NOT NULL;
+CREATE INDEX form_m_project_lookup IF NOT EXISTS FOR (n:Form) ON (n.m_project);
+CREATE INDEX form_lifecycle_state_lookup IF NOT EXISTS FOR (n:Form) ON (n.lifecycle_state);
+CREATE INDEX form_source_episode_id_lookup IF NOT EXISTS FOR (n:Form) ON (n.source_episode_id);
+
+// Function — A callable routine
+CREATE CONSTRAINT function_id_unique IF NOT EXISTS FOR (n:Function) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT function_source_episode_id_required IF NOT EXISTS FOR (n:Function) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT function_name_required IF NOT EXISTS FOR (n:Function) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT function_object_type_required IF NOT EXISTS FOR (n:Function) REQUIRE n.object_type IS NOT NULL;
+CREATE INDEX function_m_project_lookup IF NOT EXISTS FOR (n:Function) ON (n.m_project);
+CREATE INDEX function_lifecycle_state_lookup IF NOT EXISTS FOR (n:Function) ON (n.lifecycle_state);
+CREATE INDEX function_source_episode_id_lookup IF NOT EXISTS FOR (n:Function) ON (n.source_episode_id);
+
 // Intent — One stated need, before anybody has specified how it behaves
 CREATE CONSTRAINT intent_id_unique IF NOT EXISTS FOR (n:Intent) REQUIRE n.id IS UNIQUE;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT intent_source_episode_id_required IF NOT EXISTS FOR (n:Intent) REQUIRE n.source_episode_id IS NOT NULL;
@@ -252,6 +340,16 @@ CREATE INDEX jira_item_m_project_lookup IF NOT EXISTS FOR (n:JiraItem) ON (n.m_p
 CREATE INDEX jira_item_lifecycle_state_lookup IF NOT EXISTS FOR (n:JiraItem) ON (n.lifecycle_state);
 CREATE INDEX jira_item_source_episode_id_lookup IF NOT EXISTS FOR (n:JiraItem) ON (n.source_episode_id);
 
+// JpaQuery — A repository call whose statement could not be recovered — carried raw, for a person to complete
+CREATE CONSTRAINT jpa_query_id_unique IF NOT EXISTS FOR (n:JpaQuery) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT jpa_query_source_episode_id_required IF NOT EXISTS FOR (n:JpaQuery) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT jpa_query_name_required IF NOT EXISTS FOR (n:JpaQuery) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT jpa_query_query_required IF NOT EXISTS FOR (n:JpaQuery) REQUIRE n.query IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT jpa_query_form_required IF NOT EXISTS FOR (n:JpaQuery) REQUIRE n.form IS NOT NULL;
+CREATE INDEX jpa_query_m_project_lookup IF NOT EXISTS FOR (n:JpaQuery) ON (n.m_project);
+CREATE INDEX jpa_query_lifecycle_state_lookup IF NOT EXISTS FOR (n:JpaQuery) ON (n.lifecycle_state);
+CREATE INDEX jpa_query_source_episode_id_lookup IF NOT EXISTS FOR (n:JpaQuery) ON (n.source_episode_id);
+
 // Lesson — One authored academy lesson about Métis itself
 CREATE CONSTRAINT lesson_id_unique IF NOT EXISTS FOR (n:Lesson) REQUIRE n.id IS UNIQUE;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT lesson_source_episode_id_required IF NOT EXISTS FOR (n:Lesson) REQUIRE n.source_episode_id IS NOT NULL;
@@ -265,6 +363,43 @@ CREATE INDEX lesson_lifecycle_state_lookup IF NOT EXISTS FOR (n:Lesson) ON (n.li
 CREATE INDEX lesson_m_project_lookup IF NOT EXISTS FOR (n:Lesson) ON (n.m_project);
 CREATE INDEX lesson_source_episode_id_lookup IF NOT EXISTS FOR (n:Lesson) ON (n.source_episode_id);
 //   Lesson.lifecycle_state ∈ {Quarantine, Approved, Disputed, Rejected, Deprecated} — enforced by ontology.validation, not by Neo4j
+
+// Menu — A navigation or command grouping
+CREATE CONSTRAINT menu_id_unique IF NOT EXISTS FOR (n:Menu) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT menu_source_episode_id_required IF NOT EXISTS FOR (n:Menu) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT menu_name_required IF NOT EXISTS FOR (n:Menu) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT menu_element_type_required IF NOT EXISTS FOR (n:Menu) REQUIRE n.element_type IS NOT NULL;
+CREATE INDEX menu_m_project_lookup IF NOT EXISTS FOR (n:Menu) ON (n.m_project);
+CREATE INDEX menu_lifecycle_state_lookup IF NOT EXISTS FOR (n:Menu) ON (n.lifecycle_state);
+CREATE INDEX menu_source_episode_id_lookup IF NOT EXISTS FOR (n:Menu) ON (n.source_episode_id);
+
+// Method — One method, from Layer 1's structural pass
+CREATE CONSTRAINT method_id_unique IF NOT EXISTS FOR (n:Method) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT method_source_episode_id_required IF NOT EXISTS FOR (n:Method) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT method_name_required IF NOT EXISTS FOR (n:Method) REQUIRE n.name IS NOT NULL;
+CREATE INDEX method_type_name_lookup IF NOT EXISTS FOR (n:Method) ON (n.type_name);
+CREATE INDEX method_m_project_lookup IF NOT EXISTS FOR (n:Method) ON (n.m_project);
+CREATE INDEX method_lifecycle_state_lookup IF NOT EXISTS FOR (n:Method) ON (n.lifecycle_state);
+CREATE INDEX method_source_episode_id_lookup IF NOT EXISTS FOR (n:Method) ON (n.source_episode_id);
+
+// MySql — A query sent to MySQL
+CREATE CONSTRAINT my_sql_id_unique IF NOT EXISTS FOR (n:MySql) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT my_sql_source_episode_id_required IF NOT EXISTS FOR (n:MySql) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT my_sql_name_required IF NOT EXISTS FOR (n:MySql) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT my_sql_query_required IF NOT EXISTS FOR (n:MySql) REQUIRE n.query IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT my_sql_form_required IF NOT EXISTS FOR (n:MySql) REQUIRE n.form IS NOT NULL;
+CREATE INDEX my_sql_m_project_lookup IF NOT EXISTS FOR (n:MySql) ON (n.m_project);
+CREATE INDEX my_sql_lifecycle_state_lookup IF NOT EXISTS FOR (n:MySql) ON (n.lifecycle_state);
+CREATE INDEX my_sql_source_episode_id_lookup IF NOT EXISTS FOR (n:MySql) ON (n.source_episode_id);
+
+// Navigation — A control that moves to another page
+CREATE CONSTRAINT navigation_id_unique IF NOT EXISTS FOR (n:Navigation) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT navigation_source_episode_id_required IF NOT EXISTS FOR (n:Navigation) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT navigation_name_required IF NOT EXISTS FOR (n:Navigation) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT navigation_element_type_required IF NOT EXISTS FOR (n:Navigation) REQUIRE n.element_type IS NOT NULL;
+CREATE INDEX navigation_m_project_lookup IF NOT EXISTS FOR (n:Navigation) ON (n.m_project);
+CREATE INDEX navigation_lifecycle_state_lookup IF NOT EXISTS FOR (n:Navigation) ON (n.lifecycle_state);
+CREATE INDEX navigation_source_episode_id_lookup IF NOT EXISTS FOR (n:Navigation) ON (n.source_episode_id);
 
 // NeedReview — Marker: a human still owes a decision on this node (lifecycle_state is Quarantine or Disputed)
 CREATE CONSTRAINT need_review_id_unique IF NOT EXISTS FOR (n:NeedReview) REQUIRE n.id IS UNIQUE;
@@ -285,6 +420,49 @@ CREATE INDEX open_api_item_m_project_lookup IF NOT EXISTS FOR (n:OpenApiItem) ON
 CREATE INDEX open_api_item_lifecycle_state_lookup IF NOT EXISTS FOR (n:OpenApiItem) ON (n.lifecycle_state);
 CREATE INDEX open_api_item_source_episode_id_lookup IF NOT EXISTS FOR (n:OpenApiItem) ON (n.source_episode_id);
 
+// Oracle — A query sent to Oracle
+CREATE CONSTRAINT oracle_id_unique IF NOT EXISTS FOR (n:Oracle) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT oracle_source_episode_id_required IF NOT EXISTS FOR (n:Oracle) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT oracle_name_required IF NOT EXISTS FOR (n:Oracle) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT oracle_query_required IF NOT EXISTS FOR (n:Oracle) REQUIRE n.query IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT oracle_form_required IF NOT EXISTS FOR (n:Oracle) REQUIRE n.form IS NOT NULL;
+CREATE INDEX oracle_m_project_lookup IF NOT EXISTS FOR (n:Oracle) ON (n.m_project);
+CREATE INDEX oracle_lifecycle_state_lookup IF NOT EXISTS FOR (n:Oracle) ON (n.lifecycle_state);
+CREATE INDEX oracle_source_episode_id_lookup IF NOT EXISTS FOR (n:Oracle) ON (n.source_episode_id);
+
+// Page — One screen of a web surface; its states are the conditions it shows
+CREATE CONSTRAINT page_id_unique IF NOT EXISTS FOR (n:Page) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT page_source_episode_id_required IF NOT EXISTS FOR (n:Page) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT page_name_required IF NOT EXISTS FOR (n:Page) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT page_component_required IF NOT EXISTS FOR (n:Page) REQUIRE n.component IS NOT NULL;
+CREATE INDEX page_component_lookup IF NOT EXISTS FOR (n:Page) ON (n.component);
+CREATE INDEX page_surface_lookup IF NOT EXISTS FOR (n:Page) ON (n.surface);
+CREATE INDEX page_m_project_lookup IF NOT EXISTS FOR (n:Page) ON (n.m_project);
+CREATE INDEX page_lifecycle_state_lookup IF NOT EXISTS FOR (n:Page) ON (n.lifecycle_state);
+CREATE INDEX page_source_episode_id_lookup IF NOT EXISTS FOR (n:Page) ON (n.source_episode_id);
+//   Page.b_surface ∈ {ui} — enforced by ontology.validation, not by Neo4j
+
+// Pagination — A table's paging control
+CREATE CONSTRAINT pagination_id_unique IF NOT EXISTS FOR (n:Pagination) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT pagination_source_episode_id_required IF NOT EXISTS FOR (n:Pagination) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT pagination_name_required IF NOT EXISTS FOR (n:Pagination) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT pagination_element_type_required IF NOT EXISTS FOR (n:Pagination) REQUIRE n.element_type IS NOT NULL;
+CREATE INDEX pagination_m_project_lookup IF NOT EXISTS FOR (n:Pagination) ON (n.m_project);
+CREATE INDEX pagination_lifecycle_state_lookup IF NOT EXISTS FOR (n:Pagination) ON (n.lifecycle_state);
+CREATE INDEX pagination_source_episode_id_lookup IF NOT EXISTS FOR (n:Pagination) ON (n.source_episode_id);
+
+// Parameter — One input an endpoint reads: where it rides and what it must be
+CREATE CONSTRAINT parameter_id_unique IF NOT EXISTS FOR (n:Parameter) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT parameter_source_episode_id_required IF NOT EXISTS FOR (n:Parameter) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT parameter_name_required IF NOT EXISTS FOR (n:Parameter) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT parameter_location_required IF NOT EXISTS FOR (n:Parameter) REQUIRE n.location IS NOT NULL;
+CREATE INDEX parameter_location_lookup IF NOT EXISTS FOR (n:Parameter) ON (n.location);
+CREATE INDEX parameter_required_lookup IF NOT EXISTS FOR (n:Parameter) ON (n.required);
+CREATE INDEX parameter_m_project_lookup IF NOT EXISTS FOR (n:Parameter) ON (n.m_project);
+CREATE INDEX parameter_lifecycle_state_lookup IF NOT EXISTS FOR (n:Parameter) ON (n.lifecycle_state);
+CREATE INDEX parameter_source_episode_id_lookup IF NOT EXISTS FOR (n:Parameter) ON (n.source_episode_id);
+//   Parameter.location ∈ {path, query, header, body, form, cookie} — enforced by ontology.validation, not by Neo4j
+
 // Passage — One section of a document, embedded on its own
 CREATE CONSTRAINT passage_id_unique IF NOT EXISTS FOR (n:Passage) REQUIRE n.id IS UNIQUE;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT passage_source_episode_id_required IF NOT EXISTS FOR (n:Passage) REQUIRE n.source_episode_id IS NOT NULL;
@@ -296,6 +474,31 @@ CREATE INDEX passage_ordinal_lookup IF NOT EXISTS FOR (n:Passage) ON (n.ordinal)
 CREATE INDEX passage_m_project_lookup IF NOT EXISTS FOR (n:Passage) ON (n.m_project);
 CREATE INDEX passage_lifecycle_state_lookup IF NOT EXISTS FOR (n:Passage) ON (n.lifecycle_state);
 CREATE INDEX passage_source_episode_id_lookup IF NOT EXISTS FOR (n:Passage) ON (n.source_episode_id);
+
+// Postgres — A query sent to PostgreSQL
+CREATE CONSTRAINT postgres_id_unique IF NOT EXISTS FOR (n:Postgres) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT postgres_source_episode_id_required IF NOT EXISTS FOR (n:Postgres) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT postgres_name_required IF NOT EXISTS FOR (n:Postgres) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT postgres_query_required IF NOT EXISTS FOR (n:Postgres) REQUIRE n.query IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT postgres_form_required IF NOT EXISTS FOR (n:Postgres) REQUIRE n.form IS NOT NULL;
+CREATE INDEX postgres_m_project_lookup IF NOT EXISTS FOR (n:Postgres) ON (n.m_project);
+CREATE INDEX postgres_lifecycle_state_lookup IF NOT EXISTS FOR (n:Postgres) ON (n.lifecycle_state);
+CREATE INDEX postgres_source_episode_id_lookup IF NOT EXISTS FOR (n:Postgres) ON (n.source_episode_id);
+
+// Query — One thing the application asks a database, with the statement it sends
+CREATE CONSTRAINT query_id_unique IF NOT EXISTS FOR (n:Query) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT query_source_episode_id_required IF NOT EXISTS FOR (n:Query) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT query_name_required IF NOT EXISTS FOR (n:Query) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT query_query_required IF NOT EXISTS FOR (n:Query) REQUIRE n.query IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT query_form_required IF NOT EXISTS FOR (n:Query) REQUIRE n.form IS NOT NULL;
+CREATE INDEX query_dialect_lookup IF NOT EXISTS FOR (n:Query) ON (n.dialect);
+CREATE INDEX query_form_lookup IF NOT EXISTS FOR (n:Query) ON (n.form);
+CREATE INDEX query_confidence_lookup IF NOT EXISTS FOR (n:Query) ON (n.confidence);
+CREATE INDEX query_m_project_lookup IF NOT EXISTS FOR (n:Query) ON (n.m_project);
+CREATE INDEX query_lifecycle_state_lookup IF NOT EXISTS FOR (n:Query) ON (n.lifecycle_state);
+CREATE INDEX query_source_episode_id_lookup IF NOT EXISTS FOR (n:Query) ON (n.source_episode_id);
+//   Query.form ∈ {derived, native, jpql, opaque} — enforced by ontology.validation, not by Neo4j
+//   Query.confidence ∈ {catalogue-confirmed, naming-strategy-proposed, unresolved} — enforced by ontology.validation, not by Neo4j
 
 // Requirement — One requirement statement
 CREATE CONSTRAINT requirement_id_unique IF NOT EXISTS FOR (n:Requirement) REQUIRE n.id IS UNIQUE;
@@ -325,6 +528,25 @@ CREATE INDEX rest_server_lifecycle_state_lookup IF NOT EXISTS FOR (n:RestServer)
 CREATE INDEX rest_server_source_episode_id_lookup IF NOT EXISTS FOR (n:RestServer) ON (n.source_episode_id);
 //   RestServer.b_surface ∈ {api} — enforced by ontology.validation, not by Neo4j
 
+// Route — One frontend route: the path that renders a page
+CREATE CONSTRAINT route_id_unique IF NOT EXISTS FOR (n:Route) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT route_source_episode_id_required IF NOT EXISTS FOR (n:Route) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT route_name_required IF NOT EXISTS FOR (n:Route) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT route_path_required IF NOT EXISTS FOR (n:Route) REQUIRE n.path IS NOT NULL;
+CREATE INDEX route_path_lookup IF NOT EXISTS FOR (n:Route) ON (n.path);
+CREATE INDEX route_m_project_lookup IF NOT EXISTS FOR (n:Route) ON (n.m_project);
+CREATE INDEX route_lifecycle_state_lookup IF NOT EXISTS FOR (n:Route) ON (n.lifecycle_state);
+CREATE INDEX route_source_episode_id_lookup IF NOT EXISTS FOR (n:Route) ON (n.source_episode_id);
+
+// Row — One record's line in a table, and the controls it carries
+CREATE CONSTRAINT row_id_unique IF NOT EXISTS FOR (n:Row) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT row_source_episode_id_required IF NOT EXISTS FOR (n:Row) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT row_name_required IF NOT EXISTS FOR (n:Row) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT row_element_type_required IF NOT EXISTS FOR (n:Row) REQUIRE n.element_type IS NOT NULL;
+CREATE INDEX row_m_project_lookup IF NOT EXISTS FOR (n:Row) ON (n.m_project);
+CREATE INDEX row_lifecycle_state_lookup IF NOT EXISTS FOR (n:Row) ON (n.lifecycle_state);
+CREATE INDEX row_source_episode_id_lookup IF NOT EXISTS FOR (n:Row) ON (n.source_episode_id);
+
 // Scenario — One covering walk: setup plus a single validated transition
 CREATE CONSTRAINT scenario_id_unique IF NOT EXISTS FOR (n:Scenario) REQUIRE n.id IS UNIQUE;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT scenario_source_episode_id_required IF NOT EXISTS FOR (n:Scenario) REQUIRE n.source_episode_id IS NOT NULL;
@@ -335,6 +557,15 @@ CREATE INDEX scenario_criterion_lookup IF NOT EXISTS FOR (n:Scenario) ON (n.crit
 CREATE INDEX scenario_m_project_lookup IF NOT EXISTS FOR (n:Scenario) ON (n.m_project);
 CREATE INDEX scenario_lifecycle_state_lookup IF NOT EXISTS FOR (n:Scenario) ON (n.lifecycle_state);
 CREATE INDEX scenario_source_episode_id_lookup IF NOT EXISTS FOR (n:Scenario) ON (n.source_episode_id);
+
+// Schema — A named grouping of objects within a database
+CREATE CONSTRAINT schema_id_unique IF NOT EXISTS FOR (n:Schema) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT schema_source_episode_id_required IF NOT EXISTS FOR (n:Schema) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT schema_name_required IF NOT EXISTS FOR (n:Schema) REQUIRE n.name IS NOT NULL;
+CREATE INDEX schema_name_lookup IF NOT EXISTS FOR (n:Schema) ON (n.name);
+CREATE INDEX schema_m_project_lookup IF NOT EXISTS FOR (n:Schema) ON (n.m_project);
+CREATE INDEX schema_lifecycle_state_lookup IF NOT EXISTS FOR (n:Schema) ON (n.lifecycle_state);
+CREATE INDEX schema_source_episode_id_lookup IF NOT EXISTS FOR (n:Schema) ON (n.source_episode_id);
 
 // SecurityScheme — One declared security requirement on an endpoint: the scheme, the declaration verbatim, and the roles it demands
 CREATE CONSTRAINT security_scheme_id_unique IF NOT EXISTS FOR (n:SecurityScheme) REQUIRE n.id IS UNIQUE;
@@ -347,6 +578,15 @@ CREATE INDEX security_scheme_m_project_lookup IF NOT EXISTS FOR (n:SecuritySchem
 CREATE INDEX security_scheme_lifecycle_state_lookup IF NOT EXISTS FOR (n:SecurityScheme) ON (n.lifecycle_state);
 CREATE INDEX security_scheme_source_episode_id_lookup IF NOT EXISTS FOR (n:SecurityScheme) ON (n.source_episode_id);
 //   SecurityScheme.source ∈ {annotation, filter-chain, } — enforced by ontology.validation, not by Neo4j
+
+// Sort — A table's ordering control
+CREATE CONSTRAINT sort_id_unique IF NOT EXISTS FOR (n:Sort) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT sort_source_episode_id_required IF NOT EXISTS FOR (n:Sort) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT sort_name_required IF NOT EXISTS FOR (n:Sort) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT sort_element_type_required IF NOT EXISTS FOR (n:Sort) REQUIRE n.element_type IS NOT NULL;
+CREATE INDEX sort_m_project_lookup IF NOT EXISTS FOR (n:Sort) ON (n.m_project);
+CREATE INDEX sort_lifecycle_state_lookup IF NOT EXISTS FOR (n:Sort) ON (n.lifecycle_state);
+CREATE INDEX sort_source_episode_id_lookup IF NOT EXISTS FOR (n:Sort) ON (n.source_episode_id);
 
 // SpecDocument — One rendered journey specification (§18)
 CREATE CONSTRAINT spec_document_id_unique IF NOT EXISTS FOR (n:SpecDocument) REQUIRE n.id IS UNIQUE;
@@ -393,6 +633,15 @@ CREATE INDEX state_m_project_lookup IF NOT EXISTS FOR (n:State) ON (n.m_project)
 CREATE INDEX state_source_episode_id_lookup IF NOT EXISTS FOR (n:State) ON (n.source_episode_id);
 //   State.b_surface ∈ {ui, api} — enforced by ontology.validation, not by Neo4j
 //   State.lifecycle_state ∈ {Quarantine, Approved, Disputed, Rejected, Deprecated} — enforced by ontology.validation, not by Neo4j
+
+// Table — A stored relation
+CREATE CONSTRAINT table_id_unique IF NOT EXISTS FOR (n:Table) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT table_source_episode_id_required IF NOT EXISTS FOR (n:Table) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT table_name_required IF NOT EXISTS FOR (n:Table) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT table_object_type_required IF NOT EXISTS FOR (n:Table) REQUIRE n.object_type IS NOT NULL;
+CREATE INDEX table_m_project_lookup IF NOT EXISTS FOR (n:Table) ON (n.m_project);
+CREATE INDEX table_lifecycle_state_lookup IF NOT EXISTS FOR (n:Table) ON (n.lifecycle_state);
+CREATE INDEX table_source_episode_id_lookup IF NOT EXISTS FOR (n:Table) ON (n.source_episode_id);
 
 // TestCase — One rendered, human-executable artefact
 CREATE CONSTRAINT test_case_id_unique IF NOT EXISTS FOR (n:TestCase) REQUIRE n.id IS UNIQUE;
@@ -462,6 +711,36 @@ CREATE INDEX ui_action_m_project_lookup IF NOT EXISTS FOR (n:UiAction) ON (n.m_p
 CREATE INDEX ui_action_lifecycle_state_lookup IF NOT EXISTS FOR (n:UiAction) ON (n.lifecycle_state);
 CREATE INDEX ui_action_source_episode_id_lookup IF NOT EXISTS FOR (n:UiAction) ON (n.source_episode_id);
 //   UiAction.b_surface ∈ {ui} — enforced by ontology.validation, not by Neo4j
+
+// UiElement — One thing on a page whose type has not been established
+CREATE CONSTRAINT ui_element_id_unique IF NOT EXISTS FOR (n:UiElement) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT ui_element_source_episode_id_required IF NOT EXISTS FOR (n:UiElement) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT ui_element_name_required IF NOT EXISTS FOR (n:UiElement) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT ui_element_element_type_required IF NOT EXISTS FOR (n:UiElement) REQUIRE n.element_type IS NOT NULL;
+CREATE INDEX ui_element_element_type_lookup IF NOT EXISTS FOR (n:UiElement) ON (n.element_type);
+CREATE INDEX ui_element_page_lookup IF NOT EXISTS FOR (n:UiElement) ON (n.page);
+CREATE INDEX ui_element_lifecycle_state_lookup IF NOT EXISTS FOR (n:UiElement) ON (n.lifecycle_state);
+CREATE INDEX ui_element_m_project_lookup IF NOT EXISTS FOR (n:UiElement) ON (n.m_project);
+CREATE INDEX ui_element_source_episode_id_lookup IF NOT EXISTS FOR (n:UiElement) ON (n.source_episode_id);
+//   UiElement.lifecycle_state ∈ {Quarantine, Approved, Disputed, Rejected, Deprecated} — enforced by ontology.validation, not by Neo4j
+
+// UiTable — A tabular listing of records on a page
+CREATE CONSTRAINT ui_table_id_unique IF NOT EXISTS FOR (n:UiTable) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT ui_table_source_episode_id_required IF NOT EXISTS FOR (n:UiTable) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT ui_table_name_required IF NOT EXISTS FOR (n:UiTable) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT ui_table_element_type_required IF NOT EXISTS FOR (n:UiTable) REQUIRE n.element_type IS NOT NULL;
+CREATE INDEX ui_table_m_project_lookup IF NOT EXISTS FOR (n:UiTable) ON (n.m_project);
+CREATE INDEX ui_table_lifecycle_state_lookup IF NOT EXISTS FOR (n:UiTable) ON (n.lifecycle_state);
+CREATE INDEX ui_table_source_episode_id_lookup IF NOT EXISTS FOR (n:UiTable) ON (n.source_episode_id);
+
+// View — A derived relation
+CREATE CONSTRAINT view_id_unique IF NOT EXISTS FOR (n:View) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT view_source_episode_id_required IF NOT EXISTS FOR (n:View) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT view_name_required IF NOT EXISTS FOR (n:View) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT view_object_type_required IF NOT EXISTS FOR (n:View) REQUIRE n.object_type IS NOT NULL;
+CREATE INDEX view_m_project_lookup IF NOT EXISTS FOR (n:View) ON (n.m_project);
+CREATE INDEX view_lifecycle_state_lookup IF NOT EXISTS FOR (n:View) ON (n.lifecycle_state);
+CREATE INDEX view_source_episode_id_lookup IF NOT EXISTS FOR (n:View) ON (n.source_episode_id);
 
 // WebServer — A Component serving a web surface
 CREATE CONSTRAINT web_server_id_unique IF NOT EXISTS FOR (n:WebServer) REQUIRE n.id IS UNIQUE;

@@ -205,8 +205,6 @@ TIMESTAMP_NOT_THREADED = {
                "fallback to file mtime is NOT — git does not preserve mtime, so "
                "a fresh clone would land a different timestamp for identical "
                "content, which is the opposite of what this is for",
-    "database": "genuinely has none — a catalogue carries no timestamp of its "
-                "own, and the declaration says so. This entry is permanent",
     "confluence": "partial intake; `scope.uif_generated_at` arrives in the UIF",
     "jira": "partial intake; `scope.uif_generated_at` arrives in the UIF",
     "uif": "partial intake; `scope.uif_generated_at` arrives in the UIF",
@@ -255,7 +253,8 @@ def test_the_wall_clock_fallback_is_the_only_source_of_run_to_run_drift():
         if pattern.search(path.read_text()):
             found.add(path.name)
 
-    # Six modules, seven call sites (`data_landing.py` has two). `glossary.py`
+    # `data_landing.py` was in this set with two call sites; it went with the
+    # database layer. `glossary.py`
     # is in this list because this assertion put it there: it was missed when the
     # set was first written by hand from a truncated grep, and the test failed on
     # its first run rather than enshrining the omission.
@@ -265,7 +264,7 @@ def test_the_wall_clock_fallback_is_the_only_source_of_run_to_run_drift():
     # wants the data's own time (a commit date), not the clock. Recorded here
     # rather than waved through; see TIMESTAMP_NOT_THREADED.
     assert found == {"landing.py", "raw_landing.py", "intake_landing.py",
-                     "data_landing.py", "intent.py", "glossary.py",
+                     "intent.py", "glossary.py",
                      "knowledge.py", "lessons.py"}, (
         f"the set of modules defaulting to the clock changed: {sorted(found)}. "
         f"If one was fixed, remove it here; if one was added, it needs a "

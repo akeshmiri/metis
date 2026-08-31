@@ -292,13 +292,42 @@ if __name__ == "__main__":
     sys.exit(1 if failures else 0)
 
 
-def test_the_two_location_vocabularies_agree():
-    """`contract.PARAMETER_LOCATIONS` is what the adapter maps into;
-    `Parameter.location`'s enum is what the ontology gate accepts. `cookie` was
-    added to the first and not the second, so a document the adapter read
-    cleanly was then refused at landing — two lists for one fact, failing at the
-    boundary between them."""
-    from code_analysis.contract import PARAMETER_LOCATIONS
-    from metis_mcp.ontology.labels import LABELS
+def _report_with_parameter_location(location: str):
+    """A real adapter report with one parameter's location overridden.
 
-    assert set(LABELS["Parameter"].all_enums["location"]) == set(PARAMETER_LOCATIONS)
+    Built from the adapter rather than hand-assembled, so the report is valid in
+    every other respect and the only thing under test is the location.
+    """
+    import dataclasses
+
+    report = _report().report
+    endpoint = next(e for e in report.endpoints if e.parameters)
+    parameters = list(endpoint.parameters)
+    parameters[0] = dataclasses.replace(parameters[0], location=location)
+    patched = dataclasses.replace(endpoint, parameters=tuple(parameters))
+    return dataclasses.replace(
+        report,
+        endpoints=tuple(patched if e is endpoint else e for e in report.endpoints))
+
+
+def test_a_location_outside_the_vocabulary_is_refused():
+    """`contract.PARAMETER_LOCATIONS` is what the adapter maps into. It used to
+    be checked against `Parameter.location`'s enum — two lists for one fact, and
+    `cookie` was added to the first and not the second, so a document the adapter
+    read cleanly was refused at landing.
+
+    `Parameter` was staged out (its content is the transition's `c_inputs`), so
+    there is one list now and it is enforced where the fact enters. Without this
+    the vocabulary would be declared and checked by nothing at all.
+    """
+    import dataclasses
+
+    from code_analysis.contract import PARAMETER_LOCATIONS, validate_report
+
+    report = _report_with_parameter_location("cookie")
+    assert validate_report(report) == [], "cookie IS in the vocabulary"
+
+    bad = _report_with_parameter_location("teapot")
+    problems = validate_report(bad)
+    assert any("teapot" in p and "not one of" in p for p in problems), problems
+    assert "cookie" in PARAMETER_LOCATIONS

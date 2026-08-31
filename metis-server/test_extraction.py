@@ -127,6 +127,37 @@ def test_a_route_composed_from_constants_is_resolved_not_invented(demo_structura
     assert ("POST", "/record/{id}/archive") in _routes(demo_structural)
 
 
+def test_a_non_route_constant_does_not_poison_a_route_of_the_same_name(
+        demo_structural):
+    """**The colliding-constant condition** (`ArchiveCache.ARCHIVE`).
+
+    The pack admits any initialiser CONTAINING a string literal as a candidate
+    route fragment, which is right for `PREFIX + "/x"` and wrong for
+    `List.of("archive-store")`. Resolving a bare constant by its simple name
+    then found two candidates, treated the second as a rival answer, and refused
+    both — so a route composed entirely of constants came out `__unresolved__`
+    because an unrelated class happened to reuse the name.
+
+    Measured on a real service: three endpoints of one controller lost their
+    paths this way, then shared the one trigger `GET __unresolved__` and failed
+    determinism as a group — a blocking finding about code that is fine.
+
+    An initialiser that resolves to nothing is **no answer**, not a different
+    one. Two constants that both resolve, to different routes, must still
+    refuse; that is asserted by the `RouteConstants`/`InternalClients` pair the
+    resolver already handles.
+    """
+    routes = _routes(demo_structural)
+    # Reached through a STATIC IMPORT (`RoutePaths.ARCHIVE`), which is what
+    # forces the simple-name path: with a qualifier the resolver keys on the
+    # owner and never consults the colliding name at all.
+    assert ("POST", "/record/{id}/archive") in routes, (
+        "a same-named constant that is not a route must not make the real one "
+        "unresolvable")
+    unresolved = [r for r in routes if "__unresolved__" in r[1]]
+    assert not unresolved, f"unresolved route(s): {unresolved}"
+
+
 def test_an_outbound_client_is_not_an_api_surface(demo_structural):
     """`@FeignClient` mappings are calls this service makes of another one."""
     handlers = {e["handler_type"] for e in demo_structural["endpoints"]}
@@ -749,25 +780,27 @@ def test_an_enum_target_is_labelled_enum_not_class(demo_structural):
     against `:Class` matches no enum node. That exact mistake left three
     `DECLARES_METHOD` edges unmatched against a real service — `is_allowed` walks
     the specialisation chain, so the ontology check passed and the merge found
-    nothing."""
+    nothing.
+
+    `DECLARES_METHOD` was how this test proved it could fail, and it went with
+    `Method` in the 2026-08-31 re-baseline. The property is unchanged and so is
+    the way it breaks; what reaches an enum now is `OF_TYPE`, which is what
+    `EVIDENCE_LAYER` names as `Enum`'s reader.
+    """
     from metis_mcp.model_sources.raw_landing import plan_raw_landing
     from metis_mcp.model_sources.sources import _report_from_dict
 
-    # `include_call_graph=True` because the condition only exists there: the
-    # call graph is off by default now, so `Mode.fromValue` is not landed and
-    # `DECLARES_METHOD` never fires from an enum. The assertion below caught that
-    # the moment the default flipped, which is what it is for.
     plan = plan_raw_landing(_report_from_dict(demo_structural),
                             journey="records", repo="demo-records",
-                            job_id="test", include_call_graph=True)
+                            job_id="test")
     enum_nodes = {n.properties["id"] for n in plan.nodes if n.label == "Enum"}
     assert enum_nodes, "the demo declares two enums"
-    # And one of them declares a method, which is what makes the check below
-    # capable of failing: an enum with no methods never reaches DECLARES_METHOD.
-    assert any(e.rel_type == "DECLARES_METHOD" and e.from_id in enum_nodes
+    # Something must actually point at an enum, or the loop below iterates over
+    # edges that never touch one and passes by having nothing to check.
+    assert any(e.to_id in enum_nodes or e.from_id in enum_nodes
                for e in plan.edges), (
-        "no enum in the demo declares a method, so this test guards nothing — "
-        "see RecordBatchDto.Mode.fromValue")
+        "no edge in the demo reaches an enum, so this test guards nothing — "
+        "see RecordBatchDto.Mode")
     for edge in plan.edges:
         if edge.to_id in enum_nodes:
             assert edge.to_label == "Enum", (

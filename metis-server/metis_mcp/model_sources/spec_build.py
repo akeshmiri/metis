@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from metis_mcp.model_sources.intent import CONTRACT_OPENAPI, CONTRACT_STRUCTURE
+from metis_mcp.model_sources.intent import CONTRACT_OPENAPI
 
 
 @dataclass
@@ -83,33 +83,6 @@ def build_openapi(spec_id: str, path: str, journey: str, episode_id: str):
     # and get an answer rather than a join through prose.
     _link(plan, "Endpoint", _ids(plan, "Endpoint"), spec_id)
     return plan, list(adapter.notes)
-
-
-def build_structure(spec_id: str, path: str, journey: str, episode_id: str):
-    """One structure file → pages, elements and actions, linked to its spec.
-
-    Same signature as `build_openapi` even though `journey` is unused here: the
-    two are dispatched from one table, and two arities meant the dispatcher
-    crashed on whichever it happened to call second.
-    """
-    from metis_mcp.model_sources.structure import format_problems, load, plan_structure
-    from metis_mcp.model_sources.structure import validate as validate_structure
-
-    structure = load(path)
-    problems = validate_structure(structure)
-    if problems:
-        raise ValueError(format_problems(problems, structure).splitlines()[0])
-
-    # `journey` is the deployable these screens belong to, so the pages are
-    # created here rather than assumed. Without it `Page` cannot be written at
-    # all -- the label requires a `component` -- and every HAS_ELEMENT edge came
-    # back unmatched on a graph where no model source had landed first.
-    plan = plan_structure(structure, episode_id, component=journey)
-    # `Action` is the affordance a person invokes -- the thing a test clicks --
-    # so it is the element worth linking. The containers around it (Page, Form,
-    # Row) reach the specification through it.
-    _link(plan, "Action", _ids(plan, "Action"), spec_id)
-    return plan, []
 
 
 def _ids(plan, label: str) -> list[str]:
@@ -164,12 +137,13 @@ def contract_errors() -> tuple:
     contract stops its own run; it does not say the run should traceback.
     """
     from code_analysis.openapi import OpenAPIRefused
-    from metis_mcp.model_sources.structure import StructureRefused
 
-    return (OSError, ValueError, OpenAPIRefused, StructureRefused)
+    return (OSError, ValueError, OpenAPIRefused)
 
 
+# `structure` was the second kind and built Page/UiElement/Action from an
+# authored file. It went with the UI structure layer: Métis states the behaviour
+# a screen must show, not the widgets it is built from.
 CONTRACT_BUILDERS = {
     CONTRACT_OPENAPI: build_openapi,
-    CONTRACT_STRUCTURE: build_structure,
 }

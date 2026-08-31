@@ -19,12 +19,9 @@ from metis_mcp.mbt.coverage import (
 from metis_mcp.rendering import (
     TIER_ACCEPTANCE_CRITERION,
     TIER_GENERATED_PROSE,
-    UNRECOVERABLE,
-    build_payload,
     format_case,
     humanise,
     render,
-    unrecoverable_fields,
 )
 from metis_mcp.rendering.test_case import render_path
 from mbt_fixtures import login_model
@@ -209,22 +206,25 @@ def test_t10a_a_data_varying_technique_gets_one_id_per_case():
         f"publishing would write one and discard the rest")
 
 
-def test_a42_unrecoverable_details_are_marked_not_guessed():
-    model, _, rendered = _rendered()
-    payload = build_payload(model, rendered.cases[0])
-    marked = unrecoverable_fields(payload)
-    assert marked, "payload must mark what it cannot recover"
-    # Specifically: no fabricated HTTP method, path or anchor.
-    assert any("method" in f for f in marked)
-    assert any("path" in f for f in marked)
-    assert any("anchor" in f for f in marked)
-    assert payload["act"]["act"]["method"] == UNRECOVERABLE
+def test_a42_what_was_not_recovered_is_not_invented():
+    """T-9d, checked against prose now that the payload is gone.
 
+    The payload marked an unrecovered method as `__unrecoverable__`; prose has no
+    sentinel and does not need one — it renders what the model holds and stays
+    silent about the rest. The guarantee is the same and the failure would be the
+    same: an HTTP verb or path appearing in a case built from a model that holds
+    neither.
+    """
+    import re
 
-def test_payload_is_json_serialisable():
-    model, _, rendered = _rendered()
-    blob = json.dumps([build_payload(model, c) for c in rendered.cases])
-    assert len(blob) > 0
+    _, _, rendered = _rendered()
+    text = "\n".join(format_case(c) for c in rendered.cases)
+
+    assert not re.search(r"\b(GET|POST|PUT|DELETE|PATCH) /", text), (
+        "the login fixture declares no HTTP surface; a verb and path in its "
+        "rendered case would have been invented")
+    assert ":line" not in text and "@commit" not in text, (
+        "no fabricated evidence anchor")
 
 
 # --------------------------------------------------------------------------
@@ -452,12 +452,14 @@ def test_inputs_and_guards_are_reported_separately():
     assert "caller.isKnown()" in text
 
 
-def test_the_payload_reports_method_and_path_it_actually_holds():
-    """T-9d marks what is unknown. Marking a field we hold says the wrong thing."""
+def test_a_case_reports_the_method_and_path_it_actually_holds():
+    """The mirror of A-42: omitting a fact we DO hold says the wrong thing too.
+
+    Without this, "never invent" is satisfiable by rendering nothing.
+    """
     from metis_mcp.mbt.model import APPROVED, Model, State, Transition
     from metis_mcp.mbt.path_generation import generate
-    from metis_mcp.rendering import build_payload, render
-    from metis_mcp.rendering.payload import UNRECOVERABLE
+    from metis_mcp.rendering import format_case, render
 
     model = Model(
         id="p-api",
@@ -471,8 +473,6 @@ def test_the_payload_reports_method_and_path_it_actually_holds():
             guard_anchor="Thing.java:12@abc")},
     )
     case = render(model, generate(model, "all-transitions", 5).paths).cases[0]
-    act = build_payload(model, case)["act"]["act"]
-    assert act["method"] == "GET" and act["path"] == "/thing/{id}"
-    assert act["expected_status"] == 200
-    assert build_payload(model, case)["act"]["anchor"] == "Thing.java:12@abc"
-    assert UNRECOVERABLE not in (act["method"], act["path"])
+    text = format_case(case)
+    assert "GET /thing/{id}" in text
+    assert "200" in text

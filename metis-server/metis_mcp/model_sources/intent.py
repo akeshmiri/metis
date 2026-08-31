@@ -80,8 +80,9 @@ MISSING_CONTRACT = "contract_file_missing"
 # Endpoint/Page/Action off a specification from being circular: the prose never
 # invents an endpoint, it only says which document to read.
 CONTRACT_OPENAPI = "openapi"
-CONTRACT_STRUCTURE = "structure"
-CONTRACT_KINDS = (CONTRACT_OPENAPI, CONTRACT_STRUCTURE)
+# `structure` was a second contract kind, building Page/UiElement/Action from an
+# authored file. Removed with the UI structure layer.
+CONTRACT_KINDS = (CONTRACT_OPENAPI,)
 
 # Words that make a statement unfalsifiable. Not a style rule: a specification
 # nobody can disagree with cannot be compared against code either, which makes

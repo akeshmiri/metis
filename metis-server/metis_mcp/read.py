@@ -13,6 +13,7 @@ it evidence.
 """
 from __future__ import annotations
 
+from metis_mcp.authoring import _inputs_of
 from metis_mcp.ontology.labels import label_expression
 
 # One query, because the evidence is only useful assembled: a guard with no
@@ -24,7 +25,6 @@ OPTIONAL MATCH (src:State)-[:WHEN]->(t)
 OPTIONAL MATCH (t)-[:THEN]->(tgt:State)
 OPTIONAL MATCH (t)-[:DERIVED_FROM]->(e:Endpoint)
 OPTIONAL MATCH (t)-[:DERIVED_FROM]->(o:DeclaredOutcome)
-OPTIONAL MATCH (t)-[:EXERCISES]->(p:Parameter)
 OPTIONAL MATCH (t)-[:REQUIRES]->(pt:Class|Enum)
 OPTIONAL MATCH (t)-[:CONSTRAINED_BY]->(c:Check)
 // `GUARDED_BY` is the STRONGER claim and was not read at all: `CONSTRAINED_BY`
@@ -40,8 +40,7 @@ RETURN t AS transition,
        collect(DISTINCT {{method: e.http_method, path: e.path}}) AS endpoints,
        collect(DISTINCT {{signature: o.signature, status: o.status,
                           link: o.link}}) AS outcomes,
-       collect(DISTINCT {{name: p.name, location: p.location,
-                          required: p.required}}) AS parameters,
+       t.c_inputs AS parameters,
        collect(DISTINCT {{type: pt.name, fields: pt.fields,
                           properties: properties(pt)}}) AS payload_types,
        collect(DISTINCT {{expression: c.expression,
@@ -124,7 +123,10 @@ def get_transition(transition_id: str) -> dict:
         "evidence": {
             "endpoints": _clean(row["endpoints"]),
             "declared_outcomes": _clean(row["outcomes"]),
-            "parameters": _clean(row["parameters"]),
+            # `c_inputs` rather than `Parameter` nodes: the node carried the
+            # same five values and nothing else but bookkeeping, and was staged
+            # out. `_inputs_of` is the one decoder, shared with `authoring`.
+            "parameters": _inputs_of(row["parameters"]),
             # X-6d: a field is a property of its type, not a node, so what comes
             # back is the type with its fields expanded rather than a flat list.
             "payload_types": [_expand_fields(t) for t in _clean(row["payload_types"])],

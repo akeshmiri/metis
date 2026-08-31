@@ -57,13 +57,6 @@
         "Endpoint",
         "Enum",
         "ExceptionMapping",
-        "JpaQuery",
-        "Method",
-        "MySql",
-        "Oracle",
-        "Parameter",
-        "Postgres",
-        "Query",
         "State",
         "Transition"
       ],
@@ -94,10 +87,6 @@
         {
           "source_shape": "a @ControllerAdvice @ExceptionHandler method",
           "label": "ExceptionMapping"
-        },
-        {
-          "source_shape": "a handler parameter",
-          "label": "Parameter"
         },
         {
           "source_shape": "a DTO or record reachable from a payload",
@@ -162,63 +151,6 @@
         "COMMENTS are not read. Only the page body is",
         "the body is carried whole. The skill extractor took only the first `<p>`, which lost every requirement stated below the opening paragraph"
       ]
-    },
-    {
-      "id": "database",
-      "reads": "A database catalogue \u2014 schemas, tables, views, columns, types, nullability, keys \u2014 read from the information schema of an intake source",
-      "access": "read_only_connection",
-      "executes_against_sut": false,
-      "produces": [
-        "metis.db-catalogue/1"
-      ],
-      "lands": [
-        "Datasource",
-        "Database",
-        "Schema",
-        "DbObject",
-        "Table",
-        "View",
-        "Function",
-        "Column"
-      ],
-      "status": "partial",
-      "anchor": "DatasourceItem",
-      "limits": [
-        "the FIXTURE path is what the test suite exercises; the live connection is opt-in because a driver is an optional extra and the suite must keep running with none installed",
-        "catalogue only \u2014 schemas, tables, views, columns, types, nullability, keys. It reads NO row data, and `assert_no_row_reads` checks that on every statement rather than trusting it (X-7a)",
-        "the connection is the caller's: a credential is named by the profile as an environment variable and never reaches an argument (PLT-005)"
-      ],
-      "reader": "code_analysis.db_catalogue",
-      "command": [
-        "data",
-        "catalogue"
-      ],
-      "lands_from": [
-        {
-          "source_shape": "a row of information_schema.tables",
-          "label": "Table"
-        },
-        {
-          "source_shape": "a row of information_schema.views",
-          "label": "View"
-        },
-        {
-          "source_shape": "a row of information_schema.columns",
-          "label": "Column"
-        },
-        {
-          "source_shape": "a schema in the catalogue",
-          "label": "Schema"
-        },
-        {
-          "source_shape": "the connection's database",
-          "label": "Database"
-        }
-      ],
-      "temporal": {
-        "t_recorded_source": "extraction time \u2014 `datetime.now()`, because a catalogue carries no timestamp of its own",
-        "known_pitfalls": "a catalogue read is undated by nature: the answer describes the database as it was at read time and cannot say when it last changed"
-      }
     },
     {
       "id": "jira",
@@ -326,7 +258,6 @@
       "lands": [
         "Endpoint",
         "DeclaredOutcome",
-        "Parameter",
         "Class",
         "State",
         "ApiCall"
@@ -348,10 +279,6 @@
         {
           "source_shape": "a response object",
           "label": "DeclaredOutcome"
-        },
-        {
-          "source_shape": "a parameter object",
-          "label": "Parameter"
         },
         {
           "source_shape": "a component schema",
@@ -383,55 +310,6 @@
       ],
       "command": [
         "spec"
-      ]
-    },
-    {
-      "id": "structure",
-      "reads": "A checked-in description of what is on a page and where the data lives",
-      "access": "authored_file",
-      "executes_against_sut": false,
-      "produces": [
-        "metis.structure/1"
-      ],
-      "lands": [
-        "Page",
-        "UiElement",
-        "Menu",
-        "UiTable",
-        "Form",
-        "Dialog",
-        "Row",
-        "Pagination",
-        "Sort",
-        "Action",
-        "Event",
-        "Navigation",
-        "Datasource",
-        "Database",
-        "Schema",
-        "DbObject",
-        "Table",
-        "Column"
-      ],
-      "status": "working",
-      "reader": "metis_mcp.model_sources.structure",
-      "limits": [
-        "authored because no pack identifies a component TYPE \u2014 none can tell a library <DataGrid> from a hand-rolled <div role=\"table\">, and all three are a table to a person writing a test",
-        "it does NOT carry selectors. How to find an element comes from the code that looks it up; this file says what is on the page"
-      ],
-      "command": [
-        "structure",
-        "check"
-      ],
-      "lands_from": [
-        {
-          "source_shape": "a page entry in structure.json",
-          "label": "Page"
-        },
-        {
-          "source_shape": "an element entry, at any depth",
-          "label": "UiElement"
-        }
       ]
     },
     {
@@ -470,7 +348,6 @@
         "ZephyrItem",
         "CodeItem",
         "OpenApiItem",
-        "DatasourceItem",
         "Requirement",
         "Finding"
       ],
@@ -513,9 +390,6 @@
         "metis.cpg-extract/1"
       ],
       "lands": [
-        "Route",
-        "Page",
-        "UiElement",
         "State",
         "UiAction"
       ],

@@ -50,7 +50,7 @@ docs/                            the spec, the guide, the academy, and history
 
 metis-server/                    the engine. Python, no framework.
 ├── metis_mcp/
-│   ├── ontology/                THE ontology: 65 labels + the relationship
+│   ├── ontology/                THE ontology: 37 labels + the relationship
 │   │                            catalogue. The Cypher schema is GENERATED from
 │   │                            labels.py, so the two cannot drift.
 │   ├── mbt/                     model-based testing: criteria, path generation,
@@ -85,7 +85,7 @@ metis-server/                    the engine. Python, no framework.
 ├── code_analysis/               Joern query packs → normalised contract →
 │                                synthesis. No engine type reaches the graph.
 ├── schema/                      GENERATED Cypher (Community only — C1)
-└── test_*.py                    84 test files, 1,911 tests, no Neo4j required.
+└── test_*.py                    77 test files, 1,770 tests, no Neo4j required.
                                  Joern is needed for five of them (see CLAUDE.md)
 
 .mcp.json                        registers the MCP server for this repo — stdio,
