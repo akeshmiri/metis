@@ -283,10 +283,23 @@ class Model:
     # -- approval (spec G1, D-10) ----------------------------------------
 
     def unapproved_elements(self) -> list[tuple[str, str, str]]:
-        """Every element not yet `Approved`, as (kind, id, lifecycle_state).
+        """Every element still awaiting a decision, as (kind, id, lifecycle_state).
 
         Reported rather than counted: G1 blocks generation on an unapproved
         model, and a reviewer needs to know *which* elements to look at.
+
+        **Awaiting a decision, not merely un-approved.** A `Rejected`
+        transition has been decided -- rejecting an extraction artefact is the
+        correct action for it -- and `exclusion_reason` already keeps it out of
+        generation as `excluded_rejected`. Counting it here left no decision
+        that could clear the gate: approving contradicts the review, deferring
+        leaves it, so a single rejection blocked a journey until re-extraction.
+
+        **States are deliberately not treated the same way.** `exclusion_reason`
+        and `is_generatable` are properties of `Transition`; `State` has
+        neither, and `is_generatable` never checks a transition's endpoints. An
+        approved transition into a rejected state would generate a path running
+        through it, and G1 is the only thing standing there.
         """
         out = []
         for sid in self.state_ids():
@@ -297,6 +310,8 @@ class Model:
             transition = self.transitions[tid]
             if transition.implementation_status == PLANNED:
                 continue  # not a gap; it does not exist yet (spec P-11)
+            if transition.lifecycle_state == REJECTED:
+                continue  # decided, not pending -- `exclusion_reason` excludes it
             if transition.lifecycle_state != APPROVED:
                 out.append(("transition", tid, transition.lifecycle_state))
         return out

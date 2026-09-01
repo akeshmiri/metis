@@ -2157,6 +2157,24 @@ a purely temporal representation.
 | `TestCase` | `content_hash`, `last_generated_hash`, `published_id`, `published_status`, `level` |
 | `Finding` | `finding_type`, `severity`, `resolution`, `resolved_by` |
 
+**D-8b — the decision, on the element it decided.** A reviewed `State` or
+`Transition` additionally carries:
+
+| Property | Rule |
+|---|---|
+| `decided_by` | The reviewer's identity. Same name as the file path's record |
+| `decided_at` | UTC, when the decision was taken |
+| `decision_rationale` | Why. Required for a rejection, and therefore required to survive one. Prefixed because a bare `rationale` beside `guard_expression` does not say what it is the rationale for |
+| `decision_fingerprint` | The model fingerprint the reviewer was shown (N-13). Records what the decision was made *against*, not only what it produced |
+| `self_approval` | N-10 was overridden for this element. A-27 requires it be visible, and the graph is the surface a later auditor reads |
+
+Written only for elements decided in that apply. An element left deferred, or
+settled by an earlier run, keeps the audit it already carries — rewriting an
+unchanged `lifecycle_state` must not claim a fresh decision. `lifecycle_state`
+alone is the *outcome* of a decision, not the decision (N-13, N-14); recording
+only the outcome is how a rejection `apply` refused to accept without a
+rationale then lost that rationale.
+
 **D-8a — which layer enforces what, by edition.** Property-**existence**
 constraints are an Enterprise-only feature. Under DD-2's Community decision they
 **cannot be created**, verified against a live Neo4j 5 Community instance
@@ -2246,6 +2264,18 @@ other way round.
 | `Deprecated` | Superseded; retained as evidence (T-16) | Drift resolution |
 
 **D-10.** Path generation reads **only** `Approved` elements.
+
+**D-10a — G1 blocks on what is *undecided*, not on what is un-approved.** A
+`Rejected` transition has been decided, and path generation already excludes it
+as `excluded_rejected`. Counting it as outstanding left no decision that could
+clear the gate — approving contradicts the review, deferring leaves it — so one
+rejection blocked a journey until re-extraction, which is the opposite of what
+rejecting an extraction artefact is for.
+
+A `Rejected` **state** still blocks, and the asymmetry is deliberate: exclusion
+is a property of `Transition`, and a transition's generatability never consults
+its endpoints, so an approved transition into a rejected state would generate a
+path running through it. G1 is the only thing standing there.
 
 ### 8.7 Deliberately excluded, and when they return
 

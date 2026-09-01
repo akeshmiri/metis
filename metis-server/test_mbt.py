@@ -27,7 +27,7 @@ from metis_mcp.mbt import (
     targets_for,
 )
 from metis_mcp.mbt.criteria import atomic_conditions
-from metis_mcp.mbt.model import APPROVED, QUARANTINE
+from metis_mcp.mbt.model import APPROVED, QUARANTINE, REJECTED
 from metis_mcp.mbt.path_generation import EXCEEDS_SETUP_CAP, UNREACHABLE
 from mbt_fixtures import IMPLEMENTED_IDS, login_model
 
@@ -295,6 +295,52 @@ def test_g1_unapproved_elements_are_reported_not_generated_from():
     assert "excluded_unapproved" in reasons, (
         f"unapproved transitions need their own distinct reason, got {reasons}"
     )
+
+
+def test_a_rejected_transition_is_a_settled_decision_not_an_open_review():
+    """G1 must not describe a *decided* element as awaiting review.
+
+    Rejecting an extraction artefact is the correct action for it, and until
+    now it locked the gate permanently: no decision cleared it (approving
+    contradicts the review, deferring leaves it), so the only escape was
+    re-extraction. Measured on Athena: 75 of 76 elements approved, one
+    rejected, and the whole journey blocked.
+
+    `exclusion_reason` already knew this -- it returns `excluded_rejected`
+    beside `excluded_planned`. `unapproved_elements` skipped PLANNED and not
+    REJECTED, so one file read the same fact two opposite ways.
+    """
+    model = login_model(approved=True)
+    model.transitions["t16"] = Transition(
+        id="t16", source="LoggedIn", trigger="click_logout", target="LoggedOut",
+        lifecycle_state=REJECTED,
+    )
+
+    assert model.unapproved_elements() == [], (
+        "a rejected transition is decided; it must not sit in the review queue")
+    assert model.is_approved, "one rejection must not block the whole journey"
+
+    # Decided is not the same as generated from: it stays excluded (D-10).
+    result = generate(model, ALL_TRANSITIONS)
+    assert dict(result.excluded)["t16"] == "excluded_rejected"
+
+
+def test_a_rejected_state_still_blocks_because_nothing_else_excludes_it():
+    """The asymmetry is deliberate, not an oversight in the fix above.
+
+    `exclusion_reason` and `is_generatable` are properties of `Transition`;
+    `State` has neither, and `is_generatable` never checks a transition's
+    endpoints. So an approved transition into a rejected state would generate
+    a path running through it. G1 is the only thing standing there.
+    """
+    model = login_model(approved=True)
+    model.states["LoggedIn"] = State(
+        id="LoggedIn", name="LoggedIn", lifecycle_state=REJECTED)
+
+    outstanding = model.unapproved_elements()
+    assert outstanding == [("state", "LoggedIn", REJECTED)], (
+        f"a rejected state has no exclusion machinery and must keep blocking, "
+        f"got {outstanding}")
 
 
 def test_g1_reasons_are_distinct_not_collapsed():

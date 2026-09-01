@@ -389,3 +389,147 @@ def test_printed_next_step_commands_carry_the_scope_they_need():
             assert "--surface" in command, (
                 f"journey-scoped instruction omits --surface, so it resolves to "
                 f"the wrong model on a ui scope: {command!r}")
+
+
+# --------------------------------------------------------------------------
+# Graph mode: the decision, not just its result
+# --------------------------------------------------------------------------
+
+class _CapturingSession:
+    """Records the Cypher and parameters a write would have sent."""
+
+    def __init__(self):
+        self.calls: list[tuple[str, dict]] = []
+
+    def run(self, cypher, **params):
+        self.calls.append((cypher, params))
+        return []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _params_by_element(session) -> dict[str, dict]:
+    return {params["i"]: params for _, params in session.calls}
+
+
+def test_a_graph_decision_records_who_decided_when_and_why(monkeypatch):
+    """A decision is who, when, why and against what evidence -- not just the
+    state it produced (N-13, N-14).
+
+    Graph mode wrote `lifecycle_state` and nothing else, so `apply` REFUSED a
+    rejection carrying no rationale and then discarded the rationale. Measured
+    on a restored Athena graph: of 25 properties on a rejected transition, zero
+    were audit. The file path has persisted `decided_by`/`decided_at`/
+    `rationale` since it was written.
+    """
+    from types import SimpleNamespace
+
+    from metis_mcp.mbt import cli
+
+    model = login_model(approved=False)
+    review = _reviewed(model, reviewer="alice", decision=REJECT,
+                       rationale="extraction artefact")
+    result = apply(model, review)
+    assert result.ok and result.applied
+
+    captured = _CapturingSession()
+    monkeypatch.setattr(cli, "session", lambda *a, **k: captured)
+    cli._write_lifecycle_to_graph(
+        SimpleNamespace(uri=None, user=None), model, result.applied)
+
+    written = _params_by_element(captured)
+    assert written, "nothing was written"
+
+    for record in result.applied:
+        params = written.get(record.element_id)
+        assert params is not None, f"{record.element_id} was not written"
+        assert params.get("decided_by") == "alice", (
+            f"{record.element_id}: who decided it was not persisted")
+        assert params.get("decided_at") == record.decided_at
+        assert params.get("decision_rationale") == "extraction artefact", (
+            f"{record.element_id}: the rationale apply REQUIRED was discarded")
+        assert params.get("decision_fingerprint") == record.fingerprint, (
+            "the evidence the decision was made against (N-13) was not persisted")
+
+
+def test_a_graph_decision_records_a_self_approval(monkeypatch):
+    """A-27: a self-approval is visible, never merely tolerated. Unwritten, it
+    is invisible in the graph -- the one surface a later auditor reads."""
+    from types import SimpleNamespace
+
+    from metis_mcp.mbt import cli
+
+    model = login_model(approved=False)
+    review = _reviewed(model, reviewer="alice")
+    review.allow_self_approval = True
+    for item in review.items:
+        item.proposed_by = "alice"
+    result = apply(model, review)
+    assert result.ok and any(r.self_approval for r in result.applied)
+
+    captured = _CapturingSession()
+    monkeypatch.setattr(cli, "session", lambda *a, **k: captured)
+    cli._write_lifecycle_to_graph(
+        SimpleNamespace(uri=None, user=None), model, result.applied)
+
+    written = _params_by_element(captured)
+    for record in result.applied:
+        if record.self_approval:
+            assert written[record.element_id].get("self_approval") is True, (
+                f"{record.element_id}: a self-approval must be visible in the graph")
+
+
+def test_an_undecided_element_gets_no_audit_properties(monkeypatch):
+    """Deferring is not deciding. Writing an empty reviewer onto a deferred
+    element would claim somebody looked at it and left it blank."""
+    from types import SimpleNamespace
+
+    from metis_mcp.mbt import cli
+
+    model = login_model(approved=False)
+    review = _reviewed(model, reviewer="alice", decision=DEFER)
+    result = apply(model, review)
+    assert result.applied == [], "defer decides nothing"
+
+    captured = _CapturingSession()
+    monkeypatch.setattr(cli, "session", lambda *a, **k: captured)
+    cli._write_lifecycle_to_graph(
+        SimpleNamespace(uri=None, user=None), model, result.applied)
+
+    for _, params in captured.calls:
+        assert "decided_by" not in params, (
+            f"{params['i']}: an undecided element must carry no audit trail")
+
+
+def test_the_g1_remedy_is_the_one_that_works_from_where_you_are():
+    """A hint that refuses when pasted is worse than no hint.
+
+    The gate is reachable two ways -- a model file, or `--journey` against the
+    graph -- and it printed the file-mode commands for both. On Athena, where
+    the model only exists in the graph, the remedy named a `<model>` file that
+    does not exist.
+    """
+    from types import SimpleNamespace
+
+    from metis_mcp.mbt import cli
+
+    model = login_model(approved=False)
+
+    def message(args) -> str:
+        try:
+            cli._require_approved(model, args)
+        except cli.ApprovalRequired as e:
+            return str(e)
+        raise AssertionError("an unapproved model must raise")
+
+    graph = message(SimpleNamespace(journey="athena-core", surface="api"))
+    assert "--journey athena-core --surface api" in graph
+    assert "<model>" not in graph, "graph mode must not name a model file"
+
+    from_file = message(SimpleNamespace(model="records-api.json"))
+    assert "--model records-api.json" in from_file
+    assert "--journey" not in from_file

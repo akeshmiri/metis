@@ -151,11 +151,14 @@ class ApprovalRequired(Exception):
     """Raised when generation is attempted on a model that is not approved (G1)."""
 
 
-def _require_approved(model: Model) -> None:
+def _require_approved(model: Model, args=None) -> None:
     """Spec G1: a model must be approved before anything is generated from it.
 
     Reports *which* elements are outstanding, not merely that some are -- a
-    reviewer cannot act on a count.
+    reviewer cannot act on a count, and **the remedy has to be the one that
+    works from where they are**: this printed the file-mode commands
+    unconditionally, so a reader who had reached the gate through `--journey`
+    was handed two lines that refuse when pasted.
     """
     outstanding = model.unapproved_elements()
     if not outstanding:
@@ -169,11 +172,22 @@ def _require_approved(model: Model) -> None:
         lines.append(f"    {kind:<11} {element_id:<26} {state}")
     if len(outstanding) > 12:
         lines.append(f"    ... and {len(outstanding) - 12} more")
-    lines += [
-        "",
-        "  Review them:  metis review export <model> -o review.json",
-        "  Then apply:   metis review apply review.json --model <model>",
-    ]
+    journey = getattr(args, "journey", None)
+    if journey:
+        surface = getattr(args, "surface", "api")
+        scope = f"--journey {journey} --surface {surface}"
+        lines += [
+            "",
+            f"  Review them:  metis review export {scope} -o review.json",
+            f"  Then apply:   metis review apply {scope} review.json",
+        ]
+    else:
+        model_arg = getattr(args, "model", None) or "<model>"
+        lines += [
+            "",
+            f"  Review them:  metis review export {model_arg} -o review.json",
+            f"  Then apply:   metis review apply review.json --model {model_arg}",
+        ]
     raise ApprovalRequired("\n".join(lines))
 
 
@@ -426,7 +440,7 @@ def _generate(args) -> tuple[Model, object]:
     model = _load(args)
     require_valid(model, allow_unverifiable=getattr(args, "allow_unverifiable", False),
                   inherited=_inherited_from_graph(args))
-    _require_approved(model)
+    _require_approved(model, args)
     result = generate(model, args.criterion, args.max_setup, grades=_grades(args, model))
     return model, result
 
@@ -877,7 +891,7 @@ def cmd_ui(args) -> int:
         drafted = {cid: text for cid, text in _criteria_from_graph(args).values()}
 
         def commit(ctx, applied) -> None:
-            _write_lifecycle_to_graph(args, ctx.model)
+            _write_lifecycle_to_graph(args, ctx.model, applied)
             _write_criteria_to_graph(args, applied)
     else:
         log = OverrideLog.load(args.overrides or default_log_path(args.model or ""))
@@ -1092,14 +1106,29 @@ def cmd_override_stale(args) -> int:
     return 0
 
 
-def _write_lifecycle_to_graph(args, model) -> None:
-    """Persist review decisions onto the graph's own nodes (spec §8.6).
+def _write_lifecycle_to_graph(args, model, applied=()) -> None:
+    """Persist review decisions onto the graph's own nodes (spec §8.6, §8.5).
 
-    In the graph, `lifecycle_state` *is* where human decisions live, so there is
-    no separate overlay file -- the two-file split (I-14) applies to the
-    file-based path only.
+    In the graph, `lifecycle_state` *is* where the outcome lives, so there is no
+    separate overlay file -- the two-file split (I-14) applies to the file-based
+    path only.
+
+    **But a decision is who, when, why and against what evidence -- not just the
+    state it produced (N-13, N-14).** This wrote `lifecycle_state` alone, so
+    `apply` refused a rejection carrying no rationale and then discarded the
+    rationale it had insisted on. Measured on a restored Athena graph: of 25
+    properties on a rejected transition, none were audit. The file path has
+    persisted `decided_by`/`decided_at`/`rationale` since it was written, and
+    N-1 -- no surface has an unlogged path -- makes the gap worse for the web
+    surface, which §9.2 calls primary.
+
+    `applied` is what was decided *in this run*. An element absent from it --
+    deferred, or settled by an earlier apply -- keeps the audit it already
+    carries: rewriting an unchanged lifecycle must not claim a fresh decision.
     """
     from metis_mcp.ontology.labels import NEEDS_REVIEW_STATES
+
+    decided = {r.element_id: r for r in applied}
 
     def marker(lifecycle: str) -> str:
         """`SET`/`REMOVE` for `:NeedReview`, from the state being written.
@@ -1113,15 +1142,47 @@ def _write_lifecycle_to_graph(args, model) -> None:
         return ("SET n:NeedReview" if lifecycle in NEEDS_REVIEW_STATES
                 else "REMOVE n:NeedReview")
 
+    def audit(element_id: str) -> tuple[str, dict]:
+        """The decision clause for one element, or nothing at all.
+
+        Named `decision_*` rather than the file's bare `rationale`: on a node
+        that already carries `trigger` and `guard_expression`, an unprefixed
+        `rationale` does not say what it is the rationale *for*. `decided_by`
+        and `decided_at` keep the file's names, which are unambiguous as they
+        stand.
+        """
+        record = decided.get(element_id)
+        if record is None:
+            return "", {}
+        return (
+            ", n.decided_by=$decided_by, n.decided_at=$decided_at,"
+            " n.decision_rationale=$decision_rationale,"
+            " n.decision_fingerprint=$decision_fingerprint,"
+            " n.self_approval=$self_approval",
+            {"decided_by": record.reviewer,
+             "decided_at": record.decided_at,
+             "decision_rationale": record.rationale,
+             # N-13: the evidence the reviewer was shown. Without it the record
+             # says what was decided but not what it was decided against.
+             "decision_fingerprint": record.fingerprint,
+             # A-27: visible, never merely tolerated -- and the graph is the
+             # surface a later auditor reads.
+             "self_approval": record.self_approval},
+        )
+
     with session(args.uri, args.user) as s:
         for sid, state in model.states.items():
+            clause, params = audit(sid)
             s.run(f"MATCH (n:State {{id:$i}}) "
-                  f"SET n.lifecycle_state=$l, n.name=$n {marker(state.lifecycle_state)}",
-                  i=sid, l=state.lifecycle_state, n=state.name)
+                  f"SET n.lifecycle_state=$l, n.name=$n{clause} "
+                  f"{marker(state.lifecycle_state)}",
+                  i=sid, l=state.lifecycle_state, n=state.name, **params)
         for tid, transition in model.transitions.items():
+            clause, params = audit(tid)
             s.run(f"MATCH (n:Transition|ApiCall|UiAction {{id:$i}}) "
-                  f"SET n.lifecycle_state=$l {marker(transition.lifecycle_state)}",
-                  i=tid, l=transition.lifecycle_state)
+                  f"SET n.lifecycle_state=$l{clause} "
+                  f"{marker(transition.lifecycle_state)}",
+                  i=tid, l=transition.lifecycle_state, **params)
 
 
 def _write_criteria_to_graph(args, applied) -> int:
@@ -1398,7 +1459,7 @@ def cmd_review_apply(args) -> int:
             print(f"  {element_id}: {reason}")
 
     if graph_mode:
-        _write_lifecycle_to_graph(args, model)
+        _write_lifecycle_to_graph(args, model, result.applied)
         promoted = _write_criteria_to_graph(args, result.applied)
         renamed, restated, clashing = _promote_tier_one(args, model)
         outstanding = model.unapproved_elements()
