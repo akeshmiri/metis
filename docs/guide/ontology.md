@@ -4,7 +4,7 @@
 
 *Generated from `metis_mcp/ontology/labels.py`.*
 
-37 labels, 53 relationships, 49 staged out.
+44 labels, 60 relationships, 43 staged out.
 
 The ontology is **closed**. Adding a label or a relationship is a reviewed change under D-2, not an edit — four places have to agree, and the Cypher schema is generated from `labels.py` so two of them cannot drift apart.
 
@@ -12,15 +12,18 @@ The ontology is **closed**. Adding a label or a relationship is a reviewed chang
 
 - `AcceptanceCriterion`
 - `Action`
+- `Alert`
 - `ApiCall`
 - `BusinessArea`
 - `BusinessEntity`
 - `Check`
 - `Class` — written instead as `Enum`
 - `CodeItem`
+- `Commit`
 - `Component` — written instead as `RestServer`, `WebServer`
 - `ConfluenceItem`
 - `DeclaredOutcome`
+- `Defect`
 - `Endpoint`
 - `EntityDocument`
 - `Enum`
@@ -31,6 +34,8 @@ The ontology is **closed**. Adding a label or a relationship is a reviewed chang
 - `Intent`
 - `JiraItem`
 - `Lesson`
+- `Logs`
+- `Metrics`
 - `NeedReview`
 - `OpenApiItem`
 - `Passage`
@@ -42,6 +47,8 @@ The ontology is **closed**. Adding a label or a relationship is a reviewed chang
 - `Specification`
 - `State`
 - `TestCase`
+- `TestCycle`
+- `TestExecution`
 - `Topic`
 - `Transition` — written instead as `ApiCall`, `UiAction`
 - `UiAction`
@@ -57,11 +64,16 @@ The ontology is **closed**. Adding a label or a relationship is a reviewed chang
 - `BusinessEntity` -[:BELONGS_TO]-> `BusinessArea`
 - `Class` -[:OF_TYPE]-> `Class`
 - `CodeItem` -[:REPRESENTS]-> `Requirement`
+- `Commit` -[:FIXES]-> `JiraItem`
+- `Commit` -[:TOUCHES]-> `Class`
 - `Component` -[:CONTAINS]-> `State`
 - `Component` -[:CONTAINS]-> `Transition`
 - `Component` -[:EXPOSES]-> `Endpoint`
 - `ConfluenceItem` -[:REPRESENTS]-> `Requirement`
 - `DeclaredOutcome` -[:GUARDED_BY]-> `Check`
+- `Defect` -[:CONCERNS]-> `AcceptanceCriterion`
+- `Defect` -[:CONCERNS]-> `Requirement`
+- `Defect` -[:OBSERVED_IN]-> `TestExecution`
 - `Endpoint` -[:CONSTRAINED_BY]-> `Check`
 - `Endpoint` -[:DECLARES]-> `DeclaredOutcome`
 - `Endpoint` -[:IMPLEMENTS]-> `Specification`
@@ -90,6 +102,8 @@ The ontology is **closed**. Adding a label or a relationship is a reviewed chang
 - `Specification` -[:REALISED_BY]-> `Feature`
 - `Specification` -[:SPECIFIES]-> `Requirement`
 - `State` -[:WHEN]-> `Transition`
+- `TestCycle` -[:CONTAINS]-> `TestExecution`
+- `TestExecution` -[:OF_CASE]-> `TestCase`
 - `Topic` -[:BELONGS_TO]-> `Topic`
 - `Transition` -[:CONSTRAINED_BY]-> `Check`
 - `Transition` -[:DERIVED_FROM]-> `Action`
@@ -108,8 +122,7 @@ The ontology is **closed**. Adding a label or a relationship is a reviewed chang
 
 Deliberately excluded. Each names the trigger that would bring it back — an absence with a reason is a decision; an absence without one is an oversight.
 
-- **`Alert`** — operational data enters scope
-- **`Capability`** — a backlog hierarchy is actually queried
+- **`Capability`** — a named consumer reports on requirements BY a hierarchy node — readiness per capability — and cannot be served by `requirement_hierarchy` over anchors
 - **`Column`** — a criterion constrains one column rather than the payload field that carries it
 - **`Constitution`** — formal governance is adopted
 - **`Constraint`** — formal governance is adopted
@@ -117,20 +130,17 @@ Deliberately excluded. Each names the trigger that would bring it back — an ab
 - **`Datasource`** — a requirement is about the CONNECTION — pooling, timeout, read-only routing — rather than about what is stored
 - **`DatasourceItem`** — a Requirement is traced to a database schema as its system of record, the way JiraItem traces one to an issue
 - **`DbObject`** — an object whose kind is unestablished has to be reviewed as such, rather than reported as a finding
-- **`Defect`** — operational data enters scope
 - **`Dialog`** — a modal's presence is itself a required outcome, distinct from the state it announces
-- **`Epic`** — a backlog hierarchy is actually queried
+- **`Epic`** — a named consumer reports on requirements BY a hierarchy node — coverage per epic — and cannot be served by `requirement_hierarchy` over anchors
 - **`Event`** — the interaction that invokes an action becomes distinguishable from the action — a requirement that says 'on blur' rather than 'when invoked'
 - **`Field`** — a field needs an identity of its own — a per-field review state, or an edge that must point at one field rather than at its type
 - **`Form`** — a requirement constrains a submission as a unit — cross-field validation stated over the form rather than over each input
 - **`Function`** — as Method, for a callable that is not a class member
-- **`Goal`** — a backlog hierarchy is actually queried
+- **`Goal`** — a named consumer reports on requirements BY a hierarchy node — readiness per capability — and cannot be served by `requirement_hierarchy` over anchors
 - **`Incident`** — operational data enters scope
 - **`JpaQuery`** — as Query, for a statement that could not be recovered
-- **`Logs`** — operational data enters scope
 - **`Menu`** — navigation structure is a requirement — 'this action is reachable from that menu' rather than 'this action exists'
 - **`Method`** — a requirement is stated about a method. It was landed for `Endpoint-[:HANDLED_BY]->Method` and a `CALLS` graph that the live graph held ZERO edges of — 96 nodes supporting a traversal with nothing to traverse
-- **`Metrics`** — operational data enters scope
 - **`MicroRequirement`** — a concrete need appears
 - **`MySql`** — as Query, per dialect
 - **`Navigation`** — as Menu, for a control that moves between pages
@@ -140,7 +150,7 @@ Deliberately excluded. Each names the trigger that would bring it back — an ab
 - **`Parameter`** — something must point at ONE input rather than at the interaction that sends it — a per-parameter review state, or an edge whose target is a single input rather than the type it carries
 - **`Postgres`** — as Query, per dialect
 - **`Query`** — a requirement is about the statement sent, not the behaviour it implements. `Transition-[:CONSTRAINED_BY]->Check` carries the condition; this would carry the SQL
-- **`Release`** — execution results are ingested and release reporting is required
+- **`Release`** — a report or workflow takes a release NAME as an input — readiness for 2.4 — and the name cannot be resolved to an instant outside Métis
 - **`Repository`** — impact analysis needs code structure in the graph, not just anchors
 - **`Revision`** — property-level history is designed AND something writes it — an integer `revision` property is what is used now
 - **`Role`** — something asks what ELSE requires a given role — a shared identity across endpoints, rather than a string repeated on each scheme
@@ -150,9 +160,7 @@ Deliberately excluded. Each names the trigger that would bring it back — an ab
 - **`Schema`** — two schemas hold the same table name and a requirement has to say which
 - **`Sort`** — ordering behaviour is required in its own right
 - **`Table`** — a requirement is stated ABOUT a table — a criterion whose subject is the stored relation rather than the behaviour that writes it
-- **`TestCycle`** — execution results are ingested
 - **`TestDesign`** — a concrete need appears
-- **`TestExecution`** — execution results are ingested (spec C-10's trigger)
 - **`TestSuite`** — a concrete need appears
 - **`UiElement`** — an element needs a review state or an edge of its own — something must point AT one control rather than at the interaction with it
 - **`UiTable`** — a requirement is about the listing as a control (paging, ordering) rather than about the records it shows

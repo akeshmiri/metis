@@ -1,46 +1,24 @@
 {
-  "zdr": {
-    "confirmed": false,
-    "confirmed_date": null,
-    "confirmed_by": null,
-    "note": "Deployment value: review this explicitly before changing it."
-  },
-  "models": {
-    "extraction": "claude-haiku-4-5-20251001",
-    "judge": "claude-sonnet-5"
-  },
-  "corpus": {
-    "glob": "/app/corpus/*.md"
-  },
+  "_comment": [
+    "Mounted at METIS_CONFIG_PATH. Read by metis_mcp.mbt.graph_session.",
+    "",
+    "This carried `zdr`, `models`, `corpus`, `security` and `repositories`",
+    "blocks that no module in this build reads -- v1 residue that made the",
+    "file look like configuration when it was documentation. What remains is",
+    "the graph block, which is the only thing anything opens.",
+    "",
+    "`password_env` NAMES the variable holding the secret; it never holds one.",
+    "The literal `password` key that was here is refused outright by",
+    "graph_session._password_from_file when the file is readable beyond its",
+    "owner -- and a Kubernetes secret volume mounts 0644 by default, so this",
+    "chart could not authenticate at all. Naming the variable removes the",
+    "question rather than answering it (PLT-005)."
+  ],
   "graph": {
     "neo4j": {
       "uri": "bolt://{{ .Release.Name }}-neo4j:7687",
       "user": "neo4j",
-      "password": {{ .Values.secrets.neo4jPassword | default "REPLACE-AT-INSTALL-TIME" | quote }}
+      "password_env": "METIS_NEO4J_PASSWORD"
     }
-  },
-  "server": {
-    "transport": "streamable-http"
-  },
-  "security": {
-    "jwt_secret_env": "OAUTH_CLIENT_SECRET"
-  },
-  "connectors": {
-    "application_code": {
-      "source_database": {
-        "host": "localhost",
-        "port": 5432,
-        "dbname": "CHANGE_ME",
-        "user": "CHANGE_ME",
-        "password_env": "METIS_SOURCE_DB_PASSWORD"
-      }
-    }
-  },
-  "repositories": [
-    {
-      "name": "metis-self",
-      "classification": "public_internal",
-      "note": "This platform's own design documents."
-    }
-  ]
+  }
 }

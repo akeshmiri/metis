@@ -54,6 +54,21 @@ class MappedReport:
         return not self.errors
 
 
+
+def _measured(pair) -> dict:
+    """`{complexity, size}` when the pack measured them, `{}` when it did not.
+
+    Omitted rather than zeroed. Straight-line code is complexity 1, so a 0 here
+    would be a measurement that never happened wearing the shape of one that
+    did — and a risk band computed from it would rank an unmeasured endpoint as
+    the simplest thing in the service.
+    """
+    if not pair or not pair[0]:
+        return {}
+    complexity, size = pair
+    return {"complexity": complexity, "size": size}
+
+
 def map_report(report: ExtractionReport) -> MappedReport:
     """Validate, then project onto ontology-shaped results.
 
@@ -67,6 +82,15 @@ def map_report(report: ExtractionReport) -> MappedReport:
     if errors:
         mapped.errors = errors
         return mapped
+
+    # **Complexity is resolved HERE, where the handler is still identifiable.**
+    # A `Transition` reaches a `Class` only through its payload types, so by the
+    # time the model exists the implementing method is no longer reachable — the
+    # figure has to travel with the endpoint from the moment it is measured, or
+    # it needs an ontology edge to get back.
+    complexity_by_method = {m.id: (getattr(m, "complexity", 0),
+                                   getattr(m, "size", 0))
+                            for m in report.methods}
 
     for method in report.methods:
         mapped.anchors[method.id] = str(method.anchor)
@@ -92,6 +116,11 @@ def map_report(report: ExtractionReport) -> MappedReport:
             ],
             "consumes": list(endpoint.consumes),
             "produces": list(endpoint.produces),
+            # The handler's measured complexity and size, carried on the
+            # endpoint. Absent when the pack reported none (an OpenAPI-only
+            # endpoint has no method to measure), which is why these are omitted
+            # rather than zeroed — zero is not a complexity a method can have.
+            **_measured(complexity_by_method.get(endpoint.handler_method_id)),
         })
 
     by_type: dict[str, dict[str, str]] = {}

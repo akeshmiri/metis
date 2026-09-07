@@ -469,7 +469,8 @@ def test_knowledge_capture_is_registered_and_lints():
     assert workflow is not None, "the workflow must exist to be routable"
     assert lint_workflow(workflow) == []
     assert [s.name for s in workflow.ordered] == [
-        "check", "mine", "compare", "land", "model-approval"]
+        "check", "mine", "compare", "land", "requirement-risk",
+        "model-approval"]
 
 
 def test_the_compare_stage_never_blocks():
@@ -613,3 +614,909 @@ def test_a_transition_with_no_matching_endpoint_plans_no_edge():
         plan, SimpleNamespace(model=model, args=SimpleNamespace(surface="api")),
         SimpleNamespace(endpoints=[]), "demo")
     assert planned == 0 and not plan.edges
+
+
+# --------------------------------------------------------------------------
+# `spec-writeback`'s terminal stage.
+#
+# **It used to return `PASSED, "written back"` and write nothing.**
+# `specgen.writeback.plan_writeback` and `.apply` existed, were fully tested, and
+# were reachable only from `metis spec --write-back`, so the workflow reported a
+# write it had never performed. No test covered the handler, which is why it
+# survived. These are that test.
+# --------------------------------------------------------------------------
+
+def _writeback_context(tmp_path, **arg_overrides):
+    import argparse
+
+    import metis_mcp.workflow.handlers  # noqa: F401 -- registers the handlers
+    from metis_mcp.workflow.engine import Context
+    from metis_mcp.workflow.stages import get_handler
+
+    args = argparse.Namespace(confirm="publish", repo=str(tmp_path),
+                              feature="", as_identity="dana", batch_size=1,
+                              allow_unapproved=True)
+    for key, value in arg_overrides.items():
+        setattr(args, key, value)
+    context = Context(workflow="spec-writeback", scope="records", args=args)
+    return context, get_handler("writeback")
+
+
+def test_the_writeback_stage_does_not_claim_a_write_with_no_destination(tmp_path):
+    """The original bug's shape: a confident `PASSED` with nothing behind it."""
+    context, handler = _writeback_context(tmp_path, repo="")
+    context.specification = None
+    from metis_mcp.workflow.run import PASSED
+
+    outcome = handler(context)
+    assert outcome[0] != PASSED or "written back" not in outcome[1]
+
+
+def test_the_writeback_stage_does_not_claim_a_write_with_no_specification(tmp_path):
+    """`spec` runs before `writeback`. If it did not, there is nothing to write,
+    and saying otherwise is the same lie in a different place."""
+    context, handler = _writeback_context(tmp_path)
+    context.specification = None
+    outcome = handler(context)
+    assert "written back" not in outcome[1]
+
+
+def test_the_writeback_stage_still_halts_without_the_literal(tmp_path):
+    """T-18: the gate is unchanged. Implementing the write must not open it."""
+    context, handler = _writeback_context(tmp_path, confirm="")
+    context.specification = None
+    from metis_mcp.workflow.run import HALTED
+
+    outcome = handler(context)
+    assert outcome[0] == HALTED
+    assert "publish" in outcome[1]
+
+
+def test_the_writeback_stage_needs_the_installation_switch_too(tmp_path,
+                                                               monkeypatch):
+    """Writing into a product repository is an external write, gated the same
+    way publication is: the literal AND `METIS_ALLOW_EXTERNAL_WRITES`. A
+    confirmation an agent can type is not enough on its own."""
+    from metis_mcp.specgen import build as build_spec
+
+    monkeypatch.delenv("METIS_ALLOW_EXTERNAL_WRITES", raising=False)
+    model = tiny_model(approved=True)
+    context, handler = _writeback_context(tmp_path)
+    context.model = model
+    context.specification = build_spec(model)
+
+    outcome = handler(context)
+    assert "Nothing was written" in outcome[1]
+    assert not list(tmp_path.rglob("*.md"))
+
+
+def test_the_writeback_stage_actually_writes_a_file(tmp_path, monkeypatch):
+    """The half that was missing: a real file on disk, not a returned sentence.
+
+    This is the assertion the original handler could never have passed — it
+    returned `PASSED, "written back"` without calling the writer at all."""
+    from metis_mcp.specgen import build as build_spec
+    from metis_mcp.workflow.run import PASSED
+
+    monkeypatch.setenv("METIS_ALLOW_EXTERNAL_WRITES", "yes")
+    model = tiny_model(approved=True)
+    context, handler = _writeback_context(tmp_path)
+    context.model = model
+    context.specification = build_spec(model)
+
+    outcome = handler(context)
+    written = list(tmp_path.rglob("*.md"))
+    assert outcome[0] == PASSED, outcome
+    assert written, f"the stage reported {outcome[1]!r} and wrote no file"
+
+
+# ---------------------------------------------------------------------------
+# Intake as a workflow (§3.2 stages 1 and 2)
+# ---------------------------------------------------------------------------
+#
+# Requirement ingestion was the only major path with no workflow, no gate and no
+# resumable run: `metis intake fetch` and `metis intake land` existed and
+# nothing knew their order. Model recovery and test generation both had full
+# gated workflows, which is the wrong asymmetry for a tool whose first job is
+# requirement management.
+
+def test_intake_is_a_workflow_and_stops_for_a_human():
+    from metis_mcp.workflow.stages import WORKFLOWS
+
+    intake = WORKFLOWS["intake"]
+    assert [s.name for s in intake.stages] == [
+        "fetch", "validate", "analysis", "readiness", "land",
+        "requirement-risk", "model-approval"]
+    gates = [s for s in intake.stages if s.is_gate]
+    assert len(gates) == 1 and gates[0].name == "model-approval", (
+        "a landed requirement is a claim somebody made, not one Métis agrees "
+        "with (S-4) — the gate is the whole point of it being a workflow")
+
+
+def test_the_reading_happens_before_anything_is_landed():
+    """**Intent is a pre-processor, and this is what makes that true.**
+
+    This workflow used to fetch, validate, land, and only THEN assess risk — so
+    the first moment anybody saw what was wrong with a claim was after it was a
+    node in the graph. `analysis` and `readiness` sit before `land` now, and
+    `land` requires the second of them.
+    """
+    from metis_mcp.workflow.stages import WORKFLOWS
+
+    stages = {s.name: s for s in WORKFLOWS["intake"].stages}
+    order = [s.name for s in WORKFLOWS["intake"].stages]
+    assert order.index("analysis") < order.index("land")
+    assert order.index("readiness") < order.index("land")
+    assert "readiness" in stages["land"].requires, (
+        "land must depend on readiness, or the order is decoration")
+
+
+def test_readiness_is_a_blocking_stage_and_not_a_second_gate():
+    """§3.4 keeps one halt per workflow so each halt has one meaning, and this
+    is not a halt: there is no literal that passes it. A need nobody has
+    specified is fixed by specifying it, not by anybody agreeing to import it
+    anyway — which makes it F-9's contract, a failed stage that names the action
+    required."""
+    from metis_mcp.workflow.stages import WORKFLOWS
+
+    for code in ("intake", "intent-review"):
+        readiness = next(s for s in WORKFLOWS[code].stages
+                         if s.name == "readiness")
+        assert not readiness.is_gate, f"{code}: readiness must not be a gate"
+        assert readiness.blocking, (
+            f"{code}: readiness must block — a claim that cannot be represented "
+            f"must not reach land")
+
+
+def test_the_analysis_stage_does_not_block_the_run():
+    """F-4 again: the gaps ARE this stage's output. A run that stopped here
+    would withhold exactly the list somebody needs in order to close them."""
+    from metis_mcp.workflow.stages import WORKFLOWS
+
+    for code in ("intake", "intent-review"):
+        analysis = next(s for s in WORKFLOWS[code].stages if s.name == "analysis")
+        assert not analysis.blocking, f"{code}: analysis must not block"
+
+
+def test_the_validate_stage_does_not_block_the_run():
+    """F-4: a stage whose findings ARE its output never blocks.
+
+    A non-conformant document lands as a Finding pointing at knowledge-capture,
+    which is the honest outcome for free prose (S-13) and not a failure of the
+    run. A blocking validate would make one bad ticket abandon a backlog.
+    """
+    from metis_mcp.workflow.stages import WORKFLOWS
+
+    validate = next(s for s in WORKFLOWS["intake"].stages if s.name == "validate")
+    assert not validate.blocking
+
+
+def test_the_land_stage_is_checked_for_quarantine():
+    from metis_mcp.workflow.stages import WORKFLOWS
+
+    land = next(s for s in WORKFLOWS["intake"].stages if s.name == "land")
+    assert "landed_at_quarantine" in land.checks
+
+
+def test_intake_fetch_refuses_a_profile_with_no_requirements_block(tmp_path,
+                                                                   monkeypatch):
+    """A profile that says nothing about requirements is not an empty backlog.
+
+    Reporting "0 documents" would be a silent success: nobody configured a
+    source, and that is a different answer from a source that is empty.
+    """
+    import json as _json
+    import types
+
+    from metis_mcp.workflow import handlers
+    from metis_mcp.workflow.run import FAILED
+
+    profiles = tmp_path / "profiles"
+    profiles.mkdir()
+    (profiles / "bare.json").write_text(_json.dumps({
+        "version": "metis.project-profile/1", "project": "bare",
+        "language": "javasrc", "framework": "spring-mvc",
+        "journeys": [{"journey": "j", "surface": "api", "modules": ["m"]}]}))
+    monkeypatch.setenv("METIS_HOME", str(tmp_path))
+
+    context = types.SimpleNamespace(
+        args=types.SimpleNamespace(project="bare", out=str(tmp_path / "out")))
+    status, detail, _, _ = handlers._intake_fetch(context)
+    assert status == FAILED
+    assert "requirements" in detail
+
+
+def test_intake_fetch_writes_one_document_per_item_from_a_fixture(tmp_path,
+                                                                  monkeypatch):
+    """The batch path, end to end, with no tracker in existence.
+
+    `demo_project/trackers/jira.tracker.json` carries both outcomes on purpose:
+    DEMO-1 is EARS-conformant and becomes a Requirement, DEMO-2 is free prose
+    and becomes a Finding. A corpus with only the happy case would prove the
+    pipeline runs and nothing about what it decides.
+    """
+    import json as _json
+    import types
+    from pathlib import Path as _Path
+
+    from metis_mcp.workflow import handlers
+    from metis_mcp.workflow.run import PASSED
+
+    trackers = _Path(__file__).parent / "demo_project" / "trackers"
+    profiles = tmp_path / "profiles"
+    profiles.mkdir()
+    (profiles / "demo.json").write_text(_json.dumps({
+        "version": "metis.project-profile/1", "project": "demo",
+        "language": "javasrc", "framework": "spring-mvc",
+        "journeys": [{"journey": "j", "surface": "api", "modules": ["m"]}],
+        "requirements": {"system": "jira", "fixture_dir": str(trackers),
+                         "keys": ["DEMO-1", "DEMO-2"]}}))
+    monkeypatch.setenv("METIS_HOME", str(tmp_path))
+
+    out = tmp_path / "uif"
+    context = types.SimpleNamespace(
+        args=types.SimpleNamespace(project="demo", out=str(out)))
+    status, detail, _, _ = handlers._intake_fetch(context)
+
+    assert status == PASSED, detail
+    written = sorted(p.name for p in out.glob("*.uif.json"))
+    assert written == ["DEMO-1.uif.json", "DEMO-2.uif.json"]
+    assert context.intake_documents
+
+
+def test_a_key_that_matched_nothing_is_named(tmp_path, monkeypatch):
+    """"This ticket does not exist" and "I did not look for it" are different
+    answers, and only one of them is safe before a review."""
+    import json as _json
+    import types
+    from pathlib import Path as _Path
+
+    from metis_mcp.workflow import handlers
+
+    trackers = _Path(__file__).parent / "demo_project" / "trackers"
+    profiles = tmp_path / "profiles"
+    profiles.mkdir()
+    (profiles / "demo.json").write_text(_json.dumps({
+        "version": "metis.project-profile/1", "project": "demo",
+        "language": "javasrc", "framework": "spring-mvc",
+        "journeys": [{"journey": "j", "surface": "api", "modules": ["m"]}],
+        "requirements": {"system": "jira", "fixture_dir": str(trackers),
+                         "keys": ["DEMO-1", "DEMO-99"]}}))
+    monkeypatch.setenv("METIS_HOME", str(tmp_path))
+
+    context = types.SimpleNamespace(
+        args=types.SimpleNamespace(project="demo", out=str(tmp_path / "uif")))
+    _, detail, _, _ = handlers._intake_fetch(context)
+    assert "DEMO-99" in detail
+
+
+# ---------------------------------------------------------------------------
+# A run that cannot find a divergence must say so (S-3/S-19)
+# ---------------------------------------------------------------------------
+#
+# The failure this guards, measured on a real estate: eight services extracted,
+# landed, validated and taken to the gate, every one ending at `reconcile -> no
+# acceptance criteria in scope`. Clean runs, sound models, and the comparison
+# that is the whole point of Metis had never executed -- because the profile
+# declared no requirements source, so the only criteria in the graph were the
+# ones drafted from the code they would be checked against.
+#
+# `reconcile` does say it, six stages later, phrased as a property of the scope
+# rather than of the configuration. By then the summary reads like a result.
+
+
+def _profile(configured: bool):
+    """A stand-in profile whose requirements block is or is not configured."""
+    import types as t
+
+    return t.SimpleNamespace(
+        requirements=t.SimpleNamespace(is_configured=configured))
+
+
+def test_a_profile_with_no_requirements_source_is_told_it_cannot_diverge(
+        monkeypatch):
+    import types
+
+    from code_analysis import project_profile
+    from metis_mcp.workflow import handlers
+
+    monkeypatch.setattr(project_profile, "load_project",
+                        lambda name: _profile(configured=False))
+    context = types.SimpleNamespace(args=types.SimpleNamespace(project="p"))
+
+    findings = handlers._no_independent_source(context)
+    assert findings, "a run that cannot possibly diverge reported nothing"
+    # Named, not hinted: the reader must be able to act without reading source.
+    assert "requirements" in findings[0]
+    assert "code_derived" in findings[0]
+
+
+def test_a_profile_that_declares_a_requirements_source_is_left_alone(
+        monkeypatch):
+    """The guard must not fire on the configuration it is asking for.
+
+    Without this the test above passes against a function that returns the
+    finding unconditionally, which is the shape of guard that gets switched off.
+    """
+    import types
+
+    from code_analysis import project_profile
+    from metis_mcp.workflow import handlers
+
+    monkeypatch.setattr(project_profile, "load_project",
+                        lambda name: _profile(configured=True))
+    context = types.SimpleNamespace(args=types.SimpleNamespace(project="p"))
+
+    assert handlers._no_independent_source(context) == ()
+
+
+def test_an_unreadable_profile_does_not_turn_into_a_second_wrong_message(
+        monkeypatch):
+    """A profile that cannot be read is somebody else's error to report."""
+    import types
+
+    from code_analysis import project_profile
+    from metis_mcp.workflow import handlers
+
+    def boom(name):
+        raise project_profile.ProfileMissing("no such profile")
+
+    monkeypatch.setattr(project_profile, "load_project", boom)
+    context = types.SimpleNamespace(args=types.SimpleNamespace(project="p"))
+
+    assert handlers._no_independent_source(context) == ()
+
+
+def test_ac_draft_carries_the_finding_out_of_the_stage(monkeypatch):
+    """End to end through the handler, not just the helper.
+
+    The helper being right proves nothing if `_ac_draft` drops its return value
+    -- which is exactly how `carry_findings` failed before: the mechanism built
+    a list and the caller printed its length.
+    """
+    import types
+
+    from code_analysis import project_profile
+    from metis_mcp.workflow import handlers
+
+    monkeypatch.setattr(project_profile, "load_project",
+                        lambda name: _profile(configured=False))
+
+    from dataclasses import replace as _replace
+
+    # Guarded, so the stage reaches the drafting branch rather than the
+    # no-branch-facts early return. Both paths carry the finding; this exercises
+    # the one where a draft was actually produced.
+    model = tiny_model()
+    model = _replace(model, transitions={
+        k: _replace(t, guard="account is not locked")
+        for k, t in model.transitions.items()})
+    context = types.SimpleNamespace(
+        model=model, args=types.SimpleNamespace(project="p"))
+    status, detail, findings, _ = handlers._ac_draft(context)
+
+    assert status == PASSED
+    assert any("cannot" in f or "never be found to DIVERGE" in f
+               for f in findings), findings
+
+
+# ---------------------------------------------------------------------------
+# change-approval
+# ---------------------------------------------------------------------------
+#
+# Every part of this workflow existed before it did and none of it was reachable
+# in order: the carry runs inside `land`, the grading lives in `change_review`,
+# the file->transition join in `impact`. Somebody wanting to approve a change
+# re-ran `model-build` and read a summary line.
+
+
+def test_change_approval_is_registered_with_one_gate():
+    w = WORKFLOWS["change-approval"]
+    assert [s.name for s in w.ordered] == [
+        "extract", "change-impact", "land", "validate", "change-review",
+        "model-approval"]
+    assert sum(1 for s in w.stages if s.is_gate) == 1
+
+
+def test_the_two_reporting_stages_never_block():
+    """F-4: a stage whose findings ARE its output must not stop the run.
+
+    `change-impact` grading a diff as `critical` is information for the gate,
+    not a reason to refuse to reach it.
+    """
+    w = WORKFLOWS["change-approval"]
+    by_name = {s.name: s for s in w.stages}
+    assert by_name["change-impact"].blocking is False
+    assert by_name["change-review"].blocking is False
+    # validate MUST block: I-18 revalidates the whole (state, trigger) group,
+    # and a group that no longer satisfies M-18 cannot go to a gate.
+    assert by_name["validate"].blocking is True
+
+
+def test_change_impact_refuses_without_a_commit_range():
+    """An empty diff and an unresolvable one must not read the same.
+
+    `changed_files` answers an unanswerable range with `[]`, so defaulting
+    `--since` would turn "I could not tell" into "nothing changed".
+    """
+    import types
+
+    from metis_mcp.workflow import handlers
+
+    context = types.SimpleNamespace(
+        model=None, args=types.SimpleNamespace(since="", repo="/tmp"))
+    status, detail, _, _ = handlers._change_impact(context)
+    assert status == FAILED
+    assert "--since" in detail
+
+
+def test_change_review_names_each_revoked_approval_rather_than_counting():
+    """The failure this guards is one this repository has already made.
+
+    `carry_human_facts` builds `revoked` as "<id>: <reason>" strings precisely
+    so a reviewer can see which approvals went, and the first caller printed
+    `len(...)`. A revocation a reviewer cannot see is a decision taken on their
+    behalf.
+    """
+    import types
+
+    from metis_mcp.workflow import handlers
+
+    context = types.SimpleNamespace(
+        carry_revocations=["t01: behaviour changed", "t07: behaviour changed"],
+        carry_renames=[], change_findings=[])
+    status, detail, outstanding, _ = handlers._change_review(context)
+
+    assert status == PASSED
+    assert len(outstanding) == 2
+    assert any("t01" in o for o in outstanding), outstanding
+    assert any("t07" in o for o in outstanding), outstanding
+
+
+def test_change_review_says_a_clean_result_is_not_an_endorsement():
+    """C-11 through the whole surface: covered is not correct, and a change the
+    model cannot fault is not a change the model approves."""
+    import types
+
+    from metis_mcp.workflow import handlers
+
+    context = types.SimpleNamespace(
+        carry_revocations=[], carry_renames=[], change_findings=[])
+    _, detail, outstanding, _ = handlers._change_review(context)
+    assert outstanding == ()
+    assert "not a statement that the change is good" in detail
+
+
+def test_a_proposed_rename_is_reported_as_not_applied():
+    """I-22: a rename is proposed, never assumed. Carrying identity across one
+    silently would move an approval onto an element nobody approved."""
+    import types
+
+    from metis_mcp.workflow import handlers
+
+    context = types.SimpleNamespace(
+        carry_revocations=[],
+        carry_renames=["state Old -> New (91% similar; confirm it ...)"],
+        change_findings=[])
+    _, _, outstanding, _ = handlers._change_review(context)
+    assert outstanding and "NOT applied" in outstanding[0]
+
+
+# ---------------------------------------------------------------------------
+# S-4 and I-17 disagree about a re-ingest
+# ---------------------------------------------------------------------------
+
+
+def test_a_carry_that_brings_approvals_forward_permits_them_at_landing():
+    """`Context.expect_prior_approval` existed and NOTHING ever set it.
+
+    S-4 refuses a model landing with Approved elements, because a source that
+    approves its own output has bypassed G1. I-17 says the opposite for an
+    element whose behaviour did not change: its approval is RETAINED. Both are
+    right, and the flag that reconciles them was dead code -- so the first team
+    to approve a model and re-extract would have hit a hard FAIL at `land`
+    accusing their source of bypassing the gate.
+
+    It stayed invisible because nothing had ever been approved: the pilot estate
+    carried 430 elements and every one of them was `defer`.
+    """
+    from metis_mcp.workflow.checks import run_all
+
+    approved = tiny_model(approved=True)
+    context = Context(workflow="change-approval", scope="s", args=None,
+                      model=approved)
+
+    assert not run_all(("landed_at_quarantine",), context).ok, (
+        "a source landing its own output as Approved must still be refused (S-4)")
+
+    context.expect_prior_approval = True
+    assert run_all(("landed_at_quarantine",), context).ok, (
+        "an approval carried from the graph on unchanged behaviour is I-17, "
+        "not an S-4 violation")
+
+
+def test_the_carry_itself_sets_the_flag_that_permits_those_approvals(monkeypatch):
+    """The wiring, not just the check.
+
+    The test above sets `expect_prior_approval` by hand and so passes against a
+    `_carry_forward` that never sets it -- which was the bug. This drives the
+    real function and asserts the flag arrives, so removing the two lines that
+    set it fails here.
+    """
+    import types
+
+    from metis_mcp.mbt import graph_loader, graph_session
+    from metis_mcp.workflow import handlers
+
+    previous = tiny_model(approved=True)
+    candidate = tiny_model()                      # same shape, at Quarantine
+
+    class _Session:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(graph_session, "session", lambda *a, **k: _Session())
+    monkeypatch.setattr(graph_loader, "load_from_graph",
+                        lambda *a, **k: types.SimpleNamespace(model=previous))
+
+    context = Context(workflow="change-approval", scope="s",
+                      args=types.SimpleNamespace(uri="", user="",
+                                                 journey="j", surface="api"),
+                      model=candidate)
+    result = types.SimpleNamespace(model=candidate)
+
+    note = handlers._carry_forward(context, result)
+
+    assert "carried" in note, note
+    assert context.expect_prior_approval is True, (
+        "the carry brought approvals onto the candidate and did not say so, so "
+        "`landed_at_quarantine` will refuse a legitimate re-ingest (S-4 vs I-17)")
+
+
+# ---------------------------------------------------------------------------
+# The reconcile chain: three dead links in a row
+# ---------------------------------------------------------------------------
+#
+# Every real run ended at `reconcile -> no acceptance criteria in scope`, and it
+# was diagnosed as a missing requirements source. That was a third of it. Three
+# separate things in one chain were built and never connected:
+#
+#   1. `ac_draft` wrote `context.drafts`; nothing landed them.
+#   2. `_reconcile` read `context.criteria`; nothing in model-build set it.
+#   3. `load_confirmed_matches` existed; nothing called it.
+#
+# Each of these is tested for the WIRING and not only for the function, because
+# twice in this session a test of the function alone passed with the call site
+# sabotaged.
+
+
+class _ReconcileResult:
+    """The four lists `_reconcile` formats. Named rather than a SimpleNamespace
+    so a field renamed on the real result fails here instead of passing."""
+
+    intent_matched: list = []
+    documentation_matched: list = []
+    unspecified_behaviour: list = []
+    unimplemented: list = []
+
+
+def test_the_land_stage_lands_the_drafted_criteria(monkeypatch):
+    """Break 1. The stage reported `13/13 drafted` and the graph held none."""
+    import types
+
+    from metis_mcp.workflow import handlers
+
+    landed: list = []
+
+    class _Session:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr("metis_mcp.mbt.graph_session.session",
+                        lambda *a, **k: _Session())
+
+    def fake_land(session, plan):
+        landed.append(plan)
+        return types.SimpleNamespace(nodes_written=len(plan.nodes),
+                                     edges_written=len(plan.edges),
+                                     unmatched=[], episode_id="ep-1",
+                                     refused=None, superseded=[])
+
+    monkeypatch.setattr("metis_mcp.model_sources.land", fake_land)
+
+    model = tiny_model()
+    context = Context(workflow="model-build", scope="s", model=model,
+                      args=types.SimpleNamespace(uri="", user="", surface="api"))
+    context.drafts = [types.SimpleNamespace(
+        id="DRAFT-001", transition_id="t1", given="g", when="w", then="t",
+        and_guard="", model_id=model.id, atomicity="atomic")]
+
+    note = handlers._land_drafts(context, "ep-1")
+
+    assert landed, "the drafts were never landed"
+    assert "drafted criterion node(s)" in note
+    assert landed[0].by_label("AcceptanceCriterion")
+
+
+def test_the_land_STAGE_calls_the_draft_landing(monkeypatch):
+    """**The wiring, and the test above does not cover it.**
+
+    That one calls `_land_drafts` directly, so removing the call site from
+    `_land` leaves it passing — which is precisely the hole that let the drafts
+    go unlanded in the first place, and the third time in this session a test of
+    a function passed while the call site was gone. This drives the STAGE.
+    """
+    import types
+
+    from metis_mcp.workflow import handlers
+
+    called = []
+    monkeypatch.setattr(handlers, "_land_drafts",
+                        lambda ctx, ep: called.append(ep) or "; 3 drafted")
+    monkeypatch.setattr(handlers, "_land_evidence", lambda *a, **k: "")
+    monkeypatch.setattr(handlers, "_carry_forward", lambda *a, **k: "")
+    monkeypatch.setattr(handlers, "_land_stamped",
+                        lambda *a, **k: types.SimpleNamespace(
+                            ok=True, episode_id="ep-7", nodes_written=1,
+                            edges_written=0, refused=None, superseded=[],
+                            unmatched=[]))
+    monkeypatch.setattr("metis_mcp.model_sources.plan_landing",
+                        lambda *a, **k: types.SimpleNamespace(
+                            is_legal=True, errors=[], nodes=[], edges=[]))
+
+    class _Session:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr("metis_mcp.mbt.graph_session.session",
+                        lambda *a, **k: _Session())
+
+    model = tiny_model()
+    context = Context(workflow="model-build", scope="s", model=model,
+                      args=types.SimpleNamespace(journey="j", job_id="x",
+                                                 uri="", user="", surface="api"))
+    context.source_result = types.SimpleNamespace(model=model)
+
+    status, detail, _, _ = handlers._land(context)
+
+    assert called == ["ep-7"], "the land stage never landed the drafts"
+    assert "3 drafted" in detail, (
+        "the drafted summary never reached the stage detail, so a run could "
+        "land criteria and report nothing about them")
+
+
+def test_landing_no_drafts_writes_nothing_and_says_nothing(monkeypatch):
+    """A model-build with no drafts must not open a session or pad its summary."""
+    import types
+
+    from metis_mcp.workflow import handlers
+
+    opened = []
+    monkeypatch.setattr("metis_mcp.mbt.graph_session.session",
+                        lambda *a, **k: opened.append(1))
+
+    context = Context(workflow="model-build", scope="s", model=tiny_model(),
+                      args=types.SimpleNamespace(uri="", user="", surface="api"))
+    context.drafts = []
+    assert handlers._land_drafts(context, "ep-1") == ""
+    assert opened == []
+
+
+def test_reconcile_reads_criteria_from_the_graph_when_the_context_has_none(
+        monkeypatch):
+    """Break 2. `_reconcile` looked only at `context.criteria`, which nothing in
+    model-build set — so it reported "no acceptance criteria in scope" whatever
+    the graph held, and phrased it as a property of the SCOPE."""
+    import types
+
+    from metis_mcp.workflow import handlers
+
+    monkeypatch.setattr(handlers, "_criteria_in_scope",
+                        lambda ctx: [types.SimpleNamespace(id="AC-1", text="t")])
+    monkeypatch.setattr(handlers, "_confirmed_in_scope", lambda ctx: [])
+    monkeypatch.setattr("metis_mcp.reconciliation.reconcile",
+                        lambda *a, **k: _ReconcileResult())
+
+    context = Context(workflow="model-build", scope="s", model=tiny_model(),
+                      args=types.SimpleNamespace(journey="j", uri="", user=""))
+    status, detail, _, _ = handlers._reconcile(context)
+
+    assert status == PASSED
+    assert "no acceptance criteria in scope" not in detail
+
+
+def test_reconcile_still_says_so_when_the_graph_has_none_either(monkeypatch):
+    """A run that looked and found nothing, and a run that could not look, both
+    yield coverage rather than correctness — and neither may claim the
+    comparison ran."""
+    import types
+
+    from metis_mcp.workflow import handlers
+
+    monkeypatch.setattr(handlers, "_criteria_in_scope", lambda ctx: [])
+    context = Context(workflow="model-build", scope="s", model=tiny_model(),
+                      args=types.SimpleNamespace(journey="j", uri="", user=""))
+    _, detail, _, _ = handlers._reconcile(context)
+    assert "no acceptance criteria in scope" in detail
+
+
+def test_reconcile_loads_the_validates_edges_as_confirmed_matches(monkeypatch):
+    """Break 3. `load_confirmed_matches` existed and nothing called it, so a
+    criterion already joined to its transition was reported as implementing
+    nothing."""
+    import types
+
+    from metis_mcp.workflow import handlers
+
+    seen = {}
+    monkeypatch.setattr(handlers, "_criteria_in_scope",
+                        lambda ctx: [types.SimpleNamespace(id="AC-1", text="t")])
+    monkeypatch.setattr(handlers, "_confirmed_in_scope",
+                        lambda ctx: ["a-confirmed-match"])
+
+    def fake_reconcile(model, criteria, confirmed):
+        seen["confirmed"] = confirmed
+        return _ReconcileResult()
+
+    monkeypatch.setattr("metis_mcp.reconciliation.reconcile", fake_reconcile)
+
+    context = Context(workflow="model-build", scope="s", model=tiny_model(),
+                      args=types.SimpleNamespace(journey="j", uri="", user=""))
+    handlers._reconcile(context)
+
+    assert seen["confirmed"] == ["a-confirmed-match"], (
+        "the VALIDATES edges never reached reconcile")
+
+
+def test_a_context_that_already_carries_criteria_is_not_overridden(monkeypatch):
+    """knowledge-capture sets them itself. Reading the graph over the top would
+    reconcile against a different set than the workflow assembled."""
+    import types
+
+    from metis_mcp.workflow import handlers
+
+    called = []
+    monkeypatch.setattr(handlers, "_criteria_in_scope",
+                        lambda ctx: called.append(1) or [])
+    monkeypatch.setattr(handlers, "_confirmed_in_scope", lambda ctx: [])
+    monkeypatch.setattr("metis_mcp.reconciliation.reconcile",
+                        lambda *a, **k: _ReconcileResult())
+
+    context = Context(workflow="model-build", scope="s", model=tiny_model(),
+                      args=types.SimpleNamespace(journey="j", uri="", user=""))
+    context.criteria = [types.SimpleNamespace(id="AC-9", text="mine")]
+    handlers._reconcile(context)
+    assert called == [], "the graph was read over a context that already had criteria"
+
+
+def test_neither_loader_needs_a_journey_to_fail_safely():
+    """No journey means no scope. `[]` is the same shape as "none landed", which
+    is correct: both yield coverage rather than correctness."""
+    import types
+
+    from metis_mcp.workflow import handlers
+
+    context = Context(workflow="model-build", scope="s", model=tiny_model(),
+                      args=types.SimpleNamespace(journey="", uri="", user=""))
+    assert handlers._criteria_in_scope(context) == []
+    assert handlers._confirmed_in_scope(context) == []
+
+
+# --------------------------------------------------------------------------
+# The evidence layer's second pass.
+#
+# **The silent failure this section exists for.** `plan_landing` plans all five
+# kinds of evidence edge from a transition's own `evidence` tuple. The model
+# plan is landed BEFORE `_land_evidence` creates the nodes two of those kinds
+# point at, so those two MERGE against a node that does not exist yet — and
+# `land` reports that as `unmatched` rather than failing.
+#
+# `Endpoint`, `Class` and `ExceptionMapping` survived because two planners
+# re-plan them after the evidence layer exists. `DeclaredOutcome` and `Check`
+# had no such pass. Measured on a real estate: 0 of 176 transitions carried a
+# check, while 47 `Check` nodes and 88 `GUARDED_BY` edges sat in the same graph
+# — which left `mbt/dimensions.py` with nothing to build a chain from.
+# --------------------------------------------------------------------------
+
+class _Args:
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+
+
+class _EvidenceContext:
+    def __init__(self, model):
+        self.model = model
+        self.args = _Args(surface="api", journey="records", job_id="test")
+
+
+def _model_with_evidence():
+    """A one-transition model carrying every kind of evidence a real one does."""
+    model = tiny_model()
+    model.transitions["t1"] = replace(
+        model.transitions["t1"],
+        evidence=(("Endpoint", "ep:abc"), ("Class", "cls:abc"),
+                  ("DeclaredOutcome", "out:abc"), ("Check", "chk:abc"),
+                  ("ExceptionMapping", "exm:abc")))
+    return model
+
+
+def test_the_deferred_evidence_edges_are_planned_after_their_nodes_exist():
+    """The fix. Both kinds are read from the transition's own evidence tuple, so
+    the ids agree with what `raw_landing` wrote by construction."""
+    from metis_mcp.model_sources.landing import LandingPlan
+    from metis_mcp.workflow.handlers import _plan_outcome_edges
+
+    plan = LandingPlan(episode_id="ep-test")
+    planned = _plan_outcome_edges(plan, _EvidenceContext(_model_with_evidence()),
+                                  repo="records")
+
+    assert planned == {"DeclaredOutcome": 1, "Check": 1}, planned
+    by_target = {(e.rel_type, e.to_label, e.to_id) for e in plan.edges}
+    assert ("DERIVED_FROM", "DeclaredOutcome", "out:abc") in by_target
+    assert ("CONSTRAINED_BY", "Check", "chk:abc") in by_target
+
+
+def test_the_second_pass_does_not_replan_what_the_other_two_already_do():
+    """Planning `Endpoint` here as well would write the edge twice under two
+    different derivations of its id — the defect `evidence_repo` documents."""
+    from metis_mcp.model_sources.landing import LandingPlan
+    from metis_mcp.workflow.handlers import _plan_outcome_edges
+
+    plan = LandingPlan(episode_id="ep-test")
+    _plan_outcome_edges(plan, _EvidenceContext(_model_with_evidence()),
+                        repo="records")
+    labels = {e.to_label for e in plan.edges}
+    assert labels == {"DeclaredOutcome", "Check"}, (
+        f"the second pass planned {sorted(labels)}; `Endpoint`, `Class` and "
+        f"`ExceptionMapping` belong to the two planners beside it")
+
+
+def test_a_transition_with_no_evidence_plans_nothing_rather_than_guessing():
+    """An authored model has no code facts behind it. Silence is the correct
+    output; an invented outcome id would point the edge at nothing."""
+    from metis_mcp.model_sources.landing import LandingPlan
+    from metis_mcp.workflow.handlers import _plan_outcome_edges
+
+    plan = LandingPlan(episode_id="ep-test")
+    assert _plan_outcome_edges(plan, _EvidenceContext(tiny_model()),
+                               repo="records") == {}
+    assert plan.edges == []
+
+
+def test_every_evidence_label_written_by_the_raw_layer_has_a_second_pass():
+    """**The guard on the class of bug, not on the one instance.**
+
+    An evidence label whose nodes `raw_landing` creates cannot be landed by the
+    model plan, because that plan runs first. Adding a sixth kind to
+    `EVIDENCE_RELATIONSHIPS` without adding it to a second pass would repeat
+    exactly this failure, and it would repeat it silently — the edge would be
+    planned, reported `unmatched`, and nothing would say so.
+    """
+    from metis_mcp.model_sources.landing import EVIDENCE_RELATIONSHIPS
+    from metis_mcp.workflow.handlers import DEFERRED_EVIDENCE_LABELS
+
+    # The three the other two planners already cover, named here so a label
+    # moving between passes has to be a deliberate edit.
+    covered_elsewhere = {"Endpoint", "Class", "ExceptionMapping"}
+    unhandled = (set(EVIDENCE_RELATIONSHIPS)
+                 - covered_elsewhere - set(DEFERRED_EVIDENCE_LABELS))
+    assert not unhandled, (
+        f"these evidence labels are planned by the model plan and by no second "
+        f"pass, so they MERGE against nodes that do not exist yet and land as "
+        f"`unmatched`: {sorted(unhandled)}")
+
+
+def test_the_loader_query_walks_the_path_the_second_pass_writes():
+    """The two halves of one join, asserted to agree.
+
+    `CHECKS_CYPHER` reaches a check through `DERIVED_FROM -> DeclaredOutcome
+    -[:GUARDED_BY]-> Check`. If the edge the second pass writes ever stopped
+    being the first hop of that path, the query would return zero rows for every
+    transition and nothing would fail.
+    """
+    from metis_mcp.mbt.graph_loader import CHECKS_CYPHER
+    from metis_mcp.model_sources.landing import EVIDENCE_RELATIONSHIPS
+
+    assert EVIDENCE_RELATIONSHIPS["DeclaredOutcome"] == "DERIVED_FROM"
+    assert "-[:DERIVED_FROM]->(:DeclaredOutcome)" in CHECKS_CYPHER.replace("\n", "")
+    assert "-[:GUARDED_BY]->(c:Check)" in CHECKS_CYPHER.replace("\n", "")

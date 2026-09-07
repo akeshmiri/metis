@@ -6,6 +6,7 @@ runner payload they were assembled from; both are gone. Métis states what must
 be verified and whether it is covered — producing the implementation is the job
 of whatever executes the test.
 """
+from metis_mcp.rendering.gherkin import feature_for, scenario_lines
 from metis_mcp.rendering.test_case import (
     TIER_ACCEPTANCE_CRITERION,
     TIER_GENERATED_PROSE,
@@ -21,6 +22,7 @@ from metis_mcp.rendering.test_case import (
 
 __all__ = [
     "TestCase", "Step", "RenderResult", "render", "render_path", "format_case",
+    "feature_for", "scenario_lines",
     "humanise",
     "TIER_ACCEPTANCE_CRITERION", "TIER_GENERATED_PROSE", "TIER_VERBATIM",
 ]

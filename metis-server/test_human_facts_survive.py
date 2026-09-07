@@ -232,3 +232,167 @@ if __name__ == "__main__":
             print(f"ERROR {t.__name__}: {type(e).__name__}: {e}")
     print(f"\n{len(tests) - failures}/{len(tests)} passed")
     sys.exit(1 if failures else 0)
+
+
+# ---------------------------------------------------------------------------
+# A revocation a reviewer cannot see
+# ---------------------------------------------------------------------------
+#
+# `carry_human_facts` builds `revoked` as a list of "<id>: <reason>" strings on
+# purpose, and its own comment says why: *"Named, not counted. A revocation a
+# reviewer cannot see is a decision taken on their behalf."*
+#
+# The caller printed `len(carry.revoked)`. The comment stating the intent sat
+# three lines above the code doing the opposite, so the one thing the mechanism
+# exists to make visible was the only part nobody could see — a reviewer
+# re-approving after a code change was told "3 revoked" and could not find out
+# which three.
+
+def test_the_extract_stage_names_every_revoked_approval():
+    """Findings carry the ids and reasons, not a count.
+
+    **Calls the real function.** The first version of this test rebuilt the
+    tuple expression inside itself, asserted on its own copy, imported
+    `handlers` without calling anything, and would have passed with the
+    production code deleted — a test that cannot fail for the reason it claims,
+    written to prevent a failure that could not be seen. `carry_findings` was
+    extracted so there is one implementation and this reaches it.
+    """
+    import types
+
+    from metis_mcp.workflow.handlers import carry_findings
+
+    findings = carry_findings(types.SimpleNamespace(
+        carry_revocations=[
+            "login-api::t_lock: behaviour changed",
+            "login-api::t_retry: group (Ready, POST /login) was disturbed — "
+            "determinism and guard completeness are group properties (I-18)"],
+        carry_renames=["state s_401 -> s_403 (82% similar)"]))
+
+    assert len(findings) == 3
+    joined = " ".join(findings)
+    # The ids, because a reviewer acts on those.
+    assert "login-api::t_lock" in joined
+    assert "login-api::t_retry" in joined
+    # And the reason each was taken away, because "revoked" without a cause is
+    # a decision presented as an event.
+    assert "behaviour changed" in joined
+    assert "I-18" in joined, "group propagation must say it was the group"
+    assert "NOT applied" in joined, "a rename is proposed, never assumed (I-22)"
+
+
+def test_a_run_that_revoked_nothing_reports_nothing():
+    """The guard against the opposite failure: findings invented from an empty
+    carry would put "approval revoked —" in front of every clean re-extraction."""
+    import types
+
+    from metis_mcp.workflow.handlers import carry_findings
+
+    assert carry_findings(types.SimpleNamespace()) == ()
+    assert carry_findings(types.SimpleNamespace(
+        carry_revocations=[], carry_renames=[])) == ()
+
+
+def test_carry_forward_puts_the_revocations_where_the_stage_reads_them():
+    """The join between the producer and the consumer, exercised rather than grepped.
+
+    `carry_human_facts` revokes and names; `_carry_forward` stashes; `_land`
+    calls `carry_findings`. The defect was that middle link — the reasons were
+    produced and then reduced to `len(...)` — so what has to be asserted is that
+    a real revocation survives all three hops.
+
+    An earlier version checked this with `inspect.getsource` string matching,
+    which is a proxy for behaviour and passes on a function that contains the
+    right words and does the wrong thing.
+    """
+    import types
+
+    from metis_mcp.workflow.handlers import _carry_forward, carry_findings
+
+    approved = _approved(_model())
+
+    # The same model with one guard changed: I-17 revokes exactly there.
+    candidate = _model(guard_ok="payload_valid AND quota_available")
+    changed = next(t for t in candidate.transitions.values()
+                   if "quota_available" in (t.guard or ""))
+
+    context = types.SimpleNamespace(
+        args=types.SimpleNamespace(uri=None, user=None, journey="login",
+                                   surface="api"))
+    result = types.SimpleNamespace(model=candidate)
+
+    # `_carry_forward` loads the previous model from the graph. Substituting the
+    # loader is what keeps this database-free, and it is the only thing
+    # substituted — the diff, the carry and the finding construction are real.
+    import metis_mcp.mbt.graph_loader as loader
+    import metis_mcp.mbt.graph_session as gs
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _session(*a, **k):
+        yield object()
+
+    real_session, real_load = gs.session, loader.load_from_graph
+    gs.session, loader.load_from_graph = _session, (
+        lambda s, **k: types.SimpleNamespace(model=approved))
+    try:
+        note = _carry_forward(context, result)
+    finally:
+        gs.session, loader.load_from_graph = real_session, real_load
+
+    assert "revoked" in note
+    findings = carry_findings(context)
+    assert findings, "the reasons were produced and then dropped — the defect"
+    assert any(changed.id in f for f in findings), (
+        f"the revoked transition {changed.id} is not named in {findings}")
+
+
+def test_the_landing_stage_actually_returns_those_findings(monkeypatch):
+    """**The join, which is the part that broke and the part the tests missed.**
+
+    The three tests above exercise `carry_findings`, and every one of them
+    passes with `_land`'s `findings = carry_findings(context)` replaced by
+    `findings = ()` — which is the original defect, restored, undetected. A test
+    of a producer proves nothing about a consumer that stopped reading it, and
+    that is the shape of every failure in this file's subject.
+
+    So this asserts the wiring: whatever `carry_findings` returns must come back
+    out of the stage. `carry_findings` is substituted with a sentinel rather
+    than reimplemented, so the assertion is about the CALL and not about the
+    formatting, which the other tests own.
+    """
+    import types
+    from contextlib import contextmanager
+
+    from metis_mcp.workflow import handlers
+    from metis_mcp.workflow.run import PASSED
+
+    sentinel = ("SENTINEL — approval revoked",)
+
+    @contextmanager
+    def _session(*a, **k):
+        yield object()
+
+    monkeypatch.setattr(handlers, "carry_findings", lambda ctx: sentinel)
+    monkeypatch.setattr(handlers, "_carry_forward", lambda ctx, res: "")
+    monkeypatch.setattr(handlers, "_land_evidence",
+                        lambda ctx, episode_id, model_plan=None: "")
+    monkeypatch.setattr(handlers, "_land_stamped",
+                        lambda s, plan, ctx: types.SimpleNamespace(
+                            ok=True, refused=None, nodes_written=3,
+                            edges_written=2, episode_id="ep-1"))
+    monkeypatch.setattr("metis_mcp.mbt.graph_session.session", _session)
+    monkeypatch.setattr("metis_mcp.model_sources.plan_landing",
+                        lambda result, journey=None, job_id=None:
+                        types.SimpleNamespace(is_legal=True, errors=[]))
+
+    context = types.SimpleNamespace(
+        source_result=types.SimpleNamespace(model=_model()),
+        args=types.SimpleNamespace(journey="login", surface="api",
+                                   job_id="j", uri=None, user=None))
+
+    status, detail, findings, _ = handlers._land(context)
+    assert status == PASSED, detail
+    assert findings == sentinel, (
+        "the landing stage dropped what the carry reported — which is the "
+        "defect: the reasons were produced and reduced to a count")

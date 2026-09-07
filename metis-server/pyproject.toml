@@ -5,8 +5,10 @@ description = "Métis MCP server — specification and requirements knowledge gr
 requires-python = ">=3.10"
 license = "MIT"
 # Only what is imported. Every other distribution that used to be listed here
-# (psycopg, PyJWT, uvicorn, starlette, jsonschema, markdown, python-pptx) was
-# v1 residue with no importer anywhere in the tree.
+# (psycopg, PyJWT, uvicorn, starlette, markdown, python-pptx) was
+# v1 residue with no importer anywhere in the tree. `jsonschema` was on that list
+# too and has since gained one (`intakes.validate_uif`); it stays unlisted for a
+# different reason, given below.
 #
 #   mcp     metis_mcp/server.py
 #   neo4j   metis_mcp/mbt/graph_session.py — the driver import is deferred
@@ -28,6 +30,16 @@ dependencies = [
     # not weaken is surface, which is why `api/auth.py` exists.
     "fastapi>=0.110",
 ]
+# NOT listed, and deliberately: `jsonschema` validates a UIF against
+# `unified-intake-format.schema.json` (`intakes.validate_uif`) and is already a
+# hard dependency of `mcp` (>=4.20.0), so every install that can run the server
+# has it. It was briefly declared as a `metis[intake]` extra on the assumption
+# that a default install lacked it — the same assumption pyproject already
+# corrects for FastAPI's tree, one paragraph up. An extra whose refusal branch
+# can never fire is dead code that reads as a capability check, so it is gone.
+# What CAN be absent is the schema FILE: it ships with `plugins/`, not with this
+# package, so an installed-without-the-repo deployment cannot validate. That is
+# the refusal `intakes.uif_schema_available` actually reports.
 
 [project.scripts]
 metis-mcp-server = "metis_mcp.server:main"
@@ -42,6 +54,24 @@ metis = "metis_mcp.mbt.cli:main"
 test = [
     "pytest>=8.0",
     "PyYAML",          # pack.yaml manifests are validated, not text-scanned
+]
+# **Contact with the system under test, and only if you ask for it.** The change
+# to X-7a is a tier (`metis_mcp/execution.py`), and these are the clients that
+# tier can reach for. They are optional so that the property the whole test suite
+# depends on survives it: a default install has four runtime dependencies and
+# needs no database, no cluster and no service to run the engine-free half.
+#
+# `execution.REQUIREMENTS` names each one, so a refusal says which extra is
+# missing instead of surfacing `No module named 'psycopg2'` three frames into a
+# query builder.
+execute = [
+    "psycopg2-binary>=2.9",   # Athena/PostgreSQL reads (observe tier)
+    "kubernetes>=29.0",       # cluster logs and events (observe tier)
+]
+# Driving load is a different decision from reading a replica, so it is a
+# different extra: `run` tier, and it makes something happen.
+load = [
+    "locust>=2.20",
 ]
 # **Semantic search, and only if you ask for it.** `retrieval.EmbeddingProvider`
 # is a Protocol precisely so a default install loads no model; this extra is the

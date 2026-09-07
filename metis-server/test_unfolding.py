@@ -153,7 +153,6 @@ def test_the_atom_survives_where_the_source_state_does_not_say_it():
     `Ready` means only "nothing has been called yet" and the atom is then the
     one thing saying the record is missing."""
     result = unfold(*_crud())
-    assert result.transitions["read-none"].source == "Ready"
     assert result.transitions["read-none"].guard == "t.isEmpty()"
 
 
@@ -162,7 +161,8 @@ def test_the_absent_read_keeps_ready_as_its_source():
     beside `Ready` would add a node meaning the same thing."""
     result = unfold(*_crud())
     assert result.transitions["read-none"].source == "Ready"
-    assert result.transitions["read-none"].guard == "t.isEmpty()"
+    assert "Absent" not in result.states, (
+        "a state meaning what `Ready` already means")
 
 
 def test_the_orphaned_status_state_is_dropped():

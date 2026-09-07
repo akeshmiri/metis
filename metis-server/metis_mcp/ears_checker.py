@@ -23,12 +23,34 @@ checklist (deliberately out of scope here, a separate check).
 import re
 from dataclasses import dataclass
 
+# **The terminal full stop is OPTIONAL, and that is a fix, not a loosening.**
+#
+# Every pattern here required `\.$`, transcribed from the templates in
+# `metis-specification.md` §4.3 -- a v1 document that no longer exists, and whose
+# templates carry a period because they are written as sentences rather than
+# because EARS requires one. The surviving definition, in the academy's own
+# glossary, states the shape with no punctuation at all: *When <trigger>, the
+# system shall <response>*.
+#
+# The consequence was measured on realistic ticket titles, and it is not small:
+# **six well-formed EARS requirements scored 0/6** because a Jira summary does
+# not end with a full stop. Every one of them landed as a `Finding` -- correctly
+# reported as "not EARS-conformant", which is the most misleading possible way to
+# be right. On a real backlog that is the difference between most requirements
+# arriving as `Requirement` and almost none.
+#
+# Nothing about the STRUCTURE is relaxed: the trigger clause, the comma, `the
+# <system> shall` and a non-empty response are all still required, and prose
+# still fails. Only the punctuation is now allowed to be absent, and a trailing
+# `.`, `!` or `?` is still accepted so a sentence written properly is unaffected.
+_END = r"[.!?]?$"
+
 _PATTERNS = [
-    ("EventDriven", re.compile(r"^When (?P<trigger>.+?), the (?P<system>.+?) shall (?P<response>.+)\.$")),
-    ("StateDriven", re.compile(r"^While (?P<state>.+?), the (?P<system>.+?) shall (?P<response>.+)\.$")),
-    ("UnwantedBehavior", re.compile(r"^If (?P<condition>.+?), then the (?P<system>.+?) shall (?P<response>.+)\.$")),
-    ("Optional", re.compile(r"^Where (?P<feature>.+?), the (?P<system>.+?) shall (?P<response>.+)\.$")),
-    ("Ubiquitous", re.compile(r"^The (?P<system>.+?) shall (?P<response>.+)\.$")),
+    ("EventDriven", re.compile(r"^When (?P<trigger>.+?), the (?P<system>.+?) shall (?P<response>.+?)" + _END)),
+    ("StateDriven", re.compile(r"^While (?P<state>.+?), the (?P<system>.+?) shall (?P<response>.+?)" + _END)),
+    ("UnwantedBehavior", re.compile(r"^If (?P<condition>.+?), then the (?P<system>.+?) shall (?P<response>.+?)" + _END)),
+    ("Optional", re.compile(r"^Where (?P<feature>.+?), the (?P<system>.+?) shall (?P<response>.+?)" + _END)),
+    ("Ubiquitous", re.compile(r"^The (?P<system>.+?) shall (?P<response>.+?)" + _END)),
 ]
 
 

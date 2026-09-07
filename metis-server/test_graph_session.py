@@ -238,3 +238,93 @@ def test_a_named_config_that_is_absent_says_so(monkeypatch, tmp_path):
     with pytest.raises(GraphNotConfigured) as e:
         resolve()
     assert "does not exist" in str(e.value)
+
+
+# ---------------------------------------------------------------------------
+# Connectivity — the difference between "configured" and "there"
+# ---------------------------------------------------------------------------
+#
+# `metis doctor` reported `[ok] graph neo4j@bolt://localhost:7687` with nothing
+# listening on that port, because the check called `resolve()` — which reads a
+# URI and a password source and opens no socket. Doctor is the command every
+# document tells a new user to run first, so a false green on the dependency
+# that most often is absent is the worst possible place for one.
+
+
+class _FakeDriver:
+    """Stands in for `neo4j.GraphDatabase.driver`. Records that it was closed."""
+
+    def __init__(self, raises=None):
+        self._raises = raises
+        self.closed = False
+
+    def verify_connectivity(self):
+        if self._raises is not None:
+            raise self._raises
+
+    def close(self):
+        self.closed = True
+
+
+def _with_driver(monkeypatch, driver):
+    """Patch the driver factory `reachable` imports at call time."""
+    import neo4j
+
+    monkeypatch.setattr(neo4j.GraphDatabase, "driver",
+                        lambda *a, **k: driver)
+
+
+def test_a_reachable_graph_reports_where_the_password_came_from(monkeypatch):
+    monkeypatch.setenv(PASSWORD_ENV, "s3cret")
+    driver = _FakeDriver()
+    _with_driver(monkeypatch, driver)
+
+    ok, detail = graph_session.reachable()
+    assert ok
+    assert "neo4j@bolt://localhost:7687" in detail
+    assert PASSWORD_ENV in detail
+    assert "s3cret" not in detail, "the secret must never reach a report"
+    assert driver.closed, "a probe that leaks a driver leaks a connection"
+
+
+def test_an_unreachable_graph_is_not_ok(monkeypatch):
+    """The exact false green this function exists to remove."""
+    from neo4j.exceptions import ServiceUnavailable
+
+    monkeypatch.setenv(PASSWORD_ENV, "s3cret")
+    driver = _FakeDriver(raises=ServiceUnavailable("Couldn't connect to localhost:7687"))
+    _with_driver(monkeypatch, driver)
+
+    ok, detail = graph_session.reachable()
+    assert not ok
+    assert "unreachable" in detail
+    assert driver.closed
+
+
+def test_a_refused_credential_is_distinct_from_an_absent_server(monkeypatch):
+    """Different repairs: fix the password, versus start the database."""
+    from neo4j.exceptions import AuthError
+
+    monkeypatch.setenv(PASSWORD_ENV, "wrong")
+    _with_driver(monkeypatch, _FakeDriver(raises=AuthError("bad credentials")))
+
+    ok, detail = graph_session.reachable()
+    assert not ok
+    assert "refused the credential" in detail
+    assert "unreachable" not in detail
+
+
+def test_an_unconfigured_graph_says_so_rather_than_raising(monkeypatch):
+    """A preflight check that can itself blow up is not a preflight check."""
+    ok, detail = graph_session.reachable()          # fixture cleared everything
+    assert not ok
+    assert "no graph password" in detail
+
+
+def test_the_probe_never_raises_whatever_the_driver_does(monkeypatch):
+    """Anything a future driver version invents still comes back as a result."""
+    monkeypatch.setenv(PASSWORD_ENV, "s3cret")
+    _with_driver(monkeypatch, _FakeDriver(raises=RuntimeError("something new")))
+
+    ok, detail = graph_session.reachable()
+    assert not ok and "something new" in detail

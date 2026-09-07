@@ -279,6 +279,29 @@ if ! $PY -m metis_mcp.mbt.cli lessons --job-id rebuild 2>&1 | sed 's/^/    /'; t
 fi
 
 if [ "$ACADEMY_ONLY" = 0 ]; then
+echo "==> 4c/5  repair history (Commit nodes, and what they fixed)"
+# **Opt-in by window, because a fix count with no window is not a measurement.**
+# `METIS_HISTORY_SINCE` names the start of the range; unset, this stage says so
+# and is skipped rather than inventing one. There is no sensible default: a
+# window is a decision about what period the team considers current, and a
+# rebuild guessing "last 100 commits" would put a number in the graph that
+# nobody chose.
+#
+# `--fetch-missing` is deliberately NOT passed here. A rebuild reaching out to a
+# tracker is a network call nobody asked for; the stage reports the tickets it
+# could not link and an operator decides whether to fetch them.
+if [ -z "${METIS_HISTORY_SINCE:-}" ]; then
+  echo "    METIS_HISTORY_SINCE is not set — no repair history landed."
+  echo "    That is a skipped stage, not an empty one: set it to a ref (a tag,"
+  echo "    a release commit) to count fixes since then."
+elif ! $PY -m metis_mcp.mbt.cli history \
+        --repo "${METIS_HISTORY_REPO:-.}" \
+        --since "$METIS_HISTORY_SINCE" \
+        --project "${METIS_HISTORY_PROJECT:-demo-records}" \
+        --job-id rebuild 2>&1 | sed 's/^/    /'; then
+  echo "    !! repair history did not land — continuing; the rest is unaffected"
+fi
+
 echo "==> 5/5  cross-surface INVOKES proposals (M-5a)"
 if [ ! -f "$UI_FACTS" ]; then
   echo "    !! $UI_FACTS absent — no INVOKES proposals."

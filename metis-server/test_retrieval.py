@@ -199,3 +199,63 @@ def test_the_shipped_question_set_names_lessons_that_exist():
     known = {lesson_id(l["path"]) for l in read_lessons(academy)}
     unknown = sorted(set(questions.values()) - known)
     assert not unknown, f"the question set expects lessons that do not exist: {unknown}"
+
+
+# --- what `ask` actually surfaces, which is not what the bench measures -------
+#
+# `retrieval-bench` measures the ranking. `ask` is what a person or an agent
+# calls, and it was throwing most of that ranking away: `_ask_academy` used
+# `hits[0]` alone and `_academy_suggestion` searched with `limit=1`, so a
+# surface whose retrieval knew the answer 93% of the time surfaced it 19% of
+# the time. Measured, not assumed — these two numbers disagreed for a year.
+
+
+def _shipped_questions():
+    import csv
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parent.parent / "docs" / "academy" / \
+        "retrieval-questions.tsv"
+    with path.open() as handle:
+        rows = [r for r in csv.reader(handle, delimiter="\t") if len(r) >= 2]
+    return [(r[0], r[1]) for r in rows[1:] if r[0] and not r[0].startswith("#")]
+
+
+def test_the_suggestion_offers_more_than_one_candidate():
+    """One candidate was right 54% of the time while the retrieval underneath
+    knew the answer 93% of the time. Offering one was throwing that away."""
+    from metis_mcp import authoring
+
+    import inspect
+
+    source = inspect.getsource(authoring._academy_suggestion)
+
+    assert "limit=5" in source, "the suggestion searches for one candidate again"
+    assert '"others"' in source, "the runners-up are no longer carried"
+
+
+def test_the_academy_answer_carries_its_runners_up():
+    from metis_mcp import authoring
+
+    import inspect
+
+    source = inspect.getsource(authoring._ask_academy)
+
+    assert "also_relevant" in source
+    assert "hits[1:5]" in source
+
+
+def test_widening_the_suggestion_claims_nothing_extra():
+    """The refusal above it stands. Nothing here classifies a question as
+    belonging to this corpus — that decision was measured three ways and is
+    still refused; only the number of titles offered changed."""
+    from metis_mcp import authoring
+
+    import inspect
+
+    source = inspect.getsource(authoring._academy_suggestion)
+
+    assert "not an answer" in source
+    assert "nothing " in source and "checked" in source
+    # No body is carried: a title a reader can take or ignore, as before.
+    assert '"body"' not in source

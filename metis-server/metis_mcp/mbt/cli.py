@@ -29,6 +29,7 @@ from metis_mcp.mbt.model import (
     transition_from_dict, transition_to_dict,
 )
 from metis_mcp.mbt.path_generation import DEFAULT_SETUP_CAP, generate
+from metis_mcp.workflow.handlers import DESIGN_ACCEPTED, RISK_ACCEPTED
 from metis_mcp.mbt.test_levels import (
     format_grades, from_pack as inventory_from_pack, grade_transitions,
 )
@@ -38,7 +39,7 @@ from metis_mcp.mbt.validation import (
 from metis_mcp.rendering import format_case, render
 from metis_mcp.review import ReviewFile, apply, export, format_audit
 from metis_mcp.review.roles import (
-    CONFIRM_PUBLICATION, PUBLISHER, ROLES, Identity, NotPermitted, require,
+    CONFIRM_PUBLICATION, PUBLISHER, REVIEWER, ROLES, Identity, NotPermitted, require,
 )
 from metis_mcp.reconciliation import (
     AcceptanceCriterion, format_reconciliation, prefilter, reconcile,
@@ -51,6 +52,7 @@ from metis_mcp.ontology.validation import validate_update
 from metis_mcp.mbt.cross_surface import (
     InvokesLink, LinkSet, divergences, format_divergences,
 )
+from metis_mcp.review.decisions import DIVERGENCE_CHOICES
 from metis_mcp.review.state import (
     OverlayResult, ReviewState, default_state_path, overlay, record, summarise,
     source_fingerprint,
@@ -58,13 +60,14 @@ from metis_mcp.review.state import (
 from metis_mcp.mbt.graph_loader import (
     load_component, load_from_graph, load_inherited_guards, load_validating_criteria,
 )
-from metis_mcp.mbt.graph_session import GraphNotConfigured, session
+from metis_mcp.mbt.graph_session import PASSWORD_ENV, GraphNotConfigured, session
 from metis_mcp.mbt.graph_writer import GENERATOR_VERSION, persist, plan_persist
 from metis_mcp.model_sources import availability, get as get_source, land, plan_landing
 from metis_mcp.specgen import build as build_spec, dated_export, living_page
 from metis_mcp.specgen import writeback as spec_writeback
 from metis_mcp.publishing import (
-    AFFIRMATIVE, ConfirmationRefused, DryRunTransport, PublicationLedger, compare, confirm,
+    AFFIRMATIVE, DEFAULT_TRANSPORT, TRANSPORTS,
+    ConfirmationRefused, DryRunTransport, PublicationLedger, compare, confirm,
     default_ledger_path, format_batch, format_drift, plan_publication, publish,
     record_generation,
 )
@@ -151,6 +154,43 @@ class ApprovalRequired(Exception):
     """Raised when generation is attempted on a model that is not approved (G1)."""
 
 
+def _driver_failures() -> tuple[type[BaseException], ...]:
+    """The neo4j exceptions `main` turns into a message instead of a traceback.
+
+    Resolved lazily and tolerantly. The driver import is deferred everywhere
+    else in this tree so that file-based commands run with no database
+    dependency, and hoisting it here to build an `except` clause would undo
+    that. An empty tuple is a valid `except` target that catches nothing, which
+    is the right behaviour when there is no driver to raise these anyway.
+    """
+    try:
+        from neo4j.exceptions import AuthError, ConfigurationError, Neo4jError, ServiceUnavailable
+    except ImportError:                       # pragma: no cover - env-dependent
+        return ()
+    return (ServiceUnavailable, AuthError, ConfigurationError, Neo4jError)
+
+
+def _graph_failure_message(exc: BaseException) -> str:
+    """One line, plus the repair that matches the failure.
+
+    Three different things go wrong here and they were indistinguishable in a
+    traceback: the database is not running, the credential is wrong, or the URI
+    names something that is not a Neo4j endpoint.
+    """
+    first = str(exc).strip().splitlines()
+    detail = first[0] if first else exc.__class__.__name__
+    name = exc.__class__.__name__
+    if name == "AuthError":
+        repair = (f"the credential was refused. {PASSWORD_ENV} in the "
+                  f"environment overrides the config file for one run.")
+    elif name == "ServiceUnavailable":
+        repair = ("nothing answered. Start the database, or check "
+                  "METIS_NEO4J_URI. `metis doctor` reports this too.")
+    else:
+        repair = "run `metis doctor` for the connection this build resolved."
+    return f"{detail}\n  -> {repair}"
+
+
 def _require_approved(model: Model, args=None) -> None:
     """Spec G1: a model must be approved before anything is generated from it.
 
@@ -191,9 +231,17 @@ def _require_approved(model: Model, args=None) -> None:
     raise ApprovalRequired("\n".join(lines))
 
 
+# `valid_to = ''` is the "still true" filter (D-15). Without it this read
+# answered *what did we ever believe* while looking like *what do we believe
+# now*: once a criterion is superseded, its earlier revision is still in the
+# graph with its `VALIDATES` edge intact, and an unfiltered read hands the
+# reviewer the wording that was replaced.
+#
+# Harmless until supersession existed, which is exactly why it is easy to leave.
 CRITERIA_CYPHER = """
 MATCH (a:AcceptanceCriterion)-[:VALIDATES]->(t:Transition|ApiCall|UiAction)
 WHERE $journey IN t.functional_areas
+  AND (a.valid_to IS NULL OR a.valid_to = '')
 RETURN t.id AS transition, a.id AS criterion_id, a.text AS text
 """
 
@@ -237,9 +285,13 @@ def _proposers_from_graph(args) -> dict[str, str]:
         return {}
 
 
+# Same filter, same reason. This one feeds reconciliation, where a superseded
+# criterion counted as confirmed would report a transition as specified by a
+# claim nobody stands behind any more.
 GRAPH_CRITERIA_CYPHER = """
 MATCH (a:AcceptanceCriterion)-[:VALIDATES]->(t:Transition|ApiCall|UiAction)
 WHERE $journey IN t.functional_areas
+  AND (a.valid_to IS NULL OR a.valid_to = '')
 RETURN DISTINCT a.id AS id, a.text AS text,
        coalesce(a.provenance, 'code_derived') AS provenance
 """
@@ -255,28 +307,22 @@ def _graph_confirmed(args) -> list:
     report that contradicted the graph it was reading from, in the alarming
     direction.
     """
-    from metis_mcp.reconciliation.matching import ConfirmedMatch
+    from metis_mcp.mbt.graph_loader import load_confirmed_matches
 
     if not getattr(args, "journey", None):
         return []
     try:
         with session(getattr(args, "uri", None), getattr(args, "user", None)) as s:
-            return [ConfirmedMatch(
-                        ac_id=r["ac_id"], transition_id=r["transition_id"],
-                        confirmed_by=r["confirmed_by"] or "unknown",
-                        provenance=r["provenance"])
-                    for r in s.run(GRAPH_CONFIRMED_CYPHER, journey=args.journey)]
+            return load_confirmed_matches(s, args.journey)
     except GraphNotConfigured:
         return []
 
 
-GRAPH_CONFIRMED_CYPHER = """
-MATCH (a:AcceptanceCriterion)-[v:VALIDATES]->(t:Transition|ApiCall|UiAction)
-WHERE $journey IN t.functional_areas
-RETURN a.id AS ac_id, t.id AS transition_id,
-       coalesce(v.confirmed_by, '') AS confirmed_by,
-       coalesce(a.provenance, 'code_derived') AS provenance
-"""
+# `GRAPH_CONFIRMED_CYPHER` stood here and is now
+# `graph_loader.CONFIRMED_MATCHES_CYPHER`, which is where the other reads of the
+# same shape live -- and where `test_ontology.py` can see it. It gained a
+# validity filter in the move: this copy would reconcile against a superseded
+# criterion.
 
 
 def _graph_criteria(args) -> list:
@@ -502,8 +548,16 @@ def cmd_publish(args) -> int:
         print(f"\nREFUSED: {e}")
         return 1
 
-    # T-21/C3: dry-run is the only transport registered in the first release.
-    transport = DryRunTransport()
+    # Dry-run remains the DEFAULT, and selecting anything else is an explicit
+    # act. A live transport also needs the installation switch, checked by
+    # `check_permitted` inside `publish` -- so a caller who passes `--transport
+    # zephyr-scale` on a machine that was never configured for external writes
+    # is refused there, with nothing sent.
+    if getattr(args, "transport", "dry-run") == "zephyr-scale":
+        from metis_mcp.publishing.zephyr import ZephyrScaleTransport
+        transport = ZephyrScaleTransport()
+    else:
+        transport = DryRunTransport()
     result = publish(batch, transport, confirmation)
 
     if not result.ok:
@@ -512,6 +566,20 @@ def cmd_publish(args) -> int:
 
     print(f"\n{len(result.sent)} operation(s) sent via {result.transport} "
           f"(dry run: {result.dry_run}), confirmed by {result.confirmed_by}.")
+
+    # What actually left Métis, recorded before the baseline moves. A dry run
+    # records nothing -- it learns no published id, and inventing one would put a
+    # fiction where the next drift comparison reads its evidence.
+    from metis_mcp.publishing.drift import record_publication
+
+    recorded = record_publication(ledger, batch.operations, result.sent, cases,
+                                  dry_run=result.dry_run)
+    if recorded:
+        print(f"Recorded {recorded} published id(s) — MANUALLY_EDITED and "
+              f"OBSOLETE drift can be detected from the next run on.")
+    elif not result.dry_run:
+        print("No published id came back, so nothing was recorded. The next run "
+              "cannot tell a hand edit from a new case.")
 
     # The baseline moves only now -- see drift.record_generation's docstring.
     record_generation(ledger, ledger.model_id, cases)
@@ -848,6 +916,367 @@ def cmd_analyse(args) -> int:
     return _run_workflow(args, resume=False)
 
 
+def _load_register(where: str):
+    """The register file, or None having said why on stderr.
+
+    Shared so `check` and `report` cannot disagree about what a readable
+    register is, and so both spend the same exit code (2) on a file problem —
+    which a pipeline needs to tell apart from a register that is merely wrong.
+    """
+    import json as _json
+
+    path = FsPath(where)
+    try:
+        raw = path.read_text()
+    except OSError as e:
+        print(f"cannot read {path}: {e}", file=sys.stderr)
+        return None
+    try:
+        return _json.loads(raw)
+    except _json.JSONDecodeError as e:
+        print(f"{path} is not valid JSON: {e}", file=sys.stderr)
+        return None
+
+
+def cmd_risk_report(args) -> int:
+    """The consolidated report — what the register says, not whether it is tidy.
+
+    Exits 0 even with coherence errors unless `--strict`: this verb exists to be
+    read in a review, and refusing to print the report because one row is
+    malformed would withhold the thing somebody asked for. `metis risk check` is
+    the verb that gates.
+    """
+    import json as _json
+
+    from metis_mcp.risk.report import consolidate, format_report
+
+    register = _load_register(args.register)
+    if register is None:
+        return 2
+
+    report = consolidate(register)
+    print(_json.dumps(report, indent=2) if args.json else format_report(report))
+    return 1 if (args.strict and report["errors"]) else 0
+
+
+def cmd_risk_assess(args) -> int:
+    """Write the risk assessment document, preserving what a person edited.
+
+    The document is meant to be edited — by a person or another agent — so
+    regeneration goes through `document.merge`, which keeps the five human
+    columns and every hand-added row. Without that the second run would silently
+    delete every probability anybody set, and look like a success doing it.
+    """
+    import json as _json
+
+    from metis_mcp.risk import document
+    from metis_mcp.risk import inputs as risk_inputs
+
+    try:
+        from metis_mcp import server
+    except Exception as e:                                   # noqa: BLE001
+        print(f"cannot load the tool surface: {e}", file=sys.stderr)
+        return 2
+
+    if args.subject == "requirement":
+        raw = server.requirement_risk(args.id, journey=args.journey,
+                                      surface=args.surface)
+        subject, assessment = args.id, "requirement"
+    else:
+        if not args.journey:
+            print("release assessment needs --journey", file=sys.stderr)
+            return 2
+        raw = server.release_risk(args.journey, args.surface)
+        subject = f"{args.journey} ({args.surface})"
+        assessment = "release"
+
+    payload = _json.loads(raw)
+    if not payload.get("ok"):
+        print(payload.get("reason", "the assessment could not be produced"),
+              file=sys.stderr)
+        return 2
+
+    doc = document.build(
+        assessment, subject,
+        gathered=payload.get("gathered") or {},
+        candidates=payload.get("candidates") or [])
+
+    target = FsPath(args.out) if args.out else None
+    existing = ""
+    if target and target.exists():
+        existing = target.read_text()
+        lost = document.parse_problems(existing)
+        if lost:
+            # Named, never skipped silently: a row that lost its shape is an
+            # edit somebody made, and dropping it is the same defect as
+            # overwriting one.
+            print(f"warning: {len(lost)} row(s) could not be read and will be "
+                  f"lost: {', '.join(lost)}", file=sys.stderr)
+        doc = document.merge(doc, existing)
+
+    # Recomputed after the merge rather than read off the payload: the tool
+    # computes completeness before any answer exists, so carrying its status
+    # here would keep the "Incomplete" banner over a document that now holds
+    # the answers. `status` below is this one, not the payload's.
+    doc["completeness"] = risk_inputs.completeness(
+        assessment, doc["gathered"], doc["answers"])
+    status = doc["completeness"]["status"]
+
+    rendered = document.render_markdown(doc)
+
+    if args.check:
+        if not target:
+            print("--check needs -o", file=sys.stderr)
+            return 2
+        # `generated_at` moves every run, so comparing the whole file would
+        # always differ. Compare everything else.
+        if _without_timestamp(rendered) == _without_timestamp(existing):
+            print(f"{target} is current")
+            return 0
+        print(f"{target} would change — regenerate", file=sys.stderr)
+        return 1
+
+    if target:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(rendered)
+        carried = doc.get("carried_over") or []
+        print(f"wrote {target} — {len(doc['candidates'])} risk(s), "
+              f"status {status}")
+        if carried:
+            print(f"  kept {len(carried)} row(s) you added: {', '.join(carried)}")
+        if existing:
+            print("  your Probability / Owner / Response / Status / Notes "
+                  "edits were preserved")
+    else:
+        print(rendered)
+
+    return 1 if status == "incomplete" and args.strict else 0
+
+
+def _without_timestamp(text: str) -> str:
+    """The document minus the one line that changes every run."""
+    return "\n".join(line for line in text.splitlines()
+                      if not line.startswith("*") or "generated 2" not in line)
+
+
+def cmd_design(args) -> int:
+    """Write the test design document, preserving what a person edited.
+
+    The document is meant to be edited -- by a person or another agent -- so
+    regeneration goes through `document.merge`, which keeps every human column
+    and every hand-added row. Without that the second run would silently delete
+    every decision anybody recorded, and look like a success doing it.
+
+    `--verify` is the third step of the loop this codebase runs everywhere:
+    Python computes the document, somebody writes into it, and Python checks it
+    is still the shape the merge can read.
+    """
+    import json as _json
+
+    from metis_mcp.design import document
+    from metis_mcp.design import inputs as design_inputs
+    from metis_mcp.design.sections import SECTIONS
+
+    target = FsPath(args.out) if args.out else None
+
+    if args.verify:
+        if not target or not target.exists():
+            print("--verify needs -o naming a document that exists",
+                  file=sys.stderr)
+            return 2
+        findings = document.verify(target.read_text())
+        if not findings:
+            print(f"{target} is readable and every column is declared")
+            return 0
+        print(f"{target}: {len(findings)} finding(s)", file=sys.stderr)
+        for finding in findings:
+            print(f"    {finding}", file=sys.stderr)
+        return 1
+
+    if args.section and args.section not in SECTIONS:
+        print(f"no section named {args.section!r}. Known: "
+              f"{', '.join(sorted(SECTIONS))}", file=sys.stderr)
+        return 2
+
+    try:
+        from metis_mcp import server
+    except Exception as e:                                   # noqa: BLE001
+        print(f"cannot load the tool surface: {e}", file=sys.stderr)
+        return 2
+
+    raw = server.design_report(journey=args.journey, surface=args.surface,
+                               section=args.section,
+                               requirement_id=args.requirement)
+    payload = _json.loads(raw)
+    if not payload.get("ok"):
+        print(payload.get("reason", "the design could not be produced"),
+              file=sys.stderr)
+        for candidate in payload.get("available") or []:
+            print(f"    {candidate.get('journey')} / {candidate.get('surface')}",
+                  file=sys.stderr)
+        return 2
+
+    # Rebuilt here rather than parsed back out of the payload: the document is
+    # the deliverable and the tool returns a summary of it, so re-deriving from
+    # the same reads is what keeps the two from disagreeing.
+    rendered = server.design_report(
+        journey=args.journey, surface=args.surface, section=args.section,
+        requirement_id=args.requirement, as_markdown=True)
+
+    existing = ""
+    if target and target.exists():
+        existing = target.read_text()
+        lost = document.parse_problems(existing)
+        if lost:
+            # Named, never dropped silently: a row that lost its shape is an
+            # edit somebody made, and losing it is the same defect as
+            # overwriting one.
+            print(f"warning: {len(lost)} row(s) could not be read and will be "
+                  f"lost: {', '.join(lost)}", file=sys.stderr)
+
+    if existing:
+        rendered = _merge_rendered(rendered, existing)
+
+    if args.check:
+        if not target:
+            print("--check needs -o", file=sys.stderr)
+            return 2
+        if _without_timestamp(rendered) == _without_timestamp(existing):
+            print(f"{target} is current")
+            return 0
+        print(f"{target} would change — regenerate", file=sys.stderr)
+        return 1
+
+    status = payload.get("status", design_inputs.INCOMPLETE)
+    if target:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(rendered)
+        rows = sum(s.get("rows", 0) for s in payload.get("sections") or [])
+        print(f"wrote {target} — {rows} row(s) across "
+              f"{len(payload.get('sections') or [])} section(s), status {status}")
+        if existing:
+            print("  your Decision / Owner / Notes edits and any row you added "
+                  "were preserved")
+        if status == design_inputs.INCOMPLETE:
+            missing = [m["name"] for m in payload.get("missing_inputs") or []
+                       if m.get("required")]
+            print(f"  INCOMPLETE — {len(missing)} required input(s) unanswered: "
+                  f"{', '.join(missing)}")
+    else:
+        print(rendered)
+
+    return 1 if status == design_inputs.INCOMPLETE and args.strict else 0
+
+
+def _merge_rendered(rendered: str, existing: str) -> str:
+    """Carry an existing document's human columns into a freshly rendered one.
+
+    Works on the rendered text rather than on the document structure, because
+    the render came back from the tool as Markdown. The merge itself is still
+    `document_table.merge_rows`, applied per section -- what changes is only
+    where the generated rows are read from.
+    """
+    from metis_mcp.design import document, sections
+    from metis_mcp.document_table import merge_rows, row
+
+    out = rendered
+    for declared in sections.ordered():
+        previous = document.parse(existing, declared)
+        if not previous:
+            continue
+        current = document.parse(rendered, declared)
+        merged, leftover = merge_rows(list(current.values()), previous,
+                                      human_columns=declared.human_columns)
+        by_id = {record["id"]: record for record in merged}
+
+        lines = out.splitlines()
+        for index, line in enumerate(lines):
+            stripped = line.strip()
+            if not stripped.startswith("|"):
+                continue
+            identifier = stripped.split("|")[1].strip()
+            record = by_id.get(identifier)
+            if record is None or identifier not in current:
+                continue
+            lines[index] = row([identifier]
+                               + [record.get(f) for f in declared.fields])
+        out = "\n".join(lines) + ("\n" if out.endswith("\n") else "")
+
+        # Rows this run did not produce are somebody's, or are about a fact
+        # that has gone. Both are appended rather than dropped.
+        if leftover:
+            anchor_line = f"{document._heading(declared)}"
+            block = "\n".join(
+                row([prior.get("id")] + [prior.get(f) for f in declared.fields])
+                for prior in leftover)
+            marker = "\n\n**Columns.**"
+            head = out.index(anchor_line)
+            tail = out.index(marker, head)
+            out = out[:tail] + "\n" + block + out[tail:]
+    return out
+
+
+def cmd_risk(args) -> int:
+    """Check a risk register file, for CI.
+
+    The register is a file on purpose — `docs/academy/PROPOSAL-risk-in-the-graph.md`
+    argues that out — and a file that nothing checks drifts. Everything here was
+    reachable only through MCP, which a pipeline cannot call.
+
+    **It reports incoherence, never judgement.** Whether a risk is real, rated
+    correctly or worth the response is a person's call and no exit code should
+    imply otherwise.
+    """
+    from metis_mcp.risk.register import ERROR, summarise, validate
+
+    register = _load_register(args.register)
+    if register is None:
+        return 2
+    import json as _json
+
+    findings = validate(register)
+    summary = summarise(register)
+    errors = [f for f in findings if f.severity == ERROR]
+
+    if args.json:
+        print(_json.dumps({
+            "ok": not errors,
+            "findings": [f.describe() for f in findings],
+            "summary": summary,
+        }, indent=2))
+    else:
+        print(f"{args.register} — {summary['total']} risk(s), "
+              f"{summary['open']} open, {summary['closed']} closed")
+        # The split is printed whether or not the register is mixed. A reader who
+        # only ever sees it on mixed files learns to read its ABSENCE as "all
+        # authored", which is the assumption this line exists to remove.
+        split = summary["by_derivation"]
+        line = (f"  authored {split['authored']}, "
+                f"model-derived {split['model']}")
+        # Printed only when non-zero, but never omitted when it is: an
+        # unrecognised derivation is a row that belongs to neither claim, and
+        # leaving it out of the line would make the two counts look like the
+        # whole register when they are not.
+        if split.get("unknown"):
+            line += f", unrecognised {split['unknown']}"
+        if summary["mixed"]:
+            line += "  (mixed — never total across these)"
+        print(line)
+        if findings:
+            print()
+            for finding in findings:
+                print(f"  {finding.describe()}")
+        print()
+        print("  no incoherence found" if not findings else
+              f"  {len(errors)} error(s), {len(findings) - len(errors)} warning(s)")
+        print("  This checks a register against itself. Whether a risk is real, "
+              "or rated\n  correctly, is a judgement and is not checked here.")
+
+    if errors:
+        return 1
+    return 1 if (args.strict and findings) else 0
+
+
 def cmd_properties(args) -> int:
     """What each property of a node is for — the call, or the behaviour.
 
@@ -1005,13 +1434,95 @@ def cmd_paths(args) -> int:
     return 0
 
 
+def cmd_checkout(args) -> int:
+    """Obtain a repository to analyse.
+
+    `metis analyse` has always needed a checkout already on disk and nothing
+    said why -- unaddressed rather than decided. A checkout is an intake source,
+    not the system under test (X-7a), so this needs no execution tier.
+    """
+    from metis_mcp.checkout import CheckoutFailed, UnsafeRemote, clone
+
+    try:
+        result = clone(args.remote, args.into, ref=args.ref,
+                       depth=0 if args.full else args.depth,
+                       replace=args.replace)
+    except (UnsafeRemote, CheckoutFailed) as e:
+        print(f"REFUSED: {e}")
+        return 1
+
+    print(f"  {result['path']}")
+    print(f"  ref {result['ref']}, depth {result['depth']}, "
+          f"commit {result['commit'][:12]}")
+    print(f"\n{result['means']}")
+    print(f"\nNext:  metis analyse --repo {result['path']}")
+    return 0
+
+
+def cmd_scaffold(args) -> int:
+    """The handoff to a generator outside Métis (R8).
+
+    Emits the flow manifest `flow_scaffold` returns, as a file or to stdout.
+    Here as well as on the MCP surface because the CLI is meant to be the
+    fullest surface, and a generator is usually driven from a build rather than
+    from a chat session.
+    """
+    import json as _json
+
+    from metis_mcp.scaffold import KNOWN_TARGETS, flow_manifests
+
+    model, result = _generate(args)
+    rendered = render(model, result.paths)
+
+    payloads: dict = {}
+    auth: dict = {}
+    if getattr(args, "journey", ""):
+        # Composed from the authoring surface, which already states the accepted
+        # space and already carries its own caveats about what extraction cannot
+        # see. Failure here degrades the manifest; it does not fail the command.
+        try:
+            from metis_mcp.authoring import auth_facts
+
+            auth = auth_facts(args.journey)
+        except Exception as e:                                   # noqa: BLE001
+            auth = {"unavailable": f"auth facts could not be read: {e}"}
+
+    document = flow_manifests(model, rendered.cases,
+                              target=args.target, payloads=payloads, auth=auth)
+    text = _json.dumps(document, indent=2)
+
+    if getattr(args, "out", ""):
+        FsPath(args.out).write_text(text)
+        print(f"Wrote {args.out} — {len(rendered.cases)} flow(s), "
+              f"target {args.target!r}.")
+        print(f"Translation rules: {KNOWN_TARGETS.get(args.target)}")
+    else:
+        print(text)
+    return 0
+
+
 def cmd_render(args) -> int:
     model, result = _generate(args)
     rendered = render(model, result.paths)
-    for case in rendered.cases:
-        print(format_case(case))
-        print("\n" + "-" * 68 + "\n")
-    print(f"{len(rendered.cases)} test cases, one validation each.")
+
+    if getattr(args, "gherkin", False):
+        from metis_mcp.rendering import feature_for
+
+        text = feature_for(model, rendered.cases, criterion=args.criterion)
+        if getattr(args, "out", ""):
+            FsPath(args.out).write_text(text)
+            # To stderr-ish prose on stdout: the file is the artefact, and a
+            # summary mixed into it would not parse as Gherkin.
+            print(f"Wrote {args.out} — {len(rendered.cases)} scenario(s).")
+            print("Step definitions are your framework's; Métis wrote none.")
+        else:
+            print(text, end="")
+    else:
+        for case in rendered.cases:
+            print(format_case(case))
+            print("\n" + "-" * 68 + "\n")
+        print(f"{len(rendered.cases)} test cases, one validation each.")
+
     if rendered.failures:
         print("\nRendering failures:")
         for key, reason in rendered.failures:
@@ -1322,10 +1833,18 @@ def cmd_review_queue(args) -> int:
                 + ("WHERE $journey IN coalesce(n.functional_areas, []) "
                    if getattr(args, "journey", None) else "")
                 + "RETURN label, n.id AS id, n.name AS name, "
-                  "coalesce(n.lifecycle_state, '<none>') AS state "
+                  "coalesce(n.lifecycle_state, '<none>') AS state, "
+                  "coalesce(n.revision, 1) AS revision, "
+                  "coalesce(n.text, n.statement, '') AS text "
                   "ORDER BY label, n.id",
                 journey=getattr(args, "journey", None)):
             rows.append(dict(r))
+
+        # **What a superseded claim used to say.** A reviewer looking at
+        # revision 2 of a requirement needs the wording somebody already
+        # approved beside the wording they are being asked about; without it,
+        # "this changed" is a fact they cannot act on.
+        previous = _previous_revisions(s, rows)
 
     if not rows:
         print("Nothing is awaiting a decision.")
@@ -1340,11 +1859,149 @@ def cmd_review_queue(args) -> int:
     print()
     for row in rows[:args.limit]:
         print(f"  {row['state']:<11} {row['label']:<14} {row['id'][:70]}")
+        prior = previous.get(row["id"])
+        if prior:
+            # Indented under the row it belongs to, and the OLD text first:
+            # the question is "what changed", and a diff reads forwards.
+            print(f"       revision {prior['revision']} → {row['revision']}, "
+                  f"superseded {prior['valid_to']}")
+            print(f"         was: {prior['text'][:100]}")
+            print(f"         now: {row['text'][:100]}")
     if len(rows) > args.limit:
         print(f"  … and {len(rows) - args.limit} more (--limit to see them)")
+    if previous:
+        print(f"\n  {len(previous)} of these replace an earlier revision. The "
+              f"earlier one keeps\n  the decision it was given (I-19) and is "
+              f"still readable as-at its own window.")
     print("\n  lifecycle_state is authoritative; the marker is kept in step "
           "with it.\n  Decide with: review export … then review apply … --resume")
     return 0
+
+
+PREVIOUS_REVISION_CYPHER = """
+UNWIND $keys AS wanted
+MATCH (n)
+WHERE any(l IN labels(n) WHERE l IN $labels)
+  AND n.valid_to IS NOT NULL AND n.valid_to <> ''
+  AND n.id STARTS WITH wanted + $separator
+RETURN wanted AS logical_key, n.id AS id, n.valid_to AS valid_to,
+       coalesce(n.revision, 1) AS revision,
+       coalesce(n.text, n.statement, '') AS text,
+       coalesce(n.lifecycle_state, '<none>') AS state
+ORDER BY n.valid_to DESC
+"""
+
+
+def _previous_revisions(session, rows) -> dict:
+    """`{current node id: the revision it replaced}` for the claims in `rows`.
+
+    Keyed by the CURRENT id so the caller can print the pair together. Only the
+    most recently closed window per logical key is returned -- a requirement on
+    its fourth wording has three predecessors, and a queue is not where somebody
+    reads all of them.
+
+    Degrades to an empty map rather than failing the command: this is context
+    beside a decision, and a queue that refuses to render because the history
+    query failed is worse than one that renders without it.
+    """
+    from metis_mcp.identity.keys import CLAIM_SEPARATOR, logical_key_of
+    from metis_mcp.ontology.labels import VALIDITY_LABELS
+
+    claims = {logical_key_of(r["id"]): r["id"] for r in rows
+              if r["label"] in VALIDITY_LABELS
+              and CLAIM_SEPARATOR in (r["id"] or "")}
+    if not claims:
+        return {}
+    try:
+        found: dict[str, dict] = {}
+        for row in session.run(PREVIOUS_REVISION_CYPHER,
+                               keys=sorted(claims),
+                               labels=list(VALIDITY_LABELS),
+                               separator=CLAIM_SEPARATOR):
+            current_id = claims[row["logical_key"]]
+            if row["id"] != current_id:
+                found.setdefault(current_id, dict(row))
+        return found
+    except Exception:
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# `metis decide` -- the three decisions that had a screen and no apply path
+# ---------------------------------------------------------------------------
+#
+# A group of its own rather than subcommands under `divergence`, `reconcile` and
+# `drift`. Those three are flat verbs taking positional model paths, so giving
+# them subparsers would break every existing invocation -- and the grouping is
+# wrong anyway: `drift` REPORTS and this DECIDES, which are different acts with
+# different capabilities. `review queue|export|apply` already sets the shape.
+#
+# Every one of them goes through `review.decisions`, the same module the review
+# UI calls, because N-1 requires every surface to produce the same record. The
+# CLI gets them first on N-8's rule: it is the fullest surface.
+
+def _decide_state(args):
+    """Load the review-state file these decisions accumulate in, or refuse.
+
+    Refusing on a missing `--state` rather than defaulting: a decision written to
+    a path nobody named is a decision nobody can find again, and these three have
+    no model file to derive a default from the way `review apply` does.
+    """
+    if not getattr(args, "state", ""):
+        raise SystemExit(
+            "decide: --state is required. These decisions accumulate in a "
+            "review-state file (`<model>.review.json`), which is committed "
+            "beside the model it is about.")
+    return ReviewState.load(args.state)
+
+
+def _decide_finish(args, state, result, what: str) -> int:
+    """Report, persist, and record the audit entry every surface shares."""
+    if not result.ok:
+        print(f"REFUSED: {result.blocked_reason}")
+        return 4
+    state.save(args.state)
+    record = result.applied[0]
+    print(f"{what}: {record.element_id} -> {record.decision}")
+    if record.rationale:
+        print(f"  because: {record.rationale}")
+    print(f"  recorded by {record.reviewer or '<unattributed>'} "
+          f"at {record.decided_at} in {args.state}")
+    return 0
+
+
+def cmd_decide_divergence(args) -> int:
+    from metis_mcp.review.decisions import resolve_divergence
+    from metis_mcp.review.roles import RESOLVE_DIVERGENCE, Identity, require
+
+    require(Identity(args.as_identity, args.role), RESOLVE_DIVERGENCE)
+    state = _decide_state(args)
+    result = resolve_divergence(state, args.element_id, args.choice,
+                                args.rationale, actor=args.as_identity)
+    return _decide_finish(args, state, result, "divergence resolved")
+
+
+def cmd_decide_match(args) -> int:
+    from metis_mcp.review.decisions import confirm_match
+    from metis_mcp.review.roles import CONFIRM_MATCH, Identity, require
+
+    require(Identity(args.as_identity, args.role), CONFIRM_MATCH)
+    state = _decide_state(args)
+    result = confirm_match(state, args.ac_id, args.transition_id,
+                           confirmed=not args.reject, rationale=args.rationale,
+                           actor=args.as_identity)
+    return _decide_finish(args, state, result, "match")
+
+
+def cmd_decide_drift(args) -> int:
+    from metis_mcp.review.decisions import decide_drift
+    from metis_mcp.review.roles import DECIDE_DRIFT, Identity, require
+
+    require(Identity(args.as_identity, args.role), DECIDE_DRIFT)
+    state = _decide_state(args)
+    result = decide_drift(state, args.case_id, args.resolution,
+                          rationale=args.rationale, actor=args.as_identity)
+    return _decide_finish(args, state, result, "drift decided")
 
 
 def cmd_review_export(args) -> int:
@@ -2216,6 +2873,233 @@ def cmd_storage(args) -> int:
         return 1
 
 
+def cmd_requirement(args) -> int:
+    """State, revise or retire a requirement (§3.2 stage 1).
+
+    Dry by default and gated to land, because this is the one authoring path
+    where a person types a claim straight into the graph rather than carrying in
+    a document somebody else wrote. Seeing what it will land BEFORE it lands is
+    what makes "authoring is not approving" checkable rather than asserted.
+    """
+    from metis_mcp.requirements import AuthoringRefused, compose, describe
+
+    try:
+        # **No `--supersedes` flag, deliberately.** Reusing the key IS the
+        # revision: `landing.plan_supersession` matches on the logical key and
+        # stamps the revision number from the graph, so naming the previous node
+        # id changes nothing. A flag that looks causal and is not would invite
+        # somebody to omit it and expect a separate claim.
+        authored = compose(args.key, args.statement)
+    except AuthoringRefused as e:
+        print(f"REFUSED: {e}")
+        return 1
+
+    print(describe(authored))
+
+    if not args.land:
+        print("\nNothing was written. Re-run with --land to put this in the "
+              "graph at Quarantine.")
+        return 0
+
+    from metis_mcp.mbt.graph_session import GraphNotConfigured, session
+    from metis_mcp.model_sources import land, plan_landing
+    from metis_mcp.model_sources.authored_claim import plan_claim
+
+    try:
+        with session(args.uri, args.user) as s:
+            result = land(s, plan_claim(authored, author=args.author))
+    except GraphNotConfigured as e:
+        print(f"\nNO GRAPH: {e}")
+        return 1
+
+    if not result.ok:
+        print(f"\nREFUSED: {result.refused}")
+        return 1
+
+    print(f"\nlanded: {result.nodes_written} node(s), "
+          f"{result.edges_written} edge(s) — episode {result.episode_id}")
+    if not result.superseded:
+        print("        first revision of this key — nothing to supersede")
+    # **Named, not counted.** A superseded claim is the single thing in a landing
+    # a reviewer most needs told: it is something somebody may already have
+    # approved that now says something else.
+    for entry in result.superseded:
+        print(f"        supersedes {entry['previous_id']} "
+              f"(now revision {entry['revision']}) — the previous revision keeps "
+              f"its own decision and stays readable (I-19)")
+    if result.unmatched:
+        print(f"        !! {len(result.unmatched)} edge(s) matched nothing")
+    print(f"\nIt is at Quarantine. Review it with:\n"
+          f"  metis review export --journey <j> --surface api -o review.json")
+    return 0
+
+
+def cmd_academy(args) -> int:
+    """The academy as a site (no graph, no network).
+
+    **Why this exists.** The operator track is written for a business analyst,
+    a product owner or a QA lead, and it was delivered as markdown in a git
+    repository -- which is not a delivery mechanism for that reader. The other
+    route in, `ask` over the landed corpus, returns the right lesson first about
+    four times in ten and both obvious levers were measured and moved it by ~1.
+    A browsable index with a search box is the cheap fix nobody had made.
+    """
+    from metis_mcp import academy_site
+    from metis_mcp.model_sources.lessons import LessonsRefused, read_lessons
+
+    try:
+        lessons = read_lessons(args.directory)
+    except LessonsRefused as e:
+        print(f"REFUSED: {e}")
+        return 1
+
+    proposals = academy_site.read_proposals(args.directory)
+
+    if args.check:
+        # Not the guide's `--check`. `docs/academy-site/` is deliberately not
+        # committed, so this compares a rendered site against the lessons it
+        # came from -- for whoever rendered it. `test_academy_site.py` is what
+        # holds the repository-wide half (every lesson gets a page).
+        drifted = academy_site.check(args.out, lessons, proposals)
+        if drifted:
+            print(f"STALE — run `metis academy` and reopen {args.out}:")
+            for line in drifted:
+                print(f"    {line}")
+            return 1
+        pages = len(academy_site.build(lessons, proposals))
+        print(f"{pages} page(s) from {len(lessons)} lesson(s) up to date.")
+        return 0
+
+    written = academy_site.write(args.out, lessons, proposals)
+    print(f"{len(written)} page(s) from {len(lessons)} lesson(s) -> {args.out}")
+    for path in written[:4]:
+        print(f"  {path}")
+    if len(written) > 4:
+        print(f"  … and {len(written) - 4} more")
+    print(f"\nOpen {args.out}/index.html. Generated, never authored: the next "
+          f"run overwrites it, and docs/academy/ stays the source of truth.")
+    return 0
+
+
+def cmd_history(args) -> int:
+    """Repair history -> the graph (D-1's writer for `Commit`).
+
+    `--check` reads and reports without a database: the common failure is a
+    range nobody meant or a fix pattern that matches nothing, and finding that
+    out should not need Neo4j.
+
+    **`--fetch-missing` is opt-in and says so.** Without it, a commit naming a
+    ticket the graph does not hold is REPORTED — never dropped, and never
+    fetched behind the operator's back. With it, the item is read from the
+    tracker first, landed as an anchor, and the commit is then linked to a node
+    that exists.
+    """
+    from metis_mcp.mbt.graph_session import session
+    from metis_mcp.model_sources import repair_landing
+    from metis_mcp.model_sources.landing import land
+
+    from code_analysis import history as repair_history
+
+    found = repair_history.read(args.repo, since=args.since, until=args.until,
+                                limit=args.limit)
+    if found.unavailable:
+        print(f"REFUSED: {found.unavailable}")
+        return 1
+
+    print(f"{len(found.repairs)} repair(s) in {found.commits_read} commit(s), "
+          f"{args.since}..{args.until}")
+    for repair in found.repairs[:10]:
+        keys = f"  -> {', '.join(repair.tickets)}" if repair.tickets else ""
+        print(f"  {repair.sha[:8]} [{repair.fix_basis}] {repair.subject[:52]}{keys}")
+    if len(found.repairs) > 10:
+        print(f"  ... and {len(found.repairs) - 10} more")
+
+    if not found.repairs:
+        # Not an error, and worth saying out loud: a window with no repairs and
+        # a fix pattern that matches nothing look identical from here.
+        print("\nno commit in this window was classified as a repair. If that "
+              "is surprising, check `history.FIX_PATTERNS` against how this "
+              "project writes subjects.")
+
+    if args.check:
+        return 0
+
+    fetch = None
+    if args.fetch_missing:
+        get = _tracker_get(args.token_env, args.system)
+        base_url = args.base_url
+
+        def fetch(keys):
+            from code_analysis import tracker
+
+            return tracker.read(args.system, base_url, keys, get)
+
+    with session(getattr(args, "uri", None), getattr(args, "user", None)) as s:
+        known = _known_ticket_keys(s, args.system)
+        plan = repair_landing.plan_repairs(
+            found, repo=args.project or str(args.repo),
+            class_for_file=_class_for_file(s, args.project or str(args.repo)),
+            known_tickets=known, fetch_missing=fetch, system=args.system,
+            job_id=args.job_id)
+        if not plan.is_legal:
+            print(f"REFUSED: {len(plan.errors)} error(s); nothing was written")
+            for error in plan.errors[:5]:
+                print(f"    {error}")
+            return 1
+        result = land(s, plan)
+
+    print(f"\nlanded: {result.nodes_written} node(s) at Quarantine (S-4), "
+          f"episode {plan.episode_id}")
+    if result.unmatched:
+        print(f"  {len(result.unmatched)} edge(s) matched nothing")
+    if plan.skipped:
+        # The half this verb exists to make visible.
+        print(f"\n{len(plan.skipped)} ticket(s) named by a fix and not in the "
+              f"graph:")
+        for key, why in plan.skipped[:10]:
+            print(f"  {key}: {why}")
+    return 0
+
+
+def _known_ticket_keys(session_, system: str) -> set:
+    """The tracker keys the graph already holds, so a FIXES edge has a target."""
+    label = {"jira": "JiraItem", "zephyr": "ZephyrItem",
+             "confluence": "ConfluenceItem"}.get(system, "JiraItem")
+    rows = session_.run(f"MATCH (i:{label}) RETURN i.{system}_key AS key")
+    return {row["key"] for row in rows if row["key"]}
+
+
+def _class_for_file(session_, project: str):
+    """A resolver from repo-relative path to `Class` id, built once per run.
+
+    Reads the anchors already landed rather than guessing a mapping: a `Class`
+    node knows the file it came from, and a path this returns "" for is a real
+    change that reaches no type — a build script, a README — which gets no edge
+    (X-6d).
+    """
+    rows = session_.run(
+        "MATCH (c:Class) WHERE c.m_project = $project "
+        "RETURN c.id AS id, c.anchor AS anchor", project=project)
+    by_file: dict[str, str] = {}
+    for row in rows:
+        anchor = row["anchor"] or ""
+        path = anchor.split(":", 1)[0].split("@", 1)[0]
+        if path and row["id"]:
+            by_file.setdefault(path, row["id"])
+
+    def resolve(path: str) -> str:
+        if path in by_file:
+            return by_file[path]
+        # A repository read from its root and a CPG built from a module report
+        # paths differently; match on the tail rather than failing every join.
+        tail = path.split("/")[-1]
+        matches = [cid for file, cid in by_file.items()
+                   if file.split("/")[-1] == tail]
+        return matches[0] if len(matches) == 1 else ""
+
+    return resolve
+
+
 def cmd_lessons(args) -> int:
     """The academy -> the graph (D-1's writer for `Lesson`).
 
@@ -2424,7 +3308,7 @@ def cmd_guide(args) -> int:
     `--check` regenerates into memory and diffs, which is what makes a stale
     guide a failing build rather than a surprise found by a reader.
     """
-    from metis_mcp import guide
+    from metis_mcp import guide, knowledge_gen
 
     pages = guide.generate()
     target = FsPath(args.directory)
@@ -2437,18 +3321,26 @@ def cmd_guide(args) -> int:
                 stale.append(f"{name}: missing")
             elif path.read_text() != content:
                 stale.append(f"{name}: differs from what the engine generates")
+        # The skills' `knowledge/` is generated the same way and from the same
+        # kind of source, so it is checked by the same command rather than by a
+        # second verb somebody has to remember. `knowledge` was already taken by
+        # the knowledge-centre file (§4.5), which is a different object.
+        stale += knowledge_gen.check()
         if stale:
             print("STALE — run `metis guide` and commit the result:")
             for line in stale:
                 print(f"    {line}")
             return 1
-        print(f"{len(pages)} page(s) up to date.")
+        fragments = len(knowledge_gen.generate())
+        print(f"{len(pages)} page(s) and {fragments} knowledge file(s) up to date.")
         return 0
 
     written = guide.write(target)
     for path in written:
         print(f"  wrote {path}")
+    fragments = knowledge_gen.write()
     print(f"\n{len(written)} page(s). Each states what it was generated from.")
+    print(f"{len(fragments)} skill knowledge file(s) from module docstrings.")
     return 0
 
 
@@ -2500,6 +3392,65 @@ def _tracker_get(token_env: str, system: str):
     return get
 
 
+def _apply_requirements_profile(args):
+    """Fill unset fetch arguments from the project profile's `requirements` block.
+
+    **Arguments win.** A profile states the standing configuration; a flag is
+    somebody overriding it for one run, and silently ignoring that would be the
+    worse surprise.
+
+    A profile that names a `fixture_dir` and no `base_url` is a complete working
+    configuration -- that is how the batch path is developed and tested without
+    anyone having a tracker, and it is what `demo_project/trackers/` is for.
+    """
+    if not getattr(args, "project", ""):
+        return args
+
+    from code_analysis.project_profile import load_project
+
+    source = load_project(args.project).requirements
+    if not source.is_configured:
+        raise ValueError(
+            f"profile {args.project!r} declares no `requirements` block, so "
+            f"there is nothing to fetch from. Add one naming the system, the "
+            f"items, and either a fixture_dir or a base_url.")
+
+    if not getattr(args, "system", "") or args.system == "jira":
+        # `jira` is argparse's default rather than a stated choice, so it must
+        # not outrank a profile that says `confluence`. An explicitly-passed
+        # `--system jira` is indistinguishable here and loses; that is the cost
+        # of a default, and the profile is the more considered statement.
+        args.system = source.system or args.system
+    if not getattr(args, "key", None) and source.keys:
+        args.key = list(source.keys)
+    if not getattr(args, "base_url", ""):
+        args.base_url = source.base_url
+    if not getattr(args, "token_env", ""):
+        args.token_env = source.token_env
+    if not getattr(args, "fixture", "") and source.fixture_dir:
+        args.fixture = _fixture_for(source)
+    return args
+
+
+def _fixture_for(source) -> str:
+    """The captured response for this system, inside the configured directory.
+
+    Named by system rather than guessed at: a directory holding both a Jira and
+    a Zephyr capture must not answer a Jira request with whichever file sorted
+    first.
+    """
+    directory = FsPath(source.fixture_dir)
+    candidate = directory / f"{source.system}.tracker.json"
+    if candidate.exists():
+        return str(candidate)
+    if directory.is_file():
+        return str(directory)
+    raise ValueError(
+        f"{directory} holds no capture for {source.system!r} "
+        f"(expected {candidate.name}). A fixture directory that cannot answer "
+        f"the configured system is a configuration error, not an empty read.")
+
+
 def cmd_intake_fetch(args) -> int:
     """A tracker item -> a UIF document, ready to land.
 
@@ -2509,13 +3460,25 @@ def cmd_intake_fetch(args) -> int:
     """
     from code_analysis import tracker
 
+    # **Configuration beats arguments, and a profile is where it lives.**
+    # Which tracker, which project and which items are decisions a deployment
+    # makes and changes without a release. Arguments still win where given, so a
+    # one-off read needs no profile at all.
+    try:
+        args = _apply_requirements_profile(args)
+    except Exception as e:                     # ProfileInvalid, or no such profile
+        print(f"REFUSED: {e}")
+        return 1
+
     try:
         if args.fixture:
             result = tracker.from_fixture(args.fixture)
         else:
             if not args.key:
-                print("REFUSED: --key is required for a live read. This reads "
-                      "named items; it does not crawl a tracker.")
+                print("REFUSED: no items named. Pass --key (repeatable), or "
+                      "--project naming a profile whose `requirements.keys` "
+                      "lists them. This reads named items; it does not crawl a "
+                      "tracker — see connectors/intakes.json.")
                 return 1
             result = tracker.read(args.system, args.base_url, args.key,
                                   _tracker_get(args.token_env, args.system))
@@ -2553,6 +3516,22 @@ def cmd_intake_fetch(args) -> int:
     return 0
 
 
+def replace_namespace(args, **overrides):
+    """A shallow copy of an argparse namespace with fields replaced.
+
+    `argparse.Namespace` has no `_replace`, and mutating the caller's namespace
+    inside a loop leaves it holding the last item's values -- which is the kind
+    of bug that only shows up on the second element.
+    """
+    import argparse
+    import copy
+
+    clone = argparse.Namespace(**vars(args))
+    for key, value in overrides.items():
+        setattr(clone, key, value)
+    return clone
+
+
 def cmd_intake_land(args) -> int:
     """A UIF document -> Episode, anchor, and what can honestly be derived.
 
@@ -2562,6 +3541,29 @@ def cmd_intake_land(args) -> int:
     """
     from metis_mcp.model_sources import intake_landing as intake
     from metis_mcp.model_sources.landing import land
+
+    # **A directory lands every document in it.** `intake fetch` writes one file
+    # per item and a real backlog is not one item, so requiring a separate
+    # invocation each made the batch path a shell loop somebody had to write.
+    # Each document still lands on its own -- one refusal must not take the
+    # others with it, because a single non-conformant ticket is normal.
+    target = FsPath(args.uif)
+    if target.is_dir():
+        documents = sorted(target.glob("*.uif.json"))
+        if not documents:
+            print(f"REFUSED: {target} holds no *.uif.json documents. An empty "
+                  f"directory and a directory of unreadable files are different "
+                  f"answers, and this is the first.")
+            return 1
+        print(f"{len(documents)} UIF document(s) in {target}\n")
+        failures = 0
+        for document_path in documents:
+            print(f"--- {document_path.name}")
+            one = replace_namespace(args, uif=str(document_path))
+            failures += 1 if cmd_intake_land(one) else 0
+            print()
+        print(f"{len(documents) - failures} landed, {failures} refused.")
+        return 1 if failures else 0
 
     try:
         document = intake.load(args.uif)
@@ -2691,6 +3693,90 @@ def cmd_intent_check(args) -> int:
     problems = validate(document)
     print(format_problems(problems, document))
     return 1 if problems else 0
+
+
+def cmd_intent_review(args) -> int:
+    """Read a stated intent from four directions, before anything is landed.
+
+    **This is the check that makes intent a pre-processor.** `intent check`
+    answers one of the four questions -- is every need specified -- and the other
+    three (can two people satisfy the wording, could anything test it, does
+    anybody know what being wrong costs) had no surface at all before this verb.
+
+    The document is meant to be edited, so regeneration goes through
+    `document.merge`: the Closed, Owner and Notes columns and any gap an analyst
+    added by hand survive.
+    """
+    import json as _json
+
+    from metis_mcp.analysis import document
+
+    source = FsPath(args.file)
+    if not source.exists():
+        print(f"{source}: no such file", file=sys.stderr)
+        return 2
+
+    try:
+        from metis_mcp import server
+    except Exception as e:                                   # noqa: BLE001
+        print(f"cannot load the tool surface: {e}", file=sys.stderr)
+        return 2
+
+    raw = server.analysis_report(source.read_text(), journey=args.journey,
+                                 surface=args.surface)
+    payload = _json.loads(raw)
+    if not payload.get("ok"):
+        print(payload.get("refused", "the intent could not be read"),
+              file=sys.stderr)
+        return 2
+
+    doc = document.build(payload.get("subject") or source.stem, payload)
+
+    target = FsPath(args.out) if args.out else None
+    existing = ""
+    if target and target.exists():
+        existing = target.read_text()
+        lost = document.parse_problems(existing)
+        if lost:
+            print(f"warning: {len(lost)} row(s) could not be read and will be "
+                  f"lost: {', '.join(lost)}", file=sys.stderr)
+        doc = document.merge(doc, existing)
+
+    rendered = document.render_markdown(doc)
+    status = payload.get("status")
+
+    if args.check:
+        if not target:
+            print("--check needs -o", file=sys.stderr)
+            return 2
+        if _without_timestamp(rendered) == _without_timestamp(existing):
+            print(f"{target} is current")
+            return 0
+        print(f"{target} would change — regenerate", file=sys.stderr)
+        return 1
+
+    if target:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(rendered)
+        carried = doc.get("carried_over") or []
+        print(f"wrote {target} — {len(doc['gaps'])} gap(s), {status}")
+        if carried:
+            print(f"  kept {len(carried)} gap(s) you added: {', '.join(carried)}")
+        if existing:
+            print("  your Closed / Owner / Notes edits were preserved")
+    else:
+        print(rendered)
+
+    if status == "not-ready":
+        print(f"  NOT READY — {len(payload.get('blocking') or [])} gap(s) mean "
+              f"this cannot be represented in the graph as it stands",
+              file=sys.stderr)
+        # **`--strict` is not needed to fail here, unlike the other documents.**
+        # `incomplete` is a normal reportable state; `not-ready` means landing
+        # would create a node nothing can ever be checked against (D-1), and a
+        # pipeline should stop on it by default.
+        return 1
+    return 0
 
 
 def cmd_intent_land(args) -> int:
@@ -2932,6 +4018,16 @@ def main(argv: list[str] | None = None) -> int:
                        help="model version this figure refers to (P-16)")
         p.add_argument("--commit", default="",
                        help="source commit this figure refers to (P-16)")
+        if name == "render":
+            # `render` only: `paths` and `report` share this loop and neither
+            # produces cases to emit.
+            p.add_argument("--gherkin", action="store_true",
+                           help="emit a .feature file instead of prose. The "
+                                "steps are specification; the step definitions "
+                                "that execute them belong to your test "
+                                "framework, and Métis does not generate them")
+            p.add_argument("-o", "--out", default="",
+                           help="write to this path instead of stdout")
         p.set_defaults(handler=handler)
 
     knowledge_parser = sub.add_parser(
@@ -3007,6 +4103,19 @@ def main(argv: list[str] | None = None) -> int:
     icheck = intent_sub.add_parser("check", help="is every need specified? (free)")
     icheck.add_argument("file", help="intent JSON file")
     icheck.set_defaults(handler=cmd_intent_check)
+    ireview = intent_sub.add_parser(
+        "review", help="read a stated intent from four directions, before landing")
+    ireview.add_argument("file", help="the intent file, or a UIF document")
+    ireview.add_argument("--journey", default="",
+                         help="scope: what lets the design aspect be gathered")
+    ireview.add_argument("--surface", default="api", choices=("api", "ui"))
+    ireview.add_argument("-o", "--out", default="",
+                         help="write the Markdown here; regeneration preserves "
+                              "your edits and any gap you added")
+    ireview.add_argument("--check", action="store_true",
+                         help="fail if the file would change, for CI")
+    ireview.set_defaults(handler=cmd_intent_review)
+
     iland2 = intent_sub.add_parser("land", help="write Intent and Specification")
     iland2.add_argument("file", help="intent JSON file")
     iland2.add_argument("--job-id", dest="job_id", default="manual")
@@ -3062,6 +4171,11 @@ def main(argv: list[str] | None = None) -> int:
     ifetch.add_argument("--token-env", dest="token_env", default="METIS_TRACKER_TOKEN",
                         help="NAME of the variable holding the token, never "
                              "the token itself (PLT-005)")
+    ifetch.add_argument("--query", default="",
+                        help="select items instead of naming them: JQL for "
+                             "Jira, CQL for Confluence, a project key for "
+                             "Zephyr. A result larger than one page is REFUSED "
+                             "rather than truncated")
     ifetch.add_argument("--fixture", default="",
                         help="a captured tracker response; what the suite uses")
     ifetch.add_argument("--out", default=".",
@@ -3069,9 +4183,13 @@ def main(argv: list[str] | None = None) -> int:
     ifetch.set_defaults(handler=cmd_intake_fetch)
 
     iland = intake_sub.add_parser("land", help="UIF -> Episode + anchor + findings")
-    iland.add_argument("uif", help="UIF JSON file")
+    iland.add_argument("uif", help="UIF JSON file, or a directory of *.uif.json")
     iland.add_argument("--job-id", dest="job_id", default="manual")
     iland.add_argument("--author", default="")
+    ifetch.add_argument("--project", default="",
+                        help="profile whose `requirements` block says which "
+                             "tracker, which items, and where (configuration, "
+                             "not arguments). Flags override it")
     iland.add_argument("--dry-run", action="store_true",
                        help="show the plan and write nothing")
     add_graph_args(iland)
@@ -3186,6 +4304,64 @@ def main(argv: list[str] | None = None) -> int:
     add_graph_args(validate_parser)
     validate_parser.set_defaults(handler=cmd_validate)
 
+    risk_parser = sub.add_parser("risk", help="the risk register: check it, report on it")
+    risk_sub = risk_parser.add_subparsers(dest="risk_command", required=True)
+    rcheck = risk_sub.add_parser(
+        "check", help="is the register self-consistent? (for CI)")
+    rcheck.set_defaults(handler=cmd_risk)
+    rreport = risk_sub.add_parser(
+        "report", help="the consolidated report — what the register says")
+    rreport.set_defaults(handler=cmd_risk_report)
+    rassess = risk_sub.add_parser(
+        "assess", help="assess a requirement or a release, and write the document")
+    rassess.add_argument("subject", choices=("requirement", "release"))
+    rassess.add_argument("id", nargs="?", default="",
+                         help="the requirement id (requirement assessments)")
+    rassess.add_argument("--journey", default="",
+                         help="scope: required for a release, and what lets "
+                              "coverage be gathered for a requirement")
+    rassess.add_argument("--surface", default="api", choices=("api", "ui"))
+    rassess.add_argument("-o", "--out", default="",
+                         help="write the Markdown here; regeneration preserves "
+                              "your edits and any row you added")
+    rassess.add_argument("--check", action="store_true",
+                         help="fail if the file would change, for CI")
+    rassess.add_argument("--strict", action="store_true",
+                         help="exit 1 when the assessment is incomplete")
+    rassess.set_defaults(handler=cmd_risk_assess)
+
+    for pr in (rcheck, rreport):
+        pr.add_argument("register", help="the register JSON file")
+        pr.add_argument("--strict", action="store_true",
+                        help="also fail on warnings (check) / on errors (report)")
+        pr.add_argument("--json", action="store_true",
+                        help="machine-readable output")
+
+    design_parser = sub.add_parser(
+        "design", help="the test design document: build it, check it, verify it")
+    design_parser.add_argument("--journey", default="",
+                               help="the scope to design for")
+    design_parser.add_argument("--surface", default="api",
+                               choices=("api", "ui"))
+    design_parser.add_argument("--section", default="",
+                               help="build one section only, by key")
+    design_parser.add_argument("--requirement", default="",
+                               help="the requirement id — what lets the basis "
+                                    "be gathered. Without one the design "
+                                    "describes what the code does, with nothing "
+                                    "stating what it should do")
+    design_parser.add_argument("-o", "--out", default="",
+                               help="write the Markdown here; regeneration "
+                                    "preserves your edits and any row you added")
+    design_parser.add_argument("--check", action="store_true",
+                               help="fail if the file would change, for CI")
+    design_parser.add_argument("--verify", action="store_true",
+                               help="check an edited document is still the "
+                                    "shape the merge can read")
+    design_parser.add_argument("--strict", action="store_true",
+                               help="exit 1 when the design is incomplete")
+    design_parser.set_defaults(handler=cmd_design)
+
     drift_parser = sub.add_parser("drift", help="three-way drift report (spec §7.6)")
     for pr, handler in ((drift_parser, cmd_drift),):
         pr.add_argument("model", nargs="?")
@@ -3200,8 +4376,53 @@ def main(argv: list[str] | None = None) -> int:
         add_graph_args(pr)
         pr.set_defaults(handler=handler)
 
+    checkout_parser = sub.add_parser(
+        "checkout", help="clone a repository to analyse (disposable, shallow)")
+    checkout_parser.add_argument("remote",
+                                 help="https, ssh, git@host, or an existing "
+                                      "local checkout. A transport helper "
+                                      "(`ext::`) or an option is refused")
+    checkout_parser.add_argument("into", help="where to put it")
+    checkout_parser.add_argument("--ref", default="", help="branch or tag")
+    checkout_parser.add_argument("--depth", type=int, default=1,
+                                 help="history depth (default 1 — this exists "
+                                      "to be read once and thrown away)")
+    checkout_parser.add_argument("--full", action="store_true",
+                                 help="whole history, for a range comparison")
+    checkout_parser.add_argument("--replace", action="store_true",
+                                 help="discard an existing checkout at `into`. "
+                                      "Refuses anything that is not one")
+    checkout_parser.set_defaults(handler=cmd_checkout)
+
+    scaffold_parser = sub.add_parser(
+        "scaffold",
+        help="emit the flow manifest a code generator outside Métis consumes")
+    scaffold_parser.add_argument("model", nargs="?")
+    scaffold_parser.add_argument("--journey")
+    scaffold_parser.add_argument("--surface", default="api",
+                                 choices=("api", "ui"))
+    scaffold_parser.add_argument("--criterion", default=DEFAULT_CRITERION,
+                                 choices=criterion_names())
+    scaffold_parser.add_argument("--max-setup", type=int,
+                                 default=DEFAULT_SETUP_CAP)
+    scaffold_parser.add_argument("--allow-unverifiable", action="store_true")
+    # The same two every other generating verb takes. `_load` reads both, so
+    # omitting them made a file-based run unable to supply the decisions that
+    # let generation happen at all -- the model loads at Quarantine by design
+    # (S-4: a file cannot land its own approval).
+    scaffold_parser.add_argument("--state", help="review-state file")
+    scaffold_parser.add_argument("--overrides", help="override log")
+    scaffold_parser.add_argument("--target", default="generic",
+                                 help="which academy lesson to point at for "
+                                      "translation rules. It does NOT change "
+                                      "what is emitted (R8)")
+    scaffold_parser.add_argument("-o", "--out", help="output path (default: stdout)")
+    add_graph_args(scaffold_parser)
+    scaffold_parser.set_defaults(handler=cmd_scaffold)
+
     publish_parser = sub.add_parser(
-        "publish", help="publish test cases — dry-run only, behind a literal gate")
+        "publish", help="publish test cases — behind a literal gate; dry-run by "
+                        "default")
     publish_parser.add_argument("model", nargs="?")
     publish_parser.add_argument("--journey")
     publish_parser.add_argument("--surface", default="api", choices=("api", "ui"))
@@ -3217,6 +4438,14 @@ def main(argv: list[str] | None = None) -> int:
                                      f"default-yes and no timeout-implies-yes (T-18)")
     publish_parser.add_argument("--batch-size", type=int, default=-1,
                                 help="the batch size you were shown (T-19)")
+    publish_parser.add_argument("--transport", default=DEFAULT_TRANSPORT,
+                                choices=tuple(TRANSPORTS),
+                                help="where to send. `dry-run` builds and "
+                                     "validates the real payload and sends "
+                                     "nothing; `zephyr-scale` writes to a "
+                                     "tracker and additionally requires "
+                                     "METIS_ALLOW_EXTERNAL_WRITES=yes on the "
+                                     "installation (T-20)")
     publish_parser.add_argument("--as", dest="as_identity", default="",
                                 help="who is confirming (N-13)")
     publish_parser.add_argument("--role", default=PUBLISHER, choices=ROLES,
@@ -3316,6 +4545,51 @@ def main(argv: list[str] | None = None) -> int:
     reconcile_parser.add_argument("--criteria", help="JSON array of acceptance criteria")
     add_graph_args(reconcile_parser)
     reconcile_parser.set_defaults(handler=cmd_reconcile)
+
+    # §9.1's decisions 3, 4 and 5. Each had an evidence screen and a declared
+    # capability and nowhere to record an answer.
+    decide_parser = sub.add_parser(
+        "decide", help="record a divergence, match or drift decision (§9.1)")
+    decide_sub = decide_parser.add_subparsers(required=True)
+
+    def _decide_common(pr, capability_default):
+        pr.add_argument("--state", required=True,
+                        help="review-state file these decisions accumulate in")
+        pr.add_argument("--rationale", default="",
+                        help="why. Required for a divergence (S-11)")
+        pr.add_argument("--as", dest="as_identity", default="",
+                        help="who is deciding (N-13)")
+        pr.add_argument("--role", default=capability_default, choices=ROLES,
+                        help="the deciding identity's role (N-9)")
+
+    dv = decide_sub.add_parser(
+        "divergence", help="accept the code side or the criterion side (S-11)")
+    dv.add_argument("element_id")
+    dv.add_argument("--choice", required=True, choices=DIVERGENCE_CHOICES,
+                    help="neither side wins automatically (S-10), so there is "
+                         "no default")
+    _decide_common(dv, REVIEWER)
+    dv.set_defaults(handler=cmd_decide_divergence)
+
+    mt = decide_sub.add_parser(
+        "match", help="confirm or reject a proposed AC-to-transition match (X-18)")
+    mt.add_argument("ac_id")
+    mt.add_argument("transition_id")
+    mt.add_argument("--reject", action="store_true",
+                    help="record a REJECTION. Stored, not deleted: a refused "
+                         "proposal must not come back looking new")
+    _decide_common(mt, REVIEWER)
+    mt.set_defaults(handler=cmd_decide_match)
+
+    dr = decide_sub.add_parser(
+        "drift", help="decide what to do about a drifted published case (T-14)")
+    dr.add_argument("case_id")
+    dr.add_argument("--resolution", required=True,
+                    choices=("no_action", "propose_create", "propose_update",
+                             "propose_deprecate", "propose_nothing"),
+                    help="T-16: obsolete DEPRECATES; there is no delete")
+    _decide_common(dr, REVIEWER)
+    dr.set_defaults(handler=cmd_decide_drift)
 
     divergence_parser = sub.add_parser(
         "divergence", help="cross-surface divergence report (spec M-5f)")
@@ -3434,6 +4708,13 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--surface", default="api", choices=("api", "ui"))
         p.add_argument("--source", default="authored",
                        help="authored | code | ac-mined (see `sources`)")
+        # The publish stage needs to know where to send. Dry-run by default, and
+        # a live transport additionally needs METIS_ALLOW_EXTERNAL_WRITES=yes on
+        # the installation — so this selects a destination, never a permission.
+        p.add_argument("--transport", default=DEFAULT_TRANSPORT,
+                       choices=tuple(TRANSPORTS),
+                       help="where the publish stage sends. `dry-run` builds "
+                            "and validates the real payload and sends nothing")
         p.add_argument("--author", default="")
         p.add_argument("--endpoints",
                        help="structural pack report, for --source code")
@@ -3454,6 +4735,19 @@ def main(argv: list[str] | None = None) -> int:
                             "(§4.5). Named separately from `model` because it is "
                             "criteria, not a model — a source reads it, not the "
                             "model loader")
+        # change-approval compares two commits. `--repo` is separate from
+        # `--project` on purpose: a profile names the checkout these facts come
+        # from, and a diff needs the working tree on disk to ask git about.
+        p.add_argument("--repo", default="",
+                       help="repository to diff, for change-approval")
+        p.add_argument("--since", default="",
+                       help="the commit to compare FROM, for change-approval. "
+                            "`changed_files` answers an unanswerable range with "
+                            "an empty list, so this is required rather than "
+                            "defaulted — an empty diff and an unresolvable one "
+                            "must not read the same")
+        p.add_argument("--until", default="HEAD",
+                       help="the commit to compare TO (default: HEAD)")
         p.add_argument("--job-id", default="workflow")
         p.add_argument("--state", help="review-state file")
         p.add_argument("--overrides", help="override log")
@@ -3464,6 +4758,25 @@ def main(argv: list[str] | None = None) -> int:
                        help=f"the literal word {AFFIRMATIVE!r}, for a gate that "
                             f"writes externally (T-18)")
         p.add_argument("--as", dest="as_user", default="", help="acting identity")
+        # risk-review. `--accept` is its own flag rather than reusing
+        # `--confirm`: they gate different things, and one literal that passes
+        # both an external write and a risk acceptance is a literal that stops
+        # meaning either.
+        p.add_argument("--requirement", default="",
+                       help="the requirement to assess, for risk-review. "
+                            "Without it the scope is a release and needs "
+                            "--journey")
+        p.add_argument("--accept", default="",
+                       help=f"the literal word {RISK_ACCEPTED!r} for the "
+                            f"risk-acceptance gate, or {DESIGN_ACCEPTED!r} for "
+                            f"the design-acceptance one. Each gate compares its "
+                            f"own word, so one literal never passes the other. "
+                            f"Accepting takes ownership of every rating or "
+                            f"decision in the document")
+        p.add_argument("--out", default="",
+                       help="where risk-review and test-design write their "
+                            "Markdown. Regeneration preserves your edits and "
+                            "any row you added")
         p.add_argument("--allow-unverifiable", action="store_true",
                        help="proceed despite guards this checker cannot verify "
                             "(M-17). Recorded, not silent.")
@@ -3545,6 +4858,65 @@ def main(argv: list[str] | None = None) -> int:
                            help="read and report without a graph")
     lessons_p.set_defaults(handler=cmd_lessons)
 
+    history_p = sub.add_parser(
+        "history", help="land repair history (fix commits) as Commit nodes")
+    history_p.add_argument("--repo", default=".", help="the repository to read")
+    history_p.add_argument("--since", required=True,
+                           help="the start of the window. Required: a fix count "
+                                "with no window is not a measurement")
+    history_p.add_argument("--until", default="HEAD")
+    history_p.add_argument("--limit", type=int, default=2000,
+                           help="bound the read; a range spanning ten thousand "
+                                "commits was chosen badly")
+    history_p.add_argument("--project", default="",
+                           help="the project these commits belong to, matching "
+                                "the one the code was landed under")
+    history_p.add_argument("--system", default="jira",
+                           choices=sorted(tracker_systems()))
+    history_p.add_argument("--job-id", dest="job_id", default="manual")
+    history_p.add_argument("--check", action="store_true",
+                           help="read and report without a graph")
+    # **Opt-in, and a network call.** Without it a ticket the graph does not
+    # hold is reported; with it the item is read from the tracker first, landed,
+    # and then linked. Never implicit: fetching is a call somebody has to ask for.
+    history_p.add_argument("--fetch-missing", dest="fetch_missing",
+                           action="store_true",
+                           help="read tickets named by a fix that the graph "
+                                "does not hold, from the tracker, before linking")
+    history_p.add_argument("--base-url", dest="base_url", default="",
+                           help="the tracker base URL, with --fetch-missing")
+    history_p.add_argument("--token-env", dest="token_env",
+                           default="METIS_TRACKER_TOKEN",
+                           help="the VARIABLE holding the token, never the "
+                                "token itself (PLT-005)")
+    history_p.set_defaults(handler=cmd_history)
+
+    req_p = sub.add_parser(
+        "requirement", help="state, revise or retire a requirement")
+    req_p.add_argument("key", help="the claim's stable key, e.g. REQ-3. A "
+                                   "revision reuses it; that is what makes a "
+                                   "correction recognisable as the same claim")
+    req_p.add_argument("--statement", required=True,
+                       help="the requirement, in EARS: `When <trigger>, the "
+                            "system shall <response>`")
+    req_p.add_argument("--author", default="")
+    req_p.add_argument("--land", action="store_true",
+                       help="write it. Without this, nothing is written and you "
+                            "are shown what would be")
+    req_p.add_argument("--uri")
+    req_p.add_argument("--user")
+    req_p.set_defaults(handler=cmd_requirement)
+
+    academy_p = sub.add_parser(
+        "academy", help="render docs/academy/ as a browsable site")
+    academy_p.add_argument("--directory", default="../docs/academy")
+    academy_p.add_argument("--out", default="../docs/academy-site",
+                           help="where to write the pages")
+    academy_p.add_argument("--check", action="store_true",
+                           help="report whether a rendered site is current; "
+                                "non-zero if it has drifted")
+    academy_p.set_defaults(handler=cmd_academy)
+
     status_wf = workflow_sub.add_parser("status", help="where a run got to")
     status_wf.add_argument("run_id")
     status_wf.set_defaults(handler=cmd_workflow_status)
@@ -3568,6 +4940,21 @@ def main(argv: list[str] | None = None) -> int:
         # simply needs a source checkout it does not have. A traceback here read
         # as a broken install.
         print(f"NOT AVAILABLE: {e}")
+        return 3
+    except NotPermitted as e:
+        # N-9. A refusal is the system working, and it was surfacing as a
+        # traceback -- the same shape as the driver failures below. It names the
+        # roles that may act, so the message IS the remedy.
+        print(f"NOT PERMITTED (N-9): {e}")
+        return 5
+    except _driver_failures() as e:
+        # **A configured graph that is not answering.** `GraphNotConfigured`
+        # covered "no password, no config file" and nothing covered "the
+        # container is not running" or "the password is wrong" -- so those came
+        # out of forty-five verbs as a thirty-line neo4j traceback. The
+        # distinction is worth keeping: NOT CONFIGURED means fix your config,
+        # this means start the database or fix the credential.
+        print(f"NO GRAPH: {_graph_failure_message(e)}")
         return 3
 
 

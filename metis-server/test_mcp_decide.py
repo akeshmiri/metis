@@ -92,9 +92,28 @@ def _model() -> Model:
     return model
 
 
+def acting_as(monkeypatch, tmp_path, name: str, role: str) -> None:
+    """Authenticate this run as one principal.
+
+    **Since W1, `full` refuses an asserted name.** Deciding costs a verified
+    identity because an agent that can name itself can name somebody else, and
+    the audit record would then say whoever the caller claimed to be. So a test
+    that passes `actor=` must also BE that principal — which is the contract, not
+    an inconvenience: these tests would otherwise assert behaviour no deployment
+    can reach.
+    """
+    import hashlib
+
+    store = tmp_path / f"principals-{name}.tsv"
+    token = f"token-for-{name}"
+    store.write_text(f"{hashlib.sha256(token.encode()).hexdigest()}\t{name}\t{role}\n")
+    monkeypatch.setenv("METIS_API_TOKENS", str(store))
+    monkeypatch.setenv(policy.TOKEN_ENV, token)
+
+
 @pytest.fixture
-def graph(monkeypatch):
-    """A model and its proposers, without a database."""
+def graph(monkeypatch, tmp_path):
+    """A model and its proposers, without a database. Acting as `sam`."""
     model = _model()
     monkeypatch.setattr(decide, "_load", lambda j, s: model)
     monkeypatch.setattr(decide, "_proposers",
@@ -102,6 +121,7 @@ def graph(monkeypatch):
                                    list(model.states) + list(model.transitions)})
     monkeypatch.setenv(policy.WRITE_ENV, policy.FULL)
     monkeypatch.delenv(policy.IDENTITY_ENV, raising=False)
+    acting_as(monkeypatch, tmp_path, "sam", "reviewer")
     return model
 
 
@@ -129,8 +149,9 @@ def test_a_stale_fingerprint_refuses_the_whole_batch(graph):
     assert out["current_fingerprint"] == _fingerprint(graph)
 
 
-def test_the_proposer_may_not_approve_their_own_element(graph):
+def test_the_proposer_may_not_approve_their_own_element(graph, monkeypatch, tmp_path):
     """N-10, and it must fire on a landed model, not only a hand-edited one."""
+    acting_as(monkeypatch, tmp_path, "alex", "reviewer")
     out = decide.approve_elements(journey="records", element_ids=["records-api::go"],
                                   fingerprint=_fingerprint(graph),
                                   confirm="approve", actor="alex", role="reviewer")
@@ -139,7 +160,8 @@ def test_the_proposer_may_not_approve_their_own_element(graph):
     assert "graph is untouched" in out["means"]
 
 
-def test_a_role_without_the_capability_is_refused_before_anything_loads(graph):
+def test_a_role_without_the_capability_is_refused_before_anything_loads(graph, monkeypatch, tmp_path):
+    acting_as(monkeypatch, tmp_path, "kim", "contributor")
     with pytest.raises(NotPermitted) as e:
         decide.approve_elements(journey="records", element_ids=["records-api::go"],
                                 fingerprint=_fingerprint(graph),

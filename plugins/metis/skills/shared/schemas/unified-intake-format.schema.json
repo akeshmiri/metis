@@ -269,6 +269,13 @@
         }
       },
       "additionalProperties": false
+    },
+    "links": {
+      "type": "array",
+      "description": "Links the source item declares. Added so a tracker's own hierarchy - an epic and the stories under it - can reach the graph as the `JiraItem-[:LINKS_TO]->JiraItem` edge the ontology already catalogues and nothing wrote.",
+      "items": {
+        "$ref": "#/$defs/item_link"
+      }
     }
   },
   "$defs": {
@@ -821,6 +828,30 @@
           "format": "date-time"
         },
         "assigned_to": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "item_link": {
+      "type": "object",
+      "description": "One link this item declares to another item in the same tracker. Provenance, not traceability: the tracker asserts the relationship and Metis records it as the tracker's claim. It is never inferred from wording, and it is never read as a statement that one requirement implements another.",
+      "required": [
+        "relation",
+        "target_id"
+      ],
+      "properties": {
+        "relation": {
+          "type": "string",
+          "description": "The tracker's own relation name, lowercased. `parent` is the one Metis reads for decomposition; everything else is carried so nothing is lost, and interpreted by nobody."
+        },
+        "target_id": {
+          "type": "string"
+        },
+        "target_system": {
+          "type": "string"
+        },
+        "target_url": {
           "type": "string"
         }
       },

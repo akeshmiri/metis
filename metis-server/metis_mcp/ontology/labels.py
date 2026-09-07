@@ -1,16 +1,28 @@
 """
 The ontology (application spec §8.2, §8.3).
 
-Thirty-seven labels in six layers: the **behaviour** model (State, Transition and
+Forty-four labels in eight layers: the **behaviour** model (State, Transition and
 its two surfaces, Check, DeclaredOutcome, Action), the **requirement** chain
 (Intent, Specification, Requirement, AcceptanceCriterion, Feature, Scenario,
 TestCase), the **data a transition references** (Class, Enum, Endpoint,
 ExceptionMapping, SecurityScheme), a **knowledge** layer
 (BusinessArea, BusinessEntity, and the academy's Lesson/Passage/Topic) giving
 the nouns a criterion uses a definition of their own, the **process** records
-(Finding, Episode, Component and its two surfaces, NeedReview), and the
+(Finding, Episode, Component and its two surfaces, NeedReview), the
 **intake anchors** (JiraItem and its four siblings) recording which artefact in
-the world a requirement came from.
+the world a requirement came from, and the **observed** layer (TestExecution,
+TestCycle, Defect, Metrics, Logs, Alert) recording what a running system did,
+and the **history** layer (Commit) recording what was changed and what it
+repaired.
+
+**The observed layer is the newest and the most easily misread.** Everything in
+it carries `provenance: observed_from_running_system`, and none of it reaches the
+coverage ledger. C-10 still holds -- a ledger row says a case COVERS a
+transition, never that it passed -- and C-11 still holds: a coverage figure
+answers "is this behaviour tested?". What these six add is a second, separately
+named answer to "did it pass?", which a transition can fail while remaining
+fully covered. Reading one as the other is the conflation §6.8a names as the
+reason they were staged out in the first place.
 
 **It was 65.** The 2026-08-31 re-baseline staged out 28 that described a
 SOURCE rather than a requirement, or that a property already said: the whole database layer, which no
@@ -28,7 +40,7 @@ The remaining two -- the catalogue in §8.2/§8.3 of the specification, and this
 docstring -- are human-readable and are checked against this module by
 test_ontology.py.
 
-Why thirty-seven, and why that number should worry you: see D-1 and the note in
+Why forty-four, and why that number should worry you: see D-1 and the note in
 `test_ontology`. A label is included only when something writes it AND something
 reads it -- the second half is the one that is easy to skip, and a writer alone
 is how an ontology accretes. §8.7 lists the deliberately-excluded labels with
@@ -697,6 +709,88 @@ LABELS: dict[str, LabelSpec] = {
             required=("criterion", "generator_version"),
             indexed=("criterion",),
         ),
+        # ------------------------------------------------------------------
+        # Execution and operational data (D-2: a reviewed change, and this is
+        # the review).
+        # ------------------------------------------------------------------
+        #
+        # **These six were staged out with their own triggers, and the triggers
+        # have been pulled.** `STAGED_OUT` recorded "execution results are
+        # ingested (spec C-10's trigger)" for the first two and "operational
+        # data enters scope" for the rest. That is what makes this an argued
+        # change rather than an edit: the conditions were written down before
+        # anyone wanted them.
+        #
+        # **C-10 and C-11 both survive, and the distinction is the whole
+        # design.** C-10 constrains the coverage LEDGER -- a row says a case
+        # covers a transition and never that it passed -- and nothing here
+        # writes to that ledger. C-11 constrains a coverage FIGURE, and coverage
+        # still answers "is this behaviour tested?". What these labels add is a
+        # SECOND, separately-named answer to a different question, carrying
+        # `provenance: observed_from_running_system` so the two can never be
+        # read as one.
+        #
+        # A transition may be fully covered and currently failing. Before this,
+        # Metis could not see the second half. It still does not report it as
+        # the first.
+        LabelSpec(
+            "TestExecution", "One observed run of one test case",
+            required=("outcome", "observed_at", "provenance"),
+            indexed=("outcome", "observed_at"),
+            enums={"outcome": ("passed", "failed", "skipped", "errored",
+                               "not_run"),
+                   "provenance": ("observed_from_running_system",)},
+        ),
+        LabelSpec(
+            "TestCycle", "A named set of executions observed together",
+            required=("started_at", "provenance"),
+            indexed=("started_at",),
+            enums={"provenance": ("observed_from_running_system",)},
+        ),
+        LabelSpec(
+            "Defect", "A reported fault, and what it was observed against",
+            required=("summary", "status", "provenance"),
+            indexed=("status", "external_key"),
+            # `external_key` may be empty: a defect can be described here before
+            # it is filed anywhere, and the two states are different.
+            may_be_empty=("external_key",),
+            enums={"provenance": ("observed_from_running_system",
+                                  "reported_by_a_person")},
+        ),
+        LabelSpec(
+            "Commit", "One change to the repository, and whether it repaired "
+                      "something",
+            required=("sha", "subject", "committed_at", "provenance"),
+            indexed=("sha", "is_fix"),
+            # `fix_basis` names the pattern that classified it, so the claim can
+            # be disagreed with rather than only the conclusion. Empty where
+            # `is_fix` is false, which is the ordinary case.
+            may_be_empty=("fix_basis",),
+            # `recovered_from_history` is its own provenance and deliberately
+            # not one of the other two: a commit is neither observed from a
+            # running system nor reported by a person, it is read out of git.
+            # Conflating it with a report is what
+            # `PROPOSAL-commits-and-defect-history.md` refuses.
+            enums={"provenance": ("recovered_from_history",)},
+        ),
+        LabelSpec(
+            "Metrics", "A measured figure about a running system",
+            required=("name", "value", "observed_at", "provenance"),
+            indexed=("name", "observed_at"),
+            enums={"provenance": ("observed_from_running_system",)},
+        ),
+        LabelSpec(
+            "Logs", "A retained excerpt of what a running system emitted",
+            required=("source", "observed_at", "provenance"),
+            indexed=("source", "observed_at"),
+            enums={"provenance": ("observed_from_running_system",)},
+        ),
+        LabelSpec(
+            "Alert", "A condition a running system raised about itself",
+            required=("name", "raised_at", "provenance"),
+            indexed=("name", "raised_at"),
+            enums={"provenance": ("observed_from_running_system",)},
+        ),
         LabelSpec(
             "TestCase", "One rendered, human-executable artefact",
             required=("content_hash", "steps_json", "expected_result"),
@@ -922,12 +1016,29 @@ ALLOWED_RELATIONSHIPS: tuple[RelationshipSpec, ...] = (
                      "A rule rendered in this document"),
     RelationshipSpec("EntityDocument", "CITES", "AcceptanceCriterion",
                      "A criterion that touches this entity"),
-    # **Catalogued, written by nothing.** D-1 asks for a named writer AND a
-    # named reader; this has neither. It stays because the UIF a Jira intake
-    # produces carries `issuelinks` and `intake_landing` is where they would
-    # land — but until something writes it, a query for "what does this issue
-    # link to" returns nothing and cannot tell that from "it links to nothing".
-    # Named here so the gap is stated rather than discovered.
+    # **It has both halves now.** This was catalogued with no writer and no
+    # reader -- the dangling reference D-1 exists to prevent -- and the comment
+    # here recorded the gap so it would not be rediscovered.
+    #
+    #   writer  `intake_landing.plan_intake`, from the UIF's `links` array,
+    #           which `tracker._links_from` fills from `fields.parent` and
+    #           `fields.issuelinks` in the response the reader ALREADY fetches.
+    #           No endpoint was added; `ENDPOINTS` stays the closed GET
+    #           allowlist (X-7a).
+    #   reader  `read.requirement_hierarchy` -- what an item links to and what
+    #           links to it, both directions, each hop reaching the Requirement
+    #           the anchor represents.
+    #
+    # **This is requirement hierarchy, and it needed no new label.** An epic and
+    # its stories are two anchors with this edge, each `REPRESENTS`ing a
+    # `Requirement`, so "which requirements does this epic decompose into" is a
+    # traversal. `Epic` stays staged out: D-1's bar is a requirement question
+    # that needs it AS A NODE, and this one does not.
+    #
+    # Provenance, not traceability, and the distinction is load-bearing: the
+    # TRACKER asserts the link and Métis records the assertion. A `parent` edge
+    # does not say the child requirement implements the parent, and nothing
+    # reads it that way.
     RelationshipSpec("JiraItem", "LINKS_TO", "JiraItem",
                      "A real Jira issue link — provenance, not traceability"),
     # ---- the intent spine ----
@@ -1006,6 +1117,29 @@ ALLOWED_RELATIONSHIPS: tuple[RelationshipSpec, ...] = (
                      "Ordered traversal — makes coverage computable",
                      properties=("sequence", "is_validated")),
     RelationshipSpec("Scenario", "PRODUCES", "TestCase", "The rendered artefact"),
+    # Execution attaches to the CASE, never to the transition. A run is evidence
+    # about an artefact somebody executed; routing it to the transition would
+    # make "this behaviour passed" expressible, which is the conflation C-11
+    # exists to prevent.
+    RelationshipSpec("TestExecution", "OF_CASE", "TestCase",
+                     "The case this run executed"),
+    RelationshipSpec("TestCycle", "CONTAINS", "TestExecution",
+                     "Runs observed together"),
+    RelationshipSpec("Defect", "OBSERVED_IN", "TestExecution",
+                     "The run this fault was seen in"),
+    RelationshipSpec("Defect", "CONCERNS", "Requirement",
+                     "What the fault is about, where that is established"),
+    RelationshipSpec("Defect", "CONCERNS", "AcceptanceCriterion",
+                     "The criterion this fault is about, where the report is "
+                     "specific enough to name one"),
+    RelationshipSpec("Commit", "TOUCHES", "Class",
+                     "A type this change altered. The file's class, not a "
+                     "method: a finer join needs a diff parse and buys nothing "
+                     "a risk band can use"),
+    RelationshipSpec("Commit", "FIXES", "JiraItem",
+                     "The tracker item this change's subject names. The edge is "
+                     "to the ITEM because the item is the report — Métis never "
+                     "creates a Defect from a commit message"),
     RelationshipSpec("Lesson", "BELONGS_TO", "Topic",
                      "The subject it covers, shared with every other document "
                      "that covers it"),
@@ -1198,17 +1332,43 @@ STAGED_OUT: dict[str, str] = {
     # the scope and criterion that `workflow status` actually reads.
     "Run": "two generation runs need comparing IN THE GRAPH — F-3's "
            "comparability half, which the run file cannot answer across scopes",
-    "Goal": "a backlog hierarchy is actually queried",
-    "Capability": "a backlog hierarchy is actually queried",
-    "Epic": "a backlog hierarchy is actually queried",
-    "Release": "execution results are ingested and release reporting is required",
-    "TestCycle": "execution results are ingested",
-    "TestExecution": "execution results are ingested (spec C-10's trigger)",
-    "Defect": "operational data enters scope",
+    # **Refused, 2026-09-04.** The old trigger — "a backlog hierarchy is
+    # actually queried" — has FIRED, and the answer was not a label. An epic and
+    # its stories are two `JiraItem` anchors joined by `LINKS_TO`, each
+    # `REPRESENTS`-ing a `Requirement`, and `read.requirement_hierarchy` reads
+    # both directions with the relationship kind distinguished. What it needed
+    # was one field (`PlannedEdge.properties`), not three nouns.
+    #
+    # The argument, including the case FOR and the cross-system limitation the
+    # anchor route genuinely has, is in
+    # `docs/academy/PROPOSAL-requirement-hierarchy.md`. The trigger below is
+    # narrower on purpose: the old one is met and must not fire again on the
+    # same evidence.
+    "Goal": "a named consumer reports on requirements BY a hierarchy node — "
+            "readiness per capability — and cannot be served by "
+            "`requirement_hierarchy` over anchors",
+    "Capability": "a named consumer reports on requirements BY a hierarchy node "
+                  "— readiness per capability — and cannot be served by "
+                  "`requirement_hierarchy` over anchors",
+    "Epic": "a named consumer reports on requirements BY a hierarchy node — "
+            "coverage per epic — and cannot be served by "
+            "`requirement_hierarchy` over anchors",
+    # **Deferred, 2026-09-04 — the shape is right and the timing is not.** The
+    # first clause of the old trigger fired: `execution_intake` lands
+    # TestExecution, TestCycle, Defect, Metrics, Logs and Alert (§8.7, revised).
+    # The second did not — nothing takes a release NAME, and bi-temporal
+    # validity already answers an as-of question without one.
+    #
+    # A `Release` must never hold a claim set: the windows already encode it,
+    # and the stored copy would be the half that goes stale. It is a name and an
+    # instant, and everything about what the release contained is a traversal
+    # from that instant. See `docs/academy/PROPOSAL-release-baseline.md`,
+    # including the cheaper thing to try first — an `as_of` argument on
+    # `coverage_report` — which may close this permanently.
+    "Release": "a report or workflow takes a release NAME as an input — "
+               "readiness for 2.4 — and the name cannot be resolved to an "
+               "instant outside Métis",
     "Incident": "operational data enters scope",
-    "Alert": "operational data enters scope",
-    "Metrics": "operational data enters scope",
-    "Logs": "operational data enters scope",
     "Constitution": "formal governance is adopted",
     "Constraint": "formal governance is adopted",
     # `Class`, `Method` and `Endpoint` were here, on the trigger "impact analysis

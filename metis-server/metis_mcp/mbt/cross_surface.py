@@ -383,7 +383,7 @@ def triage_api_only(findings: list["Divergence"], model: Model,
     **These are different findings and merging them buries the real one.** An
     endpoint with no inbound `INVOKES` is API-only by definition, but an estate
     that ships feign clients and CLIs consumes many endpoints machine-to-machine
-    on purpose. On the the pilot estate estate 83 of 86 API-only endpoints turned out to be
+    on purpose. On the pilot estate 83 of 86 API-only endpoints turned out to be
     declared by a feign client -- so the three that are not are the finding, and
     reporting all 86 with equal weight would have hidden them.
 

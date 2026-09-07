@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "metis",
-      "description": "Five skills for the model-based testing pipeline: recover a behaviour model from a codebase and take it to the approval gate; turn a stated requirement into atomic acceptance criteria and reconcile them against the model; check a state machine for determinism, guard completeness, reachability and observability; extract Jira, Confluence, OpenAPI, Zephyr Scale, code or a database into one normalized intake document; and walk a reviewer through the model-approval gate. Skills route through the bundled metis agent, which is generated from the workflow registry.",
+      "description": "39 skills for the model-based testing pipeline: analyse a half-formed intent from four directions before it reaches the graph, and refuse the import only when the claim cannot be represented honestly; bring in what a source SAYS the system should do; recover what it ACTUALLY does from a codebase and take that to the approval gate; check the machine is well-formed; walk a reviewer through the gate; generate human-executable test cases and stop at publication; report coverage and what could not be measured; show what a change puts at risk; write the generated specification back where the team reads it; design what to test and how — the techniques a behaviour warrants, the data conditions they need, the level each is asserted at — as a document a person owns and regeneration never overwrites; and run project risk management as a lifecycle across fourteen specialists, computing the arithmetic rather than reciting it, and assess a requirement or a release by declaring what was gathered and what a person must still answer. Skills route through the bundled metis agent, which is generated from the workflow registry.",
       "author": {
         "name": "Métis"
       },
@@ -17,7 +17,7 @@
     },
     {
       "name": "metis-mcp",
-      "description": "The Métis MCP server: twelve read-only tools over the behaviour graph and the knowledge in it — list workflows, route a request to one, read a model, validate it for well-formedness, report its coverage ledger, check where a run got to, explain why the surface cannot decide anything, and search or read the entities, requirements and specifications behind it. Read-only by construction (N-8): approval, landing and publication go through the gated CLI, because a decision needs evidence a chat session cannot present. Install alongside the metis plugin to give its skills a live graph to work against.",
+      "description": "The Métis MCP server: 55 read-only tools over the behaviour graph and the knowledge in it — read a model and validate it, coverage and what was unmeasurable, traceability and where the chain breaks, the cases a model would generate, what a diff touches, specifications and requirements, and risk exposure, EMV, PERT, register coherence, and requirement and release assessments that say what was gathered and what is still unanswered. Read-only by default and by construction at that tier (N-8); METIS_MCP_WRITE adds landing and the gates.",
       "author": {
         "name": "Métis"
       },

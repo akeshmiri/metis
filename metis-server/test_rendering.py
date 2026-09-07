@@ -370,10 +370,13 @@ def test_end_to_end_model_to_formatted_case():
     case = next(c for c in rendered.cases if c.act_step.transition_id == "t15")
     text = format_case(case)
     assert "AccountLocked → LoggedOut" in text
-    assert "Expected result: LoggedOut" in text
-    assert "Precondition:" in text
-    # t15 needs the whole failure chain; five setup steps must be listed.
-    assert all(f"{n}." in text for n in range(1, 6))
+    assert "Then LoggedOut" in text
+    assert "Given " in text
+    # t15 needs the whole failure chain. Five setup steps, each an And-clause,
+    # plus the And that names the state they establish.
+    clauses = [ln.strip() for ln in text.splitlines()
+               if ln.strip().startswith(("Given ", "And "))]
+    assert len(clauses) == 6, f"expected 5 setup steps + the state, got {clauses}"
 
 
 if __name__ == "__main__":
@@ -476,3 +479,206 @@ def test_a_case_reports_the_method_and_path_it_actually_holds():
     text = format_case(case)
     assert "GET /thing/{id}" in text
     assert "200" in text
+
+
+# --------------------------------------------------------------------------
+# A rendered case reads as Given / When / Then
+# --------------------------------------------------------------------------
+
+def _case_named(model, fragment):
+    from metis_mcp.mbt import ALL_TRANSITIONS, generate
+    from metis_mcp.rendering import render
+    rendered = render(model, generate(model, ALL_TRANSITIONS).paths)
+    for case in rendered.cases:
+        if fragment in case.name:
+            return case
+    raise AssertionError(f"no case named like {fragment!r}")
+
+
+def test_a_case_with_no_setup_reads_as_given_when_then():
+    """**The model has been Given/When/Then all along; the artefact was not.**
+
+    SP-3 says so of the specification, `precondition_of` produces the Given
+    clause, and `behavior_model` calls the source state "the implicit Given" --
+    but the thing a QA engineer actually executes said Precondition / Step /
+    Expected result. One vocabulary from the spec through to the case.
+    """
+    from metis_mcp.rendering import format_case
+
+    text = format_case(_case_named(login_model(approved=True), "LoggedOut → LoggedIn"))
+
+    assert "Given the system is in LoggedOut" in text
+    assert "When Submit valid credentials" in text
+    assert "Then LoggedIn" in text
+    assert "Precondition:" not in text
+    assert "Expected result:" not in text
+    assert "  Step:" not in text
+
+
+def test_setup_steps_are_and_clauses_before_the_state_they_establish():
+    """Order carries the meaning: the steps come first, then the state they
+    leave the system in, which is what the `When` acts from. Naming the state
+    before the steps that produce it would read backwards."""
+    from metis_mcp.rendering import format_case
+
+    text = format_case(_case_named(login_model(approved=True), "Failed1 → Failed2"))
+    # Clause lines only: the Objective sentence repeats the Given wording, and
+    # matching it would test the prose rather than the structure.
+    lines = [ln.strip() for ln in text.splitlines()
+             if ln.strip().startswith(("Given ", "And ", "When ", "Then "))]
+
+    given = next(i for i, ln in enumerate(lines) if ln.startswith("Given "))
+    state = next(i for i, ln in enumerate(lines) if "the system is in Failed1" in ln)
+    when = next(i for i, ln in enumerate(lines) if ln.startswith("When "))
+
+    assert lines[given].startswith("Given Submit invalid credentials"), (
+        f"the first Given must be the setup step, got {lines[given]!r}")
+    assert lines[state].startswith("And "), (
+        "the established state is an And-clause, not a second Given")
+    assert given < state < when, (
+        f"expected setup → state → When, got {lines[given:when + 1]}")
+
+
+def test_a_guard_stays_attached_to_the_clause_it_constrains():
+    """A guard is a condition on one step. Aggregated into the data
+    requirements it loses which step needs it, so it is shown in both places
+    -- that split is T-8/T-9 and predates this change."""
+    from metis_mcp.rendering import format_case
+
+    text = format_case(_case_named(login_model(approved=True), "LoggedOut → LoggedIn"))
+    assert "credentials_valid AND NOT account_locked" in text
+
+
+# --------------------------------------------------------------------------
+# Gherkin: the feature file, and the line Métis does not cross
+# --------------------------------------------------------------------------
+
+def test_a_feature_file_carries_one_scenario_per_case():
+    from metis_mcp.rendering import feature_for
+
+    model = login_model(approved=True)
+    from metis_mcp.mbt import ALL_TRANSITIONS, generate
+    from metis_mcp.rendering import render
+    rendered = render(model, generate(model, ALL_TRANSITIONS).paths)
+
+    text = feature_for(model, rendered.cases, criterion=ALL_TRANSITIONS)
+
+    assert text.startswith("@") or text.startswith("Feature:")
+    assert f"Feature: {model.id}" in text
+    assert text.count("Scenario: ") == len(rendered.cases)
+    assert text.endswith("\n")
+
+
+def test_a_scenario_is_given_when_then_with_setup_as_and_clauses():
+    from metis_mcp.mbt import ALL_TRANSITIONS, generate
+    from metis_mcp.rendering import feature_for, render
+
+    model = login_model(approved=True)
+    rendered = render(model, generate(model, ALL_TRANSITIONS).paths)
+    case = next(c for c in rendered.cases if "Failed1 → Failed2" in c.name)
+
+    block = _scenario_block(feature_for(model, [case], criterion=ALL_TRANSITIONS),
+                            case.name)
+    keywords = [ln.split()[0] for ln in block if ln and not ln.startswith("#")]
+
+    assert keywords[0] == "Scenario:"
+    assert keywords[1] == "Given"
+    assert "And" in keywords[2:], "a setup step must become an And-clause"
+    assert keywords.index("When") > keywords.index("Given")
+    assert keywords[-1] == "Then" or "Then" in keywords
+
+
+def test_a_guard_is_a_comment_not_a_step():
+    """T-5: a recovered condition is evidence. Rendered as a step, a reader
+    would hand it to a framework as something to *perform*, and no step
+    definition exists for `NOT credentials_valid`."""
+    from metis_mcp.mbt import ALL_TRANSITIONS, generate
+    from metis_mcp.rendering import feature_for, render
+
+    model = login_model(approved=True)
+    rendered = render(model, generate(model, ALL_TRANSITIONS).paths)
+    text = feature_for(model, rendered.cases, criterion=ALL_TRANSITIONS)
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        if "credentials_valid" in stripped and not stripped.startswith("#"):
+            # It may legitimately appear inside a step's prose description;
+            # what must never happen is a bare guard expression as a step.
+            assert not stripped.startswith(("Given NOT ", "And NOT ",
+                                            "When NOT ", "Then NOT ")), (
+                f"a guard expression became an executable step: {stripped!r}")
+
+
+def test_the_feature_says_the_step_code_is_not_metis_s_job():
+    """The boundary is stated in the artefact, not only in our documentation:
+    somebody opening this file in a Cucumber project has to know Métis wrote
+    the specification and not the glue."""
+    from metis_mcp.mbt import ALL_TRANSITIONS, generate
+    from metis_mcp.rendering import feature_for, render
+
+    model = login_model(approved=True)
+    rendered = render(model, generate(model, ALL_TRANSITIONS).paths)
+    text = feature_for(model, rendered.cases, criterion=ALL_TRANSITIONS).lower()
+
+    assert "step definition" in text
+    assert "framework" in text
+
+
+def test_the_feature_file_is_byte_identical_across_runs():
+    """TR-6/P-7, the same guarantee `render_feature` carries."""
+    from metis_mcp.mbt import ALL_TRANSITIONS, generate
+    from metis_mcp.rendering import feature_for, render
+
+    model = login_model(approved=True)
+    first = feature_for(model, render(model, generate(model, ALL_TRANSITIONS).paths).cases,
+                        criterion=ALL_TRANSITIONS)
+    second = feature_for(model, render(model, generate(model, ALL_TRANSITIONS).paths).cases,
+                         criterion=ALL_TRANSITIONS)
+    assert first == second
+
+
+def test_no_cases_is_said_rather_than_left_as_an_empty_file():
+    from metis_mcp.rendering import feature_for
+
+    text = feature_for(login_model(approved=True), [], criterion="all-transitions")
+    assert "no scenarios" in text.lower()
+
+
+def _scenario_block(text: str, name: str) -> list[str]:
+    lines = [ln.strip() for ln in text.splitlines()]
+    start = next(i for i, ln in enumerate(lines) if ln.startswith(f"Scenario: {name}"))
+    block = []
+    for ln in lines[start:]:
+        if block and ln.startswith(("Scenario:", "@", "Feature:")):
+            break
+        if ln:
+            block.append(ln)
+    return block
+
+
+def test_a_rendered_feature_is_not_readable_as_stated_intent():
+    """**The boundary that justified a separate emitter.**
+
+    `feature read` turns a `.feature` into acceptance criteria — somebody's
+    *stated* requirement. These scenarios are *recovered* paths, and filing
+    them as intent would let the model corroborate itself: extraction proposes
+    a behaviour, it is read back as a requirement, and the two then agree
+    because they came from the same place.
+
+    The parser also cannot represent these faithfully — it keeps one `given`
+    and one `and` per scenario, so a five-step setup would lose four of them.
+    A refusal is the honest outcome, and it is checked here rather than left to
+    the absence of a tag nobody wrote on purpose.
+    """
+    from metis_mcp.mbt import ALL_TRANSITIONS, generate
+    from metis_mcp.rendering import feature_for, render
+    from metis_mcp.specgen.gherkin import parse_feature
+
+    model = login_model(approved=True)
+    rendered = render(model, generate(model, ALL_TRANSITIONS).paths)
+    text = feature_for(model, rendered.cases, criterion=ALL_TRANSITIONS)
+
+    parsed = parse_feature(text)
+    assert parsed.problems, (
+        "a rendered feature must not read cleanly as stated intent")
+    assert any(p.kind == "no_feature" for p in parsed.problems)

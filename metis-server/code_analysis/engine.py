@@ -313,19 +313,27 @@ def preflight(check_engine_version: bool = True) -> Preflight:
         else:
             result.checks.append(Check(f"pack:{pack}", True, f"pinned {own}"))
 
-    try:
-        from metis_mcp.mbt.graph_session import GraphNotConfigured, resolve
-
-        config = resolve()
-        result.checks.append(Check(
-            "graph", True, f"{config.redacted} (password from "
-            f"{config.password_source})"))
-    except Exception as e:  # GraphNotConfigured, or a driver problem
-        result.checks.append(Check(
-            "graph", False, str(e).splitlines()[0],
-            "landing needs a graph; file-based commands do not"))
+    # **Connected, not merely configured.** This called `resolve()`, which reads
+    # a URI and a password source and opens no socket -- so doctor reported
+    # `[ok] graph neo4j@bolt://localhost:7687` with nothing listening on 7687,
+    # and the next command surfaced a driver traceback. `reachable()` verifies
+    # connectivity and never raises; it distinguishes unconfigured, unreachable
+    # and bad-credential in the message, because each has a different repair.
+    ok, detail = _graph_reachable()
+    result.checks.append(Check(
+        "graph", ok, detail,
+        "" if ok else "landing needs a graph; file-based commands do not"))
 
     return result
+
+
+def _graph_reachable() -> tuple[bool, str]:
+    """Indirected so a preflight still runs where `metis_mcp` is not importable."""
+    try:
+        from metis_mcp.mbt.graph_session import reachable
+    except Exception as e:                    # pragma: no cover - env-dependent
+        return False, f"cannot load the graph client ({e})"
+    return reachable()
 
 
 # ---------------------------------------------------------------------------

@@ -257,6 +257,42 @@ def run_path(run_id: str, root: str | Path | None = None) -> Path:
     return runs_dir(root) / f"{run_id}.json"
 
 
+def list_runs(root: str | Path | None = None) -> list["RunRecord"]:
+    """Every run record on this machine, newest first.
+
+    **The noun the surfaces were missing.** `run_status` answers "where did THIS
+    run get to" and needs the id, which you only have if you started it. Nothing
+    could answer "what is waiting on me" — the question a reviewer actually
+    arrives with, and the one that decides whether a gate gets attended to or
+    forgotten.
+
+    A record that will not parse is skipped rather than raising: one corrupt file
+    is not a reason to hide every other run, and `pending` is read by a surface
+    whose job is to show a queue.
+    """
+    directory = runs_dir(root)
+    if not directory.is_dir():
+        return []
+    records = []
+    for path in directory.glob("*.json"):
+        record = RunRecord.load(path)
+        if record is not None:
+            records.append(record)
+    return sorted(records, key=lambda r: r.started_at, reverse=True)
+
+
+def pending(root: str | Path | None = None) -> list["RunRecord"]:
+    """Runs stopped at a gate, waiting for a person.
+
+    **Blocked only — not failed, and not complete.** A failed run needs fixing
+    and a complete one needs nothing; mixing either into this list turns a
+    queue of decisions into a list of things that are merely not finished, which
+    is the difference between a surface somebody works through and one they
+    learn to ignore.
+    """
+    return [r for r in list_runs(root) if r.is_blocked]
+
+
 def run_id_for(workflow: str, scope: str) -> str:
     """Stable per `(workflow, scope)`, so resuming does not need a lookup.
 

@@ -46,8 +46,18 @@ def test_the_declared_repositories_are_pinned_not_inferred():
     assert Potion().model == Potion.repository
 
 
+@needs_model
 def test_the_loader_accepts_them_by_dotted_path():
-    """`load_provider` is the only supported way in, and it never falls back."""
+    """`load_provider` is the only supported way in, and it never falls back.
+
+    **Marked, unlike its neighbours in this section, and the reason is not
+    obvious.** It sits under "no model needed" and does need one: `load_provider`
+    shape-checks with `hasattr(provider, "dimensions")`, and `dimensions` is a
+    `cached_property` that reads `self._model.dim`. So the check loads the model,
+    and `hasattr` swallows `AttributeError` but not the `RuntimeError` a missing
+    extra raises. It passed for anyone whose environment happened to have
+    `model2vec` and failed in a clean CI clone, which is where it was found.
+    """
     assert load_provider("metis_mcp.providers.static:Potion").model == \
         "minishlab/potion-base-8M"
 

@@ -63,17 +63,24 @@ jobs:
       - run: uv venv --python 3.13
       - run: uv pip install -e '.[test]'
 
-      # The five engine-dependent files run in `extraction`. Named here, not
-      # deselected by a marker, so that adding a sixth is a visible edit in
+      # The engine-dependent files run in `extraction`. Named here, not
+      # deselected by a marker, so that adding one is a visible edit in
       # both jobs instead of a test that quietly stops running.
+      #
+      # Naming them was not enough on its own. This list and `extraction`'s
+      # both carried `test_data_layer.py` and `test_data_cli.py` for long after
+      # the engine rebuild deleted them: harmless here (pytest ignores a missing
+      # --ignore path in silence) and fatal there (a missing positional path
+      # exits 4), so the extraction job ran NOTHING while this one stayed green.
+      # `test_structure.py::test_every_test_file_runs_in_exactly_one_ci_job`
+      # reads this workflow and asserts the two lists partition test_*.py, so a
+      # name that stops matching a file now fails a test instead of a job.
       - name: Test suite (engine-free half)
         run: |
           uv run python -m pytest -q \
             --ignore=test_extraction.py \
             --ignore=test_recipe.py \
-            --ignore=test_connectivity.py \
-            --ignore=test_data_layer.py \
-            --ignore=test_data_cli.py
+            --ignore=test_connectivity.py
 
       # The Cypher schema is generated from ontology/labels.py. A hand-edit is
       # drift, and drift between the two is unfixable once anything has been
@@ -83,12 +90,41 @@ jobs:
           uv run python -m metis_mcp.ontology.schema --write
           git diff --exit-code -- schema/
 
-      # Agent surfaces are generated from the skills' own frontmatter, for two
-      # clients. Regenerating must be a no-op.
-      - name: Generated agent surfaces are current
+      # **The chart renders, and configures nothing without a reader.**
+      # `test_structure.py` parses values.yaml and needs no helm; this renders
+      # the whole thing, which catches a template that cannot produce valid YAML
+      # at all. Both are needed: the chart was lint-clean and unable to start a
+      # pod for four independent reasons at once.
+      - name: Helm chart renders
+        run: |
+          helm lint ../metis-chart
+          helm template metis ../metis-chart \
+            --set-string secrets.neo4jPassword=ci-only > /dev/null
+
+      # The agent surface is generated from the skills' own frontmatter.
+      # Regenerating must be a no-op. There was a second copy under
+      # `.github/agents/` and this checked both; agents ship through the
+      # marketplace plugin now, so there is one directory to check.
+      - name: Generated agent surface is current
         run: |
           uv run python -c 'from metis_mcp.agent_generator import write; [print(p) for p in write()]'
-          git diff --exit-code -- ../.github/agents ../plugins/metis/agents
+          git diff --exit-code -- ../plugins/metis/agents
+
+      # **The academy site, which cannot be checked the way the others are.**
+      # `docs/academy-site/` is deliberately not committed (`.gitignore` says
+      # why: each page inlines a ~90KB search index), so there is no committed
+      # copy to diff and `git diff --exit-code` would prove nothing.
+      #
+      # What is checkable is that rendering is a fixed point: render, then ask
+      # `--check` whether the result is current. That is what makes
+      # `metis academy --check` worth running at all — a renderer that varied
+      # between runs would report drift forever and nobody would look at it
+      # again. The coverage half (every lesson and proposal gets a page) is in
+      # `test_academy_site.py`, which the suite above already ran.
+      - name: The academy renders, and re-rendering is a no-op
+        run: |
+          uv run metis academy --out "$RUNNER_TEMP/academy-site"
+          uv run metis academy --out "$RUNNER_TEMP/academy-site" --check
 
   # The half that needs an engine. `conftest.py` builds a real CPG from
   # demo_project/, which is what gives the five Joern query packs their only
@@ -98,6 +134,33 @@ jobs:
     defaults:
       run:
         working-directory: metis-server
+
+    # **The graph half runs here, and only here, because Joern is already paid
+    # for.** Landing needs an extraction to land, so a separate graph job would
+    # download the same 1.8GB engine a second time to produce the same CPG.
+    #
+    # Until this service existed, NOTHING in this repository ever executed a
+    # line of the generated Cypher: every graph test in the suite monkeypatches
+    # the driver, and the suite is database-free on purpose. That gap is where
+    # the worst bug in the project's history lived -- a VALIDATES edge planned
+    # against `:Transition` merged nothing because the node carries `:ApiCall`,
+    # `land` reported `unmatched`, and both stages "succeeded". `graph_smoke.py`
+    # is that bug written as an assertion.
+    services:
+      neo4j:
+        image: neo4j:5-community
+        env:
+          NEO4J_AUTH: neo4j/ci-only-not-a-secret
+          NEO4J_server_memory_heap_max__size: 1G
+        ports:
+          - 7687:7687
+        options: >-
+          --name metis-ci-graph
+          --health-cmd "cypher-shell -u neo4j -p ci-only-not-a-secret 'RETURN 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -188,9 +251,52 @@ jobs:
           uv run python -m pytest -q \
             test_extraction.py \
             test_recipe.py \
-            test_connectivity.py \
-            test_data_layer.py \
-            test_data_cli.py
+            test_connectivity.py
+
+      # `--demo` rather than the default: an empty database defaults to
+      # academy-only, and the academy alone lands no transitions, so the
+      # specialisation assertions below would have nothing to bite on.
+      #
+      # The password is a literal here on purpose and is not a secret -- it is
+      # the credential of a container that exists for ninety seconds and is
+      # destroyed with the runner. PLT-005 is about a real password never
+      # reaching an argument or a log; this one is neither.
+      - name: Land the demo corpus into a real graph
+        env:
+          METIS_NEO4J_URI: bolt://localhost:7687
+          METIS_NEO4J_USER: neo4j
+          METIS_NEO4J_PASSWORD: ci-only-not-a-secret
+          METIS_NEO4J_CONTAINER: metis-ci-graph
+        run: ./rebuild_graph.sh --demo
+
+      # Nine assertions against what actually landed. Not a `test_*.py`: the
+      # suite is database-free by design, and `test_structure.py` asserts the
+      # two job lists partition `test_*.py` exactly -- a third pytest file would
+      # have to be named in both and would drag Neo4j into the fast job.
+      - name: The graph holds
+        env:
+          METIS_NEO4J_URI: bolt://localhost:7687
+          METIS_NEO4J_USER: neo4j
+          METIS_NEO4J_PASSWORD: ci-only-not-a-secret
+        run: uv run python graph_smoke.py
+
+      # **A floor, not a target.** `retrieval-bench` measures `ask` and
+      # `search_knowledge` against questions whose answers are known, and
+      # `--min-top1` has existed to gate on since it was written with nothing
+      # calling it. The academy scores ~40/72 top-1 and ~61/72 top-3 today; the
+      # floor is set BELOW that on purpose, because this exists to catch a
+      # regression -- an indexing change that halves recall -- and not to
+      # ratchet. Raising it is a deliberate act after a measured improvement.
+      #
+      # Nothing here should be read as 40/72 being good. It is not: four
+      # questions in ten return the wrong lesson first, and both obvious levers
+      # (semantic search, title weighting) were measured and moved it by ~1.
+      - name: Retrieval has not regressed
+        env:
+          METIS_NEO4J_URI: bolt://localhost:7687
+          METIS_NEO4J_USER: neo4j
+          METIS_NEO4J_PASSWORD: ci-only-not-a-secret
+        run: uv run metis retrieval-bench --min-top1 35
 
   # The wheel is built, installed into an interpreter that has never seen this
   # source tree, and the console script's imports are resolved. `pyproject.toml`

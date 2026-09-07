@@ -6,12 +6,12 @@
 
 ```
 usage: metis-mbt [-h]
-                 {paths,render,report,knowledge,feature,glossary,spec-requirement,intent,guide,spec-build,feature-derive,intake,entity,review,override,coverage-gap,validate,drift,publish,ac-mine,doctor,init,analyse,properties,frameworks,ui,reconcile,divergence,spec,sources,land,findings,persist,workflow,backfill-validity,retrieval-bench,embed,storage,lessons} ...
+                 {paths,render,report,knowledge,feature,glossary,spec-requirement,intent,guide,spec-build,feature-derive,intake,entity,review,override,coverage-gap,validate,risk,design,drift,checkout,scaffold,publish,ac-mine,doctor,init,analyse,properties,frameworks,ui,reconcile,decide,divergence,spec,sources,land,findings,persist,workflow,backfill-validity,retrieval-bench,embed,storage,lessons,history,requirement,academy} ...
 
 CLI for the MBT engine (application spec §9.4, first slice).
 
 positional arguments:
-  {paths,render,report,knowledge,feature,glossary,spec-requirement,intent,guide,spec-build,feature-derive,intake,entity,review,override,coverage-gap,validate,drift,publish,ac-mine,doctor,init,analyse,properties,frameworks,ui,reconcile,divergence,spec,sources,land,findings,persist,workflow,backfill-validity,retrieval-bench,embed,storage,lessons}
+  {paths,render,report,knowledge,feature,glossary,spec-requirement,intent,guide,spec-build,feature-derive,intake,entity,review,override,coverage-gap,validate,risk,design,drift,checkout,scaffold,publish,ac-mine,doctor,init,analyse,properties,frameworks,ui,reconcile,decide,divergence,spec,sources,land,findings,persist,workflow,backfill-validity,retrieval-bench,embed,storage,lessons,history,requirement,academy}
     paths               generate covering paths
     render              render paths as test cases
     report              coverage report
@@ -33,9 +33,15 @@ positional arguments:
     coverage-gap        what existing tests already cover (REQ-METIS-PG-01)
     validate            check model well-formedness (spec §2.6, blocks
                         generation)
+    risk                the risk register: check it, report on it
+    design              the test design document: build it, check it, verify
+                        it
     drift               three-way drift report (spec §7.6)
-    publish             publish test cases — dry-run only, behind a literal
-                        gate
+    checkout            clone a repository to analyse (disposable, shallow)
+    scaffold            emit the flow manifest a code generator outside Métis
+                        consumes
+    publish             publish test cases — behind a literal gate; dry-run by
+                        default
     ac-mine             mine a model from acceptance criteria (spec §4.5)
     doctor              is this machine ready to extract? (run this first)
     init                scaffold a project profile in $METIS_HOME/profiles
@@ -45,6 +51,7 @@ positional arguments:
     frameworks          what extraction is declared to support (X-4)
     ui                  serve the review UI (spec §9.3)
     reconcile           match acceptance criteria to transitions (spec §3.3)
+    decide              record a divergence, match or drift decision (§9.1)
     divergence          cross-surface divergence report (spec M-5f)
     spec                generate the stakeholder specification (spec §18)
     sources             list model sources and availability
@@ -60,6 +67,9 @@ positional arguments:
     storage             per-project Cypher: export it, verify it, restore it
     lessons             land the authored academy (docs/academy/) as Lesson
                         nodes
+    history             land repair history (fix commits) as Commit nodes
+    requirement         state, revise or retire a requirement
+    academy             render docs/academy/ as a browsable site
 
 options:
   -h, --help            show this help message and exit

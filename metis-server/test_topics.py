@@ -84,12 +84,19 @@ def _plan():
 
 
 def test_documents_declaring_the_same_topic_point_at_ONE_node():
-    """Shared is the entire feature: eight lessons, two topics."""
+    """Shared is the entire feature: many lessons, few topics.
+
+    `operator` joined when the academy split into tracks -- the concepts and
+    contributor lessons are written for somebody who reads code, and a business
+    analyst reading them in order meets a code property graph on page two. The
+    topic is what makes "show me the operator material" one traversal.
+    """
     plan = _plan()
     ids = [n.properties["id"] for n in plan.nodes if n.label == "Topic"]
     assert len(set(ids)) < len(ids), "every lesson minted its own topic node"
     # Plus the corpus root the declared topics sit under.
-    assert set(ids) == {"topic:metis", "topic:concepts", "topic:practice"}
+    assert set(ids) == {"topic:metis", "topic:concepts", "topic:practice",
+                        "topic:operator"}
 
 
 def test_every_lesson_gets_an_edge_to_what_it_declared():
@@ -163,7 +170,8 @@ def test_the_corpus_gets_a_root_topic_that_its_subjects_sit_under():
     up = {(e.from_id, e.to_id) for e in plan.edges
           if e.rel_type == "BELONGS_TO" and e.from_label == "Topic"}
     assert up == {("topic:concepts", "topic:metis"),
-                  ("topic:practice", "topic:metis")}
+                  ("topic:practice", "topic:metis"),
+                  ("topic:operator", "topic:metis")}
 
 
 def test_a_lesson_reaches_the_root_THROUGH_its_subjects_not_directly():

@@ -42,6 +42,19 @@ CREATE INDEX action_m_project_lookup IF NOT EXISTS FOR (n:Action) ON (n.m_projec
 CREATE INDEX action_lifecycle_state_lookup IF NOT EXISTS FOR (n:Action) ON (n.lifecycle_state);
 CREATE INDEX action_source_episode_id_lookup IF NOT EXISTS FOR (n:Action) ON (n.source_episode_id);
 
+// Alert — A condition a running system raised about itself
+CREATE CONSTRAINT alert_id_unique IF NOT EXISTS FOR (n:Alert) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT alert_source_episode_id_required IF NOT EXISTS FOR (n:Alert) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT alert_name_required IF NOT EXISTS FOR (n:Alert) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT alert_raised_at_required IF NOT EXISTS FOR (n:Alert) REQUIRE n.raised_at IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT alert_provenance_required IF NOT EXISTS FOR (n:Alert) REQUIRE n.provenance IS NOT NULL;
+CREATE INDEX alert_name_lookup IF NOT EXISTS FOR (n:Alert) ON (n.name);
+CREATE INDEX alert_raised_at_lookup IF NOT EXISTS FOR (n:Alert) ON (n.raised_at);
+CREATE INDEX alert_m_project_lookup IF NOT EXISTS FOR (n:Alert) ON (n.m_project);
+CREATE INDEX alert_lifecycle_state_lookup IF NOT EXISTS FOR (n:Alert) ON (n.lifecycle_state);
+CREATE INDEX alert_source_episode_id_lookup IF NOT EXISTS FOR (n:Alert) ON (n.source_episode_id);
+//   Alert.provenance ∈ {observed_from_running_system} — enforced by ontology.validation, not by Neo4j
+
 // ApiCall — A Transition on the api surface: one call and its outcome
 CREATE CONSTRAINT api_call_id_unique IF NOT EXISTS FOR (n:ApiCall) REQUIRE n.id IS UNIQUE;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT api_call_source_episode_id_required IF NOT EXISTS FOR (n:ApiCall) REQUIRE n.source_episode_id IS NOT NULL;
@@ -107,6 +120,21 @@ CREATE INDEX code_item_m_project_lookup IF NOT EXISTS FOR (n:CodeItem) ON (n.m_p
 CREATE INDEX code_item_lifecycle_state_lookup IF NOT EXISTS FOR (n:CodeItem) ON (n.lifecycle_state);
 CREATE INDEX code_item_source_episode_id_lookup IF NOT EXISTS FOR (n:CodeItem) ON (n.source_episode_id);
 
+// Commit — One change to the repository, and whether it repaired something
+CREATE CONSTRAINT commit_id_unique IF NOT EXISTS FOR (n:Commit) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT commit_source_episode_id_required IF NOT EXISTS FOR (n:Commit) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT commit_name_required IF NOT EXISTS FOR (n:Commit) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT commit_sha_required IF NOT EXISTS FOR (n:Commit) REQUIRE n.sha IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT commit_subject_required IF NOT EXISTS FOR (n:Commit) REQUIRE n.subject IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT commit_committed_at_required IF NOT EXISTS FOR (n:Commit) REQUIRE n.committed_at IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT commit_provenance_required IF NOT EXISTS FOR (n:Commit) REQUIRE n.provenance IS NOT NULL;
+CREATE INDEX commit_sha_lookup IF NOT EXISTS FOR (n:Commit) ON (n.sha);
+CREATE INDEX commit_is_fix_lookup IF NOT EXISTS FOR (n:Commit) ON (n.is_fix);
+CREATE INDEX commit_m_project_lookup IF NOT EXISTS FOR (n:Commit) ON (n.m_project);
+CREATE INDEX commit_lifecycle_state_lookup IF NOT EXISTS FOR (n:Commit) ON (n.lifecycle_state);
+CREATE INDEX commit_source_episode_id_lookup IF NOT EXISTS FOR (n:Commit) ON (n.source_episode_id);
+//   Commit.provenance ∈ {recovered_from_history} — enforced by ontology.validation, not by Neo4j
+
 // Component — One deployable component at one commit (spec D-6)
 CREATE CONSTRAINT component_id_unique IF NOT EXISTS FOR (n:Component) REQUIRE n.id IS UNIQUE;
 // [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT component_source_episode_id_required IF NOT EXISTS FOR (n:Component) REQUIRE n.source_episode_id IS NOT NULL;
@@ -147,6 +175,20 @@ CREATE INDEX declared_outcome_discriminator_lookup IF NOT EXISTS FOR (n:Declared
 CREATE INDEX declared_outcome_m_project_lookup IF NOT EXISTS FOR (n:DeclaredOutcome) ON (n.m_project);
 CREATE INDEX declared_outcome_lifecycle_state_lookup IF NOT EXISTS FOR (n:DeclaredOutcome) ON (n.lifecycle_state);
 CREATE INDEX declared_outcome_source_episode_id_lookup IF NOT EXISTS FOR (n:DeclaredOutcome) ON (n.source_episode_id);
+
+// Defect — A reported fault, and what it was observed against
+CREATE CONSTRAINT defect_id_unique IF NOT EXISTS FOR (n:Defect) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT defect_source_episode_id_required IF NOT EXISTS FOR (n:Defect) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT defect_name_required IF NOT EXISTS FOR (n:Defect) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT defect_summary_required IF NOT EXISTS FOR (n:Defect) REQUIRE n.summary IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT defect_status_required IF NOT EXISTS FOR (n:Defect) REQUIRE n.status IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT defect_provenance_required IF NOT EXISTS FOR (n:Defect) REQUIRE n.provenance IS NOT NULL;
+CREATE INDEX defect_status_lookup IF NOT EXISTS FOR (n:Defect) ON (n.status);
+CREATE INDEX defect_external_key_lookup IF NOT EXISTS FOR (n:Defect) ON (n.external_key);
+CREATE INDEX defect_m_project_lookup IF NOT EXISTS FOR (n:Defect) ON (n.m_project);
+CREATE INDEX defect_lifecycle_state_lookup IF NOT EXISTS FOR (n:Defect) ON (n.lifecycle_state);
+CREATE INDEX defect_source_episode_id_lookup IF NOT EXISTS FOR (n:Defect) ON (n.source_episode_id);
+//   Defect.provenance ∈ {observed_from_running_system, reported_by_a_person} — enforced by ontology.validation, not by Neo4j
 
 // Endpoint — One HTTP entry point as recovered from code (Layer 2)
 CREATE CONSTRAINT endpoint_id_unique IF NOT EXISTS FOR (n:Endpoint) REQUIRE n.id IS UNIQUE;
@@ -265,6 +307,34 @@ CREATE INDEX lesson_lifecycle_state_lookup IF NOT EXISTS FOR (n:Lesson) ON (n.li
 CREATE INDEX lesson_m_project_lookup IF NOT EXISTS FOR (n:Lesson) ON (n.m_project);
 CREATE INDEX lesson_source_episode_id_lookup IF NOT EXISTS FOR (n:Lesson) ON (n.source_episode_id);
 //   Lesson.lifecycle_state ∈ {Quarantine, Approved, Disputed, Rejected, Deprecated} — enforced by ontology.validation, not by Neo4j
+
+// Logs — A retained excerpt of what a running system emitted
+CREATE CONSTRAINT logs_id_unique IF NOT EXISTS FOR (n:Logs) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT logs_source_episode_id_required IF NOT EXISTS FOR (n:Logs) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT logs_name_required IF NOT EXISTS FOR (n:Logs) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT logs_source_required IF NOT EXISTS FOR (n:Logs) REQUIRE n.source IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT logs_observed_at_required IF NOT EXISTS FOR (n:Logs) REQUIRE n.observed_at IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT logs_provenance_required IF NOT EXISTS FOR (n:Logs) REQUIRE n.provenance IS NOT NULL;
+CREATE INDEX logs_source_lookup IF NOT EXISTS FOR (n:Logs) ON (n.source);
+CREATE INDEX logs_observed_at_lookup IF NOT EXISTS FOR (n:Logs) ON (n.observed_at);
+CREATE INDEX logs_m_project_lookup IF NOT EXISTS FOR (n:Logs) ON (n.m_project);
+CREATE INDEX logs_lifecycle_state_lookup IF NOT EXISTS FOR (n:Logs) ON (n.lifecycle_state);
+CREATE INDEX logs_source_episode_id_lookup IF NOT EXISTS FOR (n:Logs) ON (n.source_episode_id);
+//   Logs.provenance ∈ {observed_from_running_system} — enforced by ontology.validation, not by Neo4j
+
+// Metrics — A measured figure about a running system
+CREATE CONSTRAINT metrics_id_unique IF NOT EXISTS FOR (n:Metrics) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT metrics_source_episode_id_required IF NOT EXISTS FOR (n:Metrics) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT metrics_name_required IF NOT EXISTS FOR (n:Metrics) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT metrics_value_required IF NOT EXISTS FOR (n:Metrics) REQUIRE n.value IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT metrics_observed_at_required IF NOT EXISTS FOR (n:Metrics) REQUIRE n.observed_at IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT metrics_provenance_required IF NOT EXISTS FOR (n:Metrics) REQUIRE n.provenance IS NOT NULL;
+CREATE INDEX metrics_name_lookup IF NOT EXISTS FOR (n:Metrics) ON (n.name);
+CREATE INDEX metrics_observed_at_lookup IF NOT EXISTS FOR (n:Metrics) ON (n.observed_at);
+CREATE INDEX metrics_m_project_lookup IF NOT EXISTS FOR (n:Metrics) ON (n.m_project);
+CREATE INDEX metrics_lifecycle_state_lookup IF NOT EXISTS FOR (n:Metrics) ON (n.lifecycle_state);
+CREATE INDEX metrics_source_episode_id_lookup IF NOT EXISTS FOR (n:Metrics) ON (n.source_episode_id);
+//   Metrics.provenance ∈ {observed_from_running_system} — enforced by ontology.validation, not by Neo4j
 
 // NeedReview — Marker: a human still owes a decision on this node (lifecycle_state is Quarantine or Disputed)
 CREATE CONSTRAINT need_review_id_unique IF NOT EXISTS FOR (n:NeedReview) REQUIRE n.id IS UNIQUE;
@@ -409,6 +479,33 @@ CREATE INDEX test_case_m_project_lookup IF NOT EXISTS FOR (n:TestCase) ON (n.m_p
 CREATE INDEX test_case_lifecycle_state_lookup IF NOT EXISTS FOR (n:TestCase) ON (n.lifecycle_state);
 CREATE INDEX test_case_source_episode_id_lookup IF NOT EXISTS FOR (n:TestCase) ON (n.source_episode_id);
 //   TestCase.level ∈ {unit, integration, api_functional, web_functional, e2e, performance} — enforced by ontology.validation, not by Neo4j
+
+// TestCycle — A named set of executions observed together
+CREATE CONSTRAINT test_cycle_id_unique IF NOT EXISTS FOR (n:TestCycle) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT test_cycle_source_episode_id_required IF NOT EXISTS FOR (n:TestCycle) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT test_cycle_name_required IF NOT EXISTS FOR (n:TestCycle) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT test_cycle_started_at_required IF NOT EXISTS FOR (n:TestCycle) REQUIRE n.started_at IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT test_cycle_provenance_required IF NOT EXISTS FOR (n:TestCycle) REQUIRE n.provenance IS NOT NULL;
+CREATE INDEX test_cycle_started_at_lookup IF NOT EXISTS FOR (n:TestCycle) ON (n.started_at);
+CREATE INDEX test_cycle_m_project_lookup IF NOT EXISTS FOR (n:TestCycle) ON (n.m_project);
+CREATE INDEX test_cycle_lifecycle_state_lookup IF NOT EXISTS FOR (n:TestCycle) ON (n.lifecycle_state);
+CREATE INDEX test_cycle_source_episode_id_lookup IF NOT EXISTS FOR (n:TestCycle) ON (n.source_episode_id);
+//   TestCycle.provenance ∈ {observed_from_running_system} — enforced by ontology.validation, not by Neo4j
+
+// TestExecution — One observed run of one test case
+CREATE CONSTRAINT test_execution_id_unique IF NOT EXISTS FOR (n:TestExecution) REQUIRE n.id IS UNIQUE;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT test_execution_source_episode_id_required IF NOT EXISTS FOR (n:TestExecution) REQUIRE n.source_episode_id IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT test_execution_name_required IF NOT EXISTS FOR (n:TestExecution) REQUIRE n.name IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT test_execution_outcome_required IF NOT EXISTS FOR (n:TestExecution) REQUIRE n.outcome IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT test_execution_observed_at_required IF NOT EXISTS FOR (n:TestExecution) REQUIRE n.observed_at IS NOT NULL;
+// [enterprise-only, enforced by ontology/validation.py] CREATE CONSTRAINT test_execution_provenance_required IF NOT EXISTS FOR (n:TestExecution) REQUIRE n.provenance IS NOT NULL;
+CREATE INDEX test_execution_outcome_lookup IF NOT EXISTS FOR (n:TestExecution) ON (n.outcome);
+CREATE INDEX test_execution_observed_at_lookup IF NOT EXISTS FOR (n:TestExecution) ON (n.observed_at);
+CREATE INDEX test_execution_m_project_lookup IF NOT EXISTS FOR (n:TestExecution) ON (n.m_project);
+CREATE INDEX test_execution_lifecycle_state_lookup IF NOT EXISTS FOR (n:TestExecution) ON (n.lifecycle_state);
+CREATE INDEX test_execution_source_episode_id_lookup IF NOT EXISTS FOR (n:TestExecution) ON (n.source_episode_id);
+//   TestExecution.outcome ∈ {passed, failed, skipped, errored, not_run} — enforced by ontology.validation, not by Neo4j
+//   TestExecution.provenance ∈ {observed_from_running_system} — enforced by ontology.validation, not by Neo4j
 
 // Topic — A subject shared by documents that cover the same ground
 CREATE CONSTRAINT topic_id_unique IF NOT EXISTS FOR (n:Topic) REQUIRE n.id IS UNIQUE;

@@ -3,7 +3,7 @@ Writing a generated specification back to the product repository (spec §18.4,
 T-15..T-21, SP-8).
 
 A specification that only lives in Métis is a specification the team does not
-read. The the pilot estate estate already practises spec-driven development with GitHub
+read. The pilot estate already practises spec-driven development with GitHub
 Spec Kit, so the generated document belongs beside the ones people already open:
 `<repo>/.specify/specs/<feature>/spec.md`.
 

@@ -28,7 +28,11 @@ from metis_mcp.publishing.publish import (
     Batch,
     Confirmation,
     ConfirmationRefused,
+    DEFAULT_TRANSPORT,
+    TRANSPORTS,
     DryRunTransport,
+    dry_run_transports,
+    live_transports,
     Operation,
     PublishResult,
     Transport,
@@ -48,5 +52,6 @@ __all__ = [
     "plan_publication", "publish", "confirm", "format_batch",
     "Batch", "Operation", "Confirmation", "ConfirmationRefused",
     "Transport", "DryRunTransport", "PublishResult",
+    "TRANSPORTS", "DEFAULT_TRANSPORT", "live_transports", "dry_run_transports",
     "AFFIRMATIVE", "CREATE", "UPDATE", "DEPRECATE",
 ]

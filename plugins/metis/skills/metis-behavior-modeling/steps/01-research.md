@@ -19,8 +19,8 @@ graph.
    (what `guards_conflict` can actually verify): tag it `UNVERIFIED` for
    overlap-checking purposes now — Step 2's determinism check will
    conservatively flag it as a potential conflict rather than silently
-   assuming it's safe, per the same fail-closed discipline as
-   `classification_gate.py`.
+   assuming it's safe, per M-17's fail-closed discipline: unverifiable is a
+   third outcome, not a pass.
 
 ## Confidence tagging
 Every landed tuple is `VERIFIED` (it's exactly what the user stated,

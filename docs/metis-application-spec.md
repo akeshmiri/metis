@@ -35,6 +35,29 @@ next was written. Every requirement in §1 is quoted from the product owner.*
 | **19** | **Acceptance criteria for §§16–18** | **✅ drafted** |
 | **20** | **Implementation readiness and the change to Métis** | **✅ drafted** |
 | **21** | **How much the plan depends on Joern** | **✅ drafted** |
+| **22** | **Test design** | **✅ agreed** |
+| **23** | **Pre-import analysis** | **✅ agreed** |
+
+---
+
+## Diagrams in this document
+
+Two languages, and which one is used is a rule rather than a preference.
+
+**ASCII, in a fenced block**, for a flow that reads as a sentence — a pipeline, a
+sequence of stages, a short cascade. It diffs cleanly, it renders in anything,
+and forty-three of them predate this note. Nothing here converts one.
+
+**Mermaid**, for a structure ASCII cannot hold honestly: a state machine, a graph
+of labels and edges, a decision with more than two outcomes. A diagram that has
+to be *drawn* rather than *typed* is one where ASCII starts lying about what
+connects to what.
+
+**Every diagram in this document is derived from something checkable** — a
+registry, an ontology table, a workflow definition — and says which. A diagram
+that is nobody's output is prose that happens to have boxes, and it drifts the
+way the hand-maintained indexes in `docs/academy/10-where-a-thing-belongs.md`
+drifted.
 
 ---
 
@@ -161,9 +184,46 @@ with its own flow; nothing at that moment knows which outcome will occur; and **
 failing call frequently produces no UI transition at all**. `TRIGGERS` says the
 call was made. `INVOKES` says a result was rendered.
 
-A node carries `:ApiCall` or `:UiAction` **in addition to** `:Transition`, so the
-surfaces are nameable in a query while the engine keeps one traversal — and
+**M-5a(i) — a specialisation REPLACES its parent label.** A classified transition
+is written `:ApiCall` or `:UiAction` **instead of** `:Transition`, not alongside
+it. Verified against a live graph: the nodes carry `['ApiCall', 'NeedReview']`
+and no `:Transition`.
+
+This sentence used to say *in addition to*, which was wrong in the direction that
+costs a reader most: `MATCH (t:Transition)` reads as the obvious query, returns
+only the unclassified transitions, and **fails silently** — a plausible count
+beside an empty result. Use `label_expression("Transition")` in a query and
+`landing.transition_label_for(surface)` when planning an edge into one.
+
+The surfaces are nameable in a query while the engine keeps one traversal, and
 therefore one definition of what a flow is.
+
+```mermaid
+flowchart LR
+  subgraph UI["login-ui - its own states"]
+    direction TB
+    LF["LoginForm"] --> DB["Dashboard"]
+    LF --> ER["ErrorShown"]
+    LF --> LK["LockoutScreen"]
+  end
+  subgraph API["login-api - its own states"]
+    direction TB
+    LO["LoggedOut"] --> LI["LoggedIn"]
+    LO --> FA["LoginFailed"]
+    LO --> AL["AccountLocked"]
+  end
+  LF -.->|TRIGGERS<br/>one-to-many| LO
+  DB -.->|INVOKES<br/>one-to-one| LI
+  ER -.->|INVOKES| FA
+  LK -.->|INVOKES| AL
+```
+
+**The two dotted edge kinds are two different claims**, and one edge conflating
+them made the graph read as though the flows merged. `TRIGGERS` says the call was
+made — one click, every outcome it might reach, and at that moment nothing knows
+which. `INVOKES` says a result was rendered. An outcome the UI starts and cannot
+render has a `TRIGGERS` and no `INVOKES`, which is M-5f's unhandled response and
+now a direct query rather than an inference.
 
 **M-5b — one trigger, several transitions.** A UI trigger that invokes an API
 call produces **one UI transition per API outcome**. The click has no guard of its
@@ -268,7 +328,27 @@ header validity, payload validity, each field. Treating them as independent give
 a product — `3 auth × 2 authz × 10 payload = 60` per endpoint, ~1,500 for a
 25-endpoint service. Almost all of it worthless.
 
-**They are not independent. They are a short-circuit chain.**
+**They are not independent. They are a short-circuit chain.** A request that
+fails authentication never reaches authorisation, so varying authorisation
+underneath it produces no observable difference — which is what removes the
+product.
+
+```mermaid
+flowchart LR
+  R(["request"]) --> A{"authenticated?"}
+  A -->|no| E401["401 - auth only<br/>1 case"]
+  A -->|yes| Z{"authorised?"}
+  Z -->|no| E403["403 - authz only<br/>1 case"]
+  Z -->|yes| V{"payload valid?"}
+  V -->|no| E400["400 - payload only<br/>9 cases"]
+  V -->|yes| OK["200 - the success path<br/>1 case"]
+```
+
+`1 + 1 + 9 + 1 = 13`, against `3 x 2 x 10 = 60`. The dimensions *after* the
+failing one are unconstrained, so varying them is unobservable (GD-3) — and that
+is the whole of the reduction. Where the order cannot be recovered, GD-9 refuses
+to assume one and the full product is **reported rather than generated**.
+
 
 **GD-1 — a guard is composed of ordered dimensions.** A dimension is one
 independent axis of variation. Dimensions carry a **precedence order**: the order
@@ -431,6 +511,40 @@ proposed `VALIDATES` link is held for human confirmation. Name or wording
 similarity alone never establishes a match.
 
 ### 3.4 Human gates
+
+Two lettered gates, and only two. Every other halt in the system belongs to one
+workflow, carries its own check and its own literal, and passes nothing else.
+
+```mermaid
+flowchart TB
+  subgraph G1["G1 - model approval"]
+    direction LR
+    MB["model-build"] --> D1(["a human approves elements"])
+    IN["intake"] --> D1
+    KC["knowledge-capture"] --> D1
+    CA["change-approval"] --> D1
+  end
+  subgraph G2["G2 - publication"]
+    direction LR
+    TG["test-generate"] --> D2(["a literal, in this run"])
+  end
+  subgraph OWN["Workflow-owned halts - not lettered gates"]
+    direction LR
+    RR["risk-review"] --> H1(["risk-acceptance"])
+    TD["test-design"] --> H2(["design-acceptance"])
+  end
+  subgraph BLK["Blocking stages - no literal passes them"]
+    direction LR
+    IR["intent-review, intake"] --> H3(["readiness - the claim must change"])
+  end
+```
+
+**The fourth box is not a gate and the difference matters.** A gate waits for a
+person to decide something. `readiness` waits for nothing: a need nobody has
+specified is fixed by specifying it, so it is F-9's contract — a stage that
+fails, names what failed, and states the action required.
+
+
 
 Two, and only two.
 
@@ -917,24 +1031,46 @@ Seven steps. Each is independently testable.
 | 6 | **Name states** | Resolved names via the cascade (§5.4) |
 | 7 | **Emit candidates** | `State` / `Transition` elements at `Quarantine` |
 
-**X-7a — Métis never executes anything against the System Under Test.** It reads
-from intake sources and it writes to its own graph. It does not call the API it
-models, drive the UI it models, or run a query against the database it models —
-not to extract, not to verify, and not to check the outcome of a test it
-generated. A generated test case is for a person or a pipeline to run; running it
-is not Métis's act.
+**X-7a (revised) — contact with the System Under Test is a tier, and `off` is the
+default.** X-7a originally read *"Métis never executes anything against the System
+Under Test"* — an absolute prohibition. **That prohibition is lifted by an explicit
+product decision. What it was protecting is not**, and the rest of this section is
+that protection restated as a mechanism.
 
-The distinction that does the work: **a database Métis reads is an intake source;
-the same database reached to check a test's outcome is the System Under Test.**
-Same server, different act, and only the first is available.
+`METIS_EXECUTE` is `off` | `observe` | `run`, enforced in one place
+(`metis_mcp/execution.py`) the way `policy.py` enforces writes:
 
-This is structural rather than remembered. `connectors/intakes.json` declares
+| Tier | What it may do |
+|---|---|
+| `off` | **The default.** No contact. `observers/` and `runners/` are never imported, so a deployment nobody configured cannot reach the system it models — proven in a subprocess by `test_execution.py` |
+| `observe` | **Read** a live system: a SQL query, cluster logs, events. Changes nothing |
+| `run` | Also **make something happen** — drive load, execute a suite. Costs the literal `execute` in the call |
+
+`observe` before `run` is not decoration: reading a replica is recoverable and a
+load test against the wrong host is an outage, so they are different decisions and
+cost different words. The clients are optional extras (`metis[execute]`,
+`metis[load]`), which is what keeps a default install dependency-light.
+
+**The rule the tiers exist to keep.** A fact observed from a running system is
+labelled `observed_from_running_system` and is **never merged** with one recovered
+from source. They are different claims. §8.7's execution labels land at
+`Quarantine` attached to the `TestCase` that ran — never to the transition it
+covers — and nothing there writes the coverage ledger (C-10). Merging the two is
+exactly how a coverage figure becomes a correctness claim (C-11).
+
+The distinction that does the work is unchanged: **a database Métis reads to learn
+structure is an intake source; the same database reached to check a test's outcome
+is the System Under Test.** Same server, different act — and now a different tier,
+rather than one being unavailable.
+
+**Intakes remain execution-free, structurally.** `connectors/intakes.json` declares
 every intake with an `access` mode, and **there is no mode meaning "runs
 something"** — the four are `local_files`, `read_only_connection`,
 `authored_file` and `uif_document`. `executes_against_sut` is a schema `const`
 of `false`, and `metis_mcp.intakes.load` refuses a declaration that says
-otherwise. Adding a mode that executes is the change that would have to be argued
-for, which is the point.
+otherwise. SUT contact never arrives through an intake; it arrives through
+`execution.py`, which records the target, the tier that allowed it, and who asked
+(N-1).
 
 Publication (§18) is the deliberate exception and is gated separately: writing a
 test case into a test-management tool is an external write behind G2 and
@@ -1827,6 +1963,59 @@ TestCase → TestPath → Transition → AcceptanceCriterion → Requirement →
 
 ## 8. Data model
 
+### 8.0 Two chains, and the join between them
+
+The graph holds two kinds of claim and they are never merged. One is what
+somebody **said** the system should do; the other is what was **recovered** from
+its code. §4.1's comparison is the whole point of keeping them apart, and this
+is the shape it takes.
+
+```mermaid
+flowchart TB
+  subgraph SAID["What somebody said - the claim chain"]
+    direction TB
+    IN["Intent"] -->|SPECIFIED_BY| SP["Specification"]
+    SP -->|SPECIFIES| RQ["Requirement"]
+    SP -->|HAS_AC| AC["AcceptanceCriterion"]
+    RQ -->|HAS_AC| AC
+  end
+
+  subgraph FOUND["What was recovered - the evidence chain"]
+    direction TB
+    EP["Endpoint"] -->|DECLARES| DO["DeclaredOutcome"]
+    DO -->|GUARDED_BY| CK["Check"]
+    EP -->|IMPLEMENTS| SP
+  end
+
+  TR["Transition<br/>ApiCall / UiAction"]
+
+  AC -->|VALIDATES| TR
+  TR -->|DERIVED_FROM| EP
+  TR -->|DERIVED_FROM| DO
+  TR -->|CONSTRAINED_BY| CK
+```
+
+**One `Specification`, reached from both sides — and that is §4.1's comparison
+in one node.** `Intent -[:SPECIFIED_BY]->` reaches it from what somebody stated;
+`Endpoint -[:IMPLEMENTS]->` reaches it from what the code does. The node's
+`provenance` grade is what says which arrived first, and letting that grade
+default would silently promote extraction output to intent — the one claim this
+platform must never make.
+
+**D-14 restated as a picture.** A transition is the other meeting point: an
+acceptance criterion validates it, and its own evidence edges point back at what
+it was recovered from. The four `Transition ->` edges are the join, and every one of
+them is planned from the transition's own evidence rather than re-derived —
+because two definitions of *the id of this outcome* is how a derivation edge
+silently points at nothing.
+
+**A specialisation replaces its parent.** A classified transition carries
+`:ApiCall` or `:UiAction` **instead of** `:Transition`, so a query naming
+`:Transition` directly matches nothing. The ontology check walks the
+specialisation chain and passes; the write then merges nothing and is reported as
+`unmatched` rather than failing. That combination — a plausible count beside a
+broken chain — is the failure mode this diagram exists to make obvious.
+
 ### 8.1 Principles
 
 **D-1 — every label earns its place.** A label is included only when something in
@@ -1852,12 +2041,23 @@ a bug in the fourth, not a variant reading.
 **D-3 — nothing is destructively overwritten.** Supersession creates a new
 version; the prior one remains reconstructable (M-15).
 
-### 8.2 Labels — sixty-five, and closed
+### 8.2 Labels — forty-three, and closed
 
 The count is pinned by `test_ontology.py`
-(`assert len(KNOWN_LABELS) == 65`), so this table and
-`metis_mcp/ontology/labels.py` cannot drift apart without a test failing. D-1
-governs additions: name the writer and name the reader, or stage it in §8.7.
+(`assert len(KNOWN_LABELS) == 43`), and this table is checked against
+`metis_mcp/ontology/labels.py` **in both directions**, so neither a label the
+code has and the table omits nor one the table has and the code dropped can
+survive a test run. D-1 governs additions: name the writer and name the reader,
+or stage it in §8.7.
+
+**That second direction was missing, and this table was wrong because of it.**
+It carried 65 rows under a heading claiming 65 while the ontology held 43: the
+2026-08-31 re-baseline removed the database layer, the UI widget taxonomy,
+`Method`/`Function` and `Parameter`, and the check only ever asserted that every
+label in the code appeared here. So 27 labels the engine cannot write stayed
+listed as though it could — in the document the README tells a reader to read
+first, and the exact failure D-1 opens by naming: *advertising capability that
+does not exist*. They are in §8.7 with the trigger that would bring each back.
 
 **A specialisation is written instead of its parent.** `ApiCall` and `UiAction`
 carry that label *only* — never together with `:Transition`, which is left
@@ -1878,88 +2078,41 @@ and `landing.transition_label_for(surface)` to plan an edge into one.
 | 7 | **`Component`** | One deployable component at one commit — `<journey>-<surface>` | Extraction / approval |
 | 8 | **`ApiCall`** | A `Transition` on the api surface — written **instead of** `:Transition`, not alongside it (see below) | Extraction (§5) |
 | 9 | **`UiAction`** | A `Transition` on the ui surface: one interaction or observation | Web extraction (§5.2) |
-| 10 | **`Page`** | One screen of a web surface; its states are the conditions it shows | Web extraction (§5.2) |
-| 11 | **`Scenario`** | One covering walk (P-14) | Path generation (§6) |
-| 12 | **`TestCase`** | One rendered, human-executable artefact | Rendering (§7) |
-| 13 | **`Finding`** | A divergence, gap, unverifiable guard, or drift item | Reconciliation, validation, drift |
-
-**`NeedReview` — a marker, not a thing in the world.** It is carried *alongside*
-a node's real label, never instead of one, and it says exactly what
-`lifecycle_state` already says: a human still owes a decision here
-(`Quarantine` or `Disputed`).
-
-It exists for the one question the property cannot answer. `lifecycle_state` is
-indexed on 54 labels, so asking it of any *one* of them is cheap; there is no
-way to ask it of *all* of them without scanning every node in the graph.
-`MATCH (n:NeedReview)` is the review queue, whatever the node happens to be.
-
-**`lifecycle_state` remains authoritative and this is never consulted to decide
-anything.** The marker is maintained from it — set by `landing.land` when a node
-arrives in a reviewable state, removed by the same statement that records a
-decision. Two representations of one fact is where most of this codebase's real
-defects have come from, so the rule is that they cannot disagree, and
-`test_ontology.py` asserts it rather than trusting it.
-
-| 51 | **`Lesson`** | One authored academy lesson about Métis itself — the only label whose subject is this system (D-2; see `docs/academy/PROPOSAL-landing-the-academy.md`) | `model_sources.lessons` / search |
-| 52 | **`Passage`** | One section of a document, embedded on its own — searched, never shown, and rolled up to the document that contains it. Added under D-2 on a measurement: per-section vectors scored 32/36 against 26/36 for whole-document ones, because a Neo4j vector index carries one vector per node and per-section similarity is not expressible as a property | `model_sources.lessons` / both search paths |
-| 53 | **`Topic`** | A subject shared by documents that cover the same ground — one node many documents point at, so "what else covers this" is a traversal rather than a second search. Topics nest (`Topic-[:BELONGS_TO]->Topic`), and a corpus's root is named after the SYSTEM it documents — declared in the corpus index, refused when absent, because a folder name says where files sit and nothing about what they are about. Authored, never inferred; deliberately not `BusinessArea`, which is what a *product* is about | `model_sources.lessons` / `related_by_topic` |
-| 57 | **`NeedReview`** | Marker: a human still owes a decision on this node | Landing, finding writer |
-
-**The evidence layer.** The nine below hold the processed intake the control-flow
-model above is derived from. They were added together because they are one
-claim, and four of them (`Endpoint`, `Class`, `Method`, and `Repository`'s
-neighbours) come off §8.7's staging list under D-11 — see **D-12**.
-
-| # | Label | Purpose | Written by |
-|---|---|---|---|
-| 14 | **`Endpoint`** | One HTTP entry point as recovered from code (Layer 2) | Raw landing (§5) |
-| 15 | **`Parameter`** | One input an endpoint reads: where it rides and what it must be | Raw landing |
-| 65 | **`SecurityScheme`** | One declared security requirement on an endpoint: the scheme, the declaration verbatim, and the roles it demands. **A node because a scheme with two roles has no positional representation** — the three parallel `security_*` arrays it replaces were misaligned on a third of a real corpus | Raw landing |
-| 16 | **`Class`** | One declared type: a controller, a service, or a payload schema | Raw landing |
-| 58 | **`Enum`** | A type whose instances are a closed set of named constants. **Specialises `Class` and is written instead of it** — an enum's `constants` ARE the equivalence partitions of any field of that type, so it needs no boundary analysis. Numbered 57 and sitting here for the same reason `NeedReview` is numbered 56 and sits above row 14: the ordinal is order of addition, the position is the layer | Raw landing |
-| 17 | **`Field`** | One field of a type, with the constraints declared on it | Raw landing |
-| 18 | **`Method`** | One method, from Layer 1's structural pass | Raw landing |
-| 59 | **`Query`** | One thing the application asks a database, with the statement it sends. **Written as its dialect, never as `:Query`** — so every estate-wide question uses `label_expression("Query")` | Raw landing (X-19a) |
-| 60 | **`Postgres`** · **`Oracle`** · **`MySql`** | The dialect a query is sent in. Labels rather than a property because `MATCH (q:Oracle)` is the question people ask; they specialise `Query`, so the estate-wide form still exists and a service talking to two databases stays one queryable set | Raw landing |
-| 61 | **`JpaQuery`** | A repository call whose statement could not be recovered — carried raw with its reason, for a person to complete. The tier that exists so nothing is guessed | Raw landing |
-| 19 | **`DeclaredOutcome`** | One observable result of an entry point, as recovered | Raw landing |
-| 20 | **`Check`** | One condition evaluated on a path — a guard's own evidence | Raw landing |
-| 21 | **`ExceptionMapping`** | An `@ExceptionHandler`'s exception → status mapping | Raw landing |
-| 22 | **`Route`** | One frontend route: the path that renders a page | Raw landing (§5.2) |
-| 23 | **`BusinessArea`** | One business domain grouping entities and requirements | The glossary source (§4.6a) |
-| 24 | **`BusinessEntity`** | One business noun: what it is, and what acting on it changes | The glossary source (§4.6a) |
-| 25 | **`UiElement`** | One thing on a page whose type has not been established | The web-structure source (§5.2a) |
-| 26 | **`Menu`** | A navigation or command grouping | The web-structure source (§5.2a) |
-| 27 | **`UiTable`** | A tabular listing of records on a page | The web-structure source (§5.2a) |
-| 28 | **`Form`** | A set of inputs submitted together | The web-structure source (§5.2a) |
-| 29 | **`Dialog`** | A modal surface raised over a page | The web-structure source (§5.2a) |
-| 30 | **`Row`** | One record's line in a table, and the controls it carries | The web-structure source (§5.2a) |
-| 31 | **`Pagination`** | A table's paging control | The web-structure source (§5.2a) |
-| 32 | **`Sort`** | A table's ordering control | The web-structure source (§5.2a) |
-| 33 | **`Action`** | An affordance a person can invoke — the thing a click lands on | The web-structure source (§5.2a) |
-| 34 | **`Event`** | The interaction that invokes an action (click, submit, change) | The web-structure source (§5.2a) |
-| 35 | **`Navigation`** | A control that moves to another page | The web-structure source (§5.2a) |
-| 36 | **`Datasource`** | A configured connection through which statements run | The data-structure source (§5.2b) |
-| 37 | **`Database`** | One database instance | The data-structure source (§5.2b) |
-| 38 | **`Schema`** | A named grouping of objects within a database | The data-structure source (§5.2b) |
-| 39 | **`DbObject`** | A database object whose kind has not been established | The data-structure source (§5.2b) |
-| 40 | **`Table`** | A stored relation | The data-structure source (§5.2b) |
-| 41 | **`View`** | A derived relation | The data-structure source (§5.2b) |
-| 42 | **`Function`** | A callable routine | The data-structure source (§5.2b) |
-| 43 | **`Column`** | One column, with the constraints declared on it | The data-structure source (§5.2b) |
-| 44 | **`ConfluenceItem`** | Evidence anchor for one Confluence page | Intake landing (§3.2 stage 2) |
-| 45 | **`OpenApiItem`** | Evidence anchor for one OpenAPI/Swagger document | Intake landing |
-| 46 | **`ZephyrItem`** | Evidence anchor for one Zephyr Scale item | Intake landing |
-| 47 | **`DatasourceItem`** | Evidence anchor for one analysed database schema | Intake landing |
-| 48 | **`CodeItem`** | Evidence anchor for one analysed source tree at one revision | Intake landing |
-| 49 | **`SpecDocument`** | One rendered journey specification, stored in the graph | `specgen.specification` |
-| 50 | **`EntityDocument`** | One rendered business-entity specification | `specgen.entity` |
-| 52 | **`Intent`** | One stated need, before anybody has specified how it behaves | Knowledge capture |
-| 53 | **`Specification`** | One specified behaviour — where intent and code meet (§4.1) | Knowledge capture / extraction |
-| 54 | **`Feature`** | One user-facing capability, grouping the scenarios that show it | Knowledge capture |
-| 55 | **`RestServer`** | A `Component` serving an API surface — written **instead of** `:Component` | Extraction / approval |
-| 56 | **`WebServer`** | A `Component` serving a web surface — written **instead of** `:Component` | Extraction / approval |
-
+| 10 | **`Scenario`** | One covering walk (P-14) | Path generation (§6) |
+| 11 | **`TestCase`** | One rendered, human-executable artefact | Rendering (§7) |
+| 12 | **`Finding`** | A divergence, gap, unverifiable guard, or drift item | Reconciliation, validation, drift |
+| 13 | **`Lesson`** | One authored academy lesson about Métis itself — the only label whose subject is this system (D-2; see `docs/academy/PROPOSAL-landing-the-academy.md`) | `model_sources.lessons` / search |
+| 14 | **`Passage`** | One section of a document, embedded on its own — searched, never shown, and rolled up to the document that contains it. Added under D-2 on a measurement: per-section vectors scored 32/36 against 26/36 for whole-document ones, because a Neo4j vector index carries one vector per node and per-section similarity is not expressible as a property | `model_sources.lessons` / both search paths |
+| 15 | **`Topic`** | A subject shared by documents that cover the same ground — one node many documents point at, so "what else covers this" is a traversal rather than a second search. Topics nest (`Topic-[:BELONGS_TO]->Topic`), and a corpus's root is named after the SYSTEM it documents — declared in the corpus index, refused when absent, because a folder name says where files sit and nothing about what they are about. Authored, never inferred; deliberately not `BusinessArea`, which is what a *product* is about | `model_sources.lessons` / `related_by_topic` |
+| 16 | **`NeedReview`** | Marker: a human still owes a decision on this node | Landing, finding writer |
+| 17 | **`Endpoint`** | One HTTP entry point as recovered from code (Layer 2) | Raw landing (§5) |
+| 18 | **`SecurityScheme`** | One declared security requirement on an endpoint: the scheme, the declaration verbatim, and the roles it demands. **A node because a scheme with two roles has no positional representation** — the three parallel `security_*` arrays it replaces were misaligned on a third of a real corpus | Raw landing |
+| 19 | **`Class`** | One declared type: a controller, a service, or a payload schema | Raw landing |
+| 20 | **`Enum`** | A type whose instances are a closed set of named constants. **Specialises `Class` and is written instead of it** — an enum's `constants` ARE the equivalence partitions of any field of that type, so it needs no boundary analysis. Numbered 57 and sitting here for the same reason `NeedReview` is numbered 56 and sits above row 14: the ordinal is order of addition, the position is the layer | Raw landing |
+| 21 | **`DeclaredOutcome`** | One observable result of an entry point, as recovered | Raw landing |
+| 22 | **`Check`** | One condition evaluated on a path — a guard's own evidence | Raw landing |
+| 23 | **`ExceptionMapping`** | An `@ExceptionHandler`'s exception → status mapping | Raw landing |
+| 24 | **`BusinessArea`** | One business domain grouping entities and requirements | The glossary source (§4.6a) |
+| 25 | **`BusinessEntity`** | One business noun: what it is, and what acting on it changes | The glossary source (§4.6a) |
+| 26 | **`Action`** | An affordance a person can invoke — the thing a click lands on | The web-structure source (§5.2a) |
+| 27 | **`ConfluenceItem`** | Evidence anchor for one Confluence page | Intake landing (§3.2 stage 2) |
+| 28 | **`OpenApiItem`** | Evidence anchor for one OpenAPI/Swagger document | Intake landing |
+| 29 | **`ZephyrItem`** | Evidence anchor for one Zephyr Scale item | Intake landing |
+| 30 | **`CodeItem`** | Evidence anchor for one analysed source tree at one revision | Intake landing |
+| 31 | **`SpecDocument`** | One rendered journey specification, stored in the graph | `specgen.specification` |
+| 32 | **`EntityDocument`** | One rendered business-entity specification | `specgen.entity` |
+| 33 | **`TestExecution`** | One observed run of one test case | Execution ingest (§8.7, reinstated) |
+| 34 | **`TestCycle`** | A named set of executions observed together | Execution ingest |
+| 35 | **`Defect`** | A reported fault, and what it was observed against | Execution ingest / a person |
+| 36 | **`Metrics`** | A measured figure about a running system | Observation (`observers/`) |
+| 37 | **`Logs`** | A retained excerpt of what a running system emitted | Observation (`observers/`) |
+| 38 | **`Alert`** | A condition a running system raised about itself | Observation (`observers/`) |
+| 39 | **`Intent`** | One stated need, before anybody has specified how it behaves | Knowledge capture |
+| 40 | **`Specification`** | One specified behaviour — where intent and code meet (§4.1) | Knowledge capture / extraction |
+| 41 | **`Feature`** | One user-facing capability, grouping the scenarios that show it | Knowledge capture |
+| 42 | **`RestServer`** | A `Component` serving an API surface — written **instead of** `:Component` | Extraction / approval |
+| 43 | **`WebServer`** | A `Component` serving a web surface — written **instead of** `:Component` | Extraction / approval |
+| 44 | **`Commit`** | One change to the repository, and whether it repaired something | Intake (`defect_history`) |
 **D-13 — the business layer is what the nouns mean, and it is deliberately not
 the evidence layer.** `Class` and `Field` record what the code *declares*;
 `BusinessEntity` records what the business *means*. The two disagree regularly,
@@ -2030,7 +2183,6 @@ to say which method serves a route. The count dropped is reported (X-5a).
 | `Feature` | `HAS_SCENARIO` | `Scenario` | The walks that demonstrate it |
 | `Endpoint` / `Action` | `IMPLEMENTS` | `Specification` | The code side reaching the same node, by its own verb |
 | `RestServer` | `EXPOSES` | `Endpoint` | The entry points it serves |
-| `WebServer` | `HAS_PAGE` | `Page` | The screens it serves |
 | `RestServer` / `WebServer` | `CONTAINS` | `Transition` | Its behaviour at one commit |
 | `Requirement` | `HAS_AC` | `AcceptanceCriterion` | Its atomic conditions |
 | `AcceptanceCriterion` | `VALIDATES` | `Transition` | Confirmed match (X-18) |
@@ -2038,13 +2190,18 @@ to say which method serves a route. The count dropped is reported (X-5a).
 | `Transition` | `THEN` | `State` | Resulting target state |
 | `UiAction` | `TRIGGERS` | `ApiCall` | This interaction **starts** that API flow; the UI continues its own (M-5a). One-to-many; human-confirmed |
 | `UiAction` | `INVOKES` | `ApiCall` | This UI outcome **rendered** that API outcome (M-5a, M-5b). Many-to-one; human-confirmed |
-| `Component` | `HAS_PAGE` | `Page` | A screen this web component presents |
-| `Page` | `SHOWS` | `State` | A condition this page can be observed in (M-2, M-3) |
 | `Component` | `CONTAINS` | `State` \| `Transition` | Membership of this component version |
 | `Scenario` | `GENERATED_FROM` | `Component` | The exact component version this path covers |
 | `Scenario` | `COVERS` *(with `sequence`)* | `Transition` | Ordered traversal — makes coverage computable |
 | `Scenario` | `PRODUCES` | `TestCase` | The rendered artefact |
 | `Finding` | `ABOUT` | any | What the finding concerns |
+| `TestExecution` | `OF_CASE` | `TestCase` | The case this run executed |
+| `TestCycle` | `CONTAINS` | `TestExecution` | Runs observed together |
+| `Defect` | `OBSERVED_IN` | `TestExecution` | The run this fault was seen in |
+| `Defect` | `CONCERNS` | `Requirement` | What the fault is about, where that is established |
+| `Defect` | `CONCERNS` | `AcceptanceCriterion` | The criterion this fault is about, where the report names one |
+| `Commit` | `TOUCHES` | `Class` | A type this change altered |
+| `Commit` | `FIXES` | `JiraItem` | The tracker item this change's subject names |
 
 **Inside the evidence layer:**
 
@@ -2052,22 +2209,9 @@ to say which method serves a route. The count dropped is reported (X-5a).
 |---|---|---|---|
 | `Component` | `EXPOSES` | `Endpoint` | The entry points this deployable presents |
 | `Endpoint` | `SECURED_BY` | `SecurityScheme` | A declared security requirement a caller must satisfy |
-| `Endpoint` | `ACCEPTS` | `Parameter` | What a caller must send |
-| `Parameter` | `OF_TYPE` | `Class` | The payload schema — the same node as the declared type |
-| `Endpoint` | `RETURNS` | `Class` | The declared response body type |
-| `Class` | `HAS_FIELD` | `Field` | Its declared fields and constraints |
-| `Class` | `DECLARES_METHOD` | `Method` | Its methods |
-| `Endpoint` | `HANDLED_BY` | `Method` | The handler behind the route |
-| `Method` | `CALLS` | `Method` | A resolved call edge (Layer 1) |
-| `Method` | `ISSUES` | `Query` | A query this method sends to a database |
-| `Query` | `QUERIES` | `Table` | A table this query reads or writes |
-| `Query` | `QUERIES` | `View` | A view this query reads |
-| `Query` | `USES` | `Column` | A column this query names — a test-design input, because it is what a fixture has to populate |
+| `Class` | `OF_TYPE` | `Class` | A complex field's declared type. X-6d made a field a PROPERTY of its type rather than a node, so a scalar is `f_<name>_*` on its `Class` and only a complex one earns an edge |
 | `Endpoint` | `DECLARES` | `DeclaredOutcome` | A result this entry point can produce |
 | `DeclaredOutcome` | `GUARDED_BY` | `Check` | The condition selecting this outcome |
-| `ExceptionMapping` | `HANDLED_BY` | `Method` | The `@ExceptionHandler` that maps it |
-| `Route` | `RENDERS` | `Page` | The page this frontend route shows |
-| `Page` | `CALLS` | `Endpoint` | An API call this page makes |
 
 **From the control flow back to its evidence** — this is what the second layer is
 for:
@@ -2075,8 +2219,7 @@ for:
 | From | Relationship | To | Meaning |
 |---|---|---|---|
 | `Transition` | `DERIVED_FROM` | `Endpoint` \| `DeclaredOutcome` \| `ExceptionMapping` | What this behaviour was recovered from |
-| `Transition` | `EXERCISES` | `Parameter` | An input this transition sends |
-| `Transition` | `REQUIRES` | `Field` | A field constraint a case must satisfy or violate (GD-3) |
+| `Transition` | `REQUIRES` | `Class` | The payload type whose field constraints a case must satisfy or violate (GD-3). `Field` is staged out under X-6d; the constraints ride on the `Class` |
 | `Transition` | `EXPECTS` | `Class` | The response body a case should assert |
 | `Transition` | `CONSTRAINED_BY` | `Check` | The recovered condition behind its guard |
 
@@ -2103,20 +2246,6 @@ traceability always routes through an acceptance criterion and a transition.
 depend on*. It never replaces D-4's route — traceability from a test case still
 runs through an acceptance criterion and a transition, and a `BusinessEntity` is
 never on that path.
-
-
-**Web structure and data edges (D-14).**
-
-| From | Relationship | To | Meaning |
-|---|---|---|---|
-| `Datasource` | `CONNECTS_TO` | `Database` | Which database this connection addresses |
-| `Table` / `View` | `HAS_COLUMN` | `Column` | A column it declares |
-| `Dialog` / `Form` / `Menu` / `Page` | `HAS_ELEMENT` | `Action` / `Dialog` / `Event` / `Form` | A control this surface presents |
-| `Database` / `Schema` | `HAS_OBJECT` | `DbObject` / `Function` / `Table` / `View` | An object it contains |
-| `Database` | `HAS_SCHEMA` | `Schema` | A grouping it contains |
-| `Navigation` | `NAVIGATES_TO` | `Page` | Where this control goes |
-| `Action` | `ON_EVENT` | `Event` | The interaction that invokes this action |
-| `BusinessEntity` | `STORED_IN` | `Table` | Where this business noun is persisted |
 
 ### 8.4 Versioning
 
@@ -2281,21 +2410,58 @@ path running through it. G1 is the only thing standing there.
 
 | Excluded | Returns when |
 |---|---|
-| `Goal`, `Capability`, `Epic` | A backlog hierarchy is actually queried — not for test generation |
-| `Release`, `TestCycle`, `TestExecution` | Execution results are ingested and release reporting is required |
-| `Defect`, `Incident`, `Alert`, `Metrics`, `Logs` | Operational data enters scope |
+| `Capability`, `Epic`, `Goal` | **Refused 2026-09-04.** The old trigger — *a backlog hierarchy is actually queried* — fired, and the answer was a traversal rather than a label: `JiraItem-[:LINKS_TO]->JiraItem` with `read.requirement_hierarchy` as the reader. Returns only if a named consumer reports **by** a hierarchy node and cannot be served by that traversal (`docs/academy/PROPOSAL-requirement-hierarchy.md`) |
+| `MicroRequirement`, `TestDesign`, `TestSuite` | A concrete need appears |
+| `MySql`, `Oracle`, `Postgres` | As Query, per dialect |
 | `Constitution`, `Constraint` | Formal governance is adopted |
-| `Repository`, `Class`, `Method`, `Endpoint` | Impact analysis needs code structure in the graph, not just anchors |
-| `TestDesign`, `TestSuite`, `MicroRequirement` | A concrete need appears — none exists in §§2–7 |
-| `Revision` | Property-level history is designed **and** something writes it. It was declared with neither a writer nor a reader, and its wildcard `HAS_REVISION` edge was the widest hole in a closed catalogue. The integer `revision` property on `Requirement` and `AcceptanceCriterion` is what the graph uses today |
-| `Run` | Two generation runs need comparing **in the graph** — F-3's comparability half. Its reproducibility half already rides on `Component` (version, commit) and on `.metis/runs/*.json` (scope, criterion), which is what `workflow status` reads. `Run` was written by `plan_persist` and `finding_writer` and matched by no query: a writer with no reader is what D-1 exists to prevent |
+| `Column` | A criterion constrains one column rather than the payload field that carries it |
+| `Database` | One journey spans two databases and a requirement depends on which it reached |
+| `Datasource` | A requirement is about the CONNECTION — pooling, timeout, read-only routing — rather than about what is stored |
+| `DatasourceItem` | A Requirement is traced to a database schema as its system of record, the way JiraItem traces one to an issue |
+| `DbObject` | An object whose kind is unestablished has to be reviewed as such, rather than reported as a finding |
+| `Dialog` | A modal's presence is itself a required outcome, distinct from the state it announces |
+| `Event` | The interaction that invokes an action becomes distinguishable from the action — a requirement that says 'on blur' rather than 'when invoked' |
+| `Field` | A field needs an identity of its own — a per-field review state, or an edge that must point at one field rather than at its type |
+| `Form` | A requirement constrains a submission as a unit — cross-field validation stated over the form rather than over each input |
+| `Function` | As Method, for a callable that is not a class member |
+| `Incident` | Operational data enters scope |
+| `JpaQuery` | As Query, for a statement that could not be recovered |
+| `Menu` | Navigation structure is a requirement — 'this action is reachable from that menu' rather than 'this action exists' |
+| `Method` | A requirement is stated about a method. It was landed for `Endpoint-[:HANDLED_BY]->Method` and a `CALLS` graph that the live graph held ZERO edges of — 96 nodes supporting a traversal with nothing to traverse |
+| `Navigation` | As Menu, for a control that moves between pages |
+| `Page` | A requirement is about the SCREEN rather than about a behaviour on it. A ui State already carries its page as a property, which is what tells two states on different screens apart |
+| `Pagination` | Paging behaviour is required in its own right |
+| `Parameter` | Something must point at ONE input rather than at the interaction that sends it — a per-parameter review state, or an edge whose target is a single input rather than the type it carries |
+| `Query` | A requirement is about the statement sent, not the behaviour it implements. `Transition-[:CONSTRAINED_BY]->Check` carries the condition; this would carry the SQL |
+| `Release` | **Deferred 2026-09-04.** The first clause fired — execution results *are* ingested (§8.7, revised) — and the second did not: nothing takes a release NAME, and validity windows already answer an as-of question. Returns when a report takes a release name that cannot be resolved to an instant outside Métis. It would be a name and an instant, never a stored claim set (`docs/academy/PROPOSAL-release-baseline.md`) |
+| `Repository` | Impact analysis needs code structure in the graph, not just anchors |
+| `Revision` | Property-level history is designed AND something writes it — an integer `revision` property is what is used now |
+| `Role` | Something asks what ELSE requires a given role — a shared identity across endpoints, rather than a string repeated on each scheme |
+| `Route` | A requirement is about the URL a screen answers on, rather than about what the screen then does |
+| `Row` | A requirement is about one record's line and its controls |
+| `Run` | Two generation runs need comparing IN THE GRAPH — F-3's comparability half, which the run file cannot answer across scopes |
+| `Schema` | Two schemas hold the same table name and a requirement has to say which |
+| `Sort` | Ordering behaviour is required in its own right |
+| `Table` | A requirement is stated ABOUT a table — a criterion whose subject is the stored relation rather than the behaviour that writes it |
+| `UiElement` | An element needs a review state or an edge of its own — something must point AT one control rather than at the interaction with it |
+| `UiTable` | A requirement is about the listing as a control (paging, ordering) rather than about the records it shows |
+| `View` | As Table; a requirement distinguishes a derived relation from a stored one |
 
 **D-11.** This list is the staging plan, not a rejection. Each entry names the
 trigger that justifies adding it, so growth is deliberate rather than accretive.
 
+**Generated from `STAGED_OUT` in `metis_mcp/ontology/labels.py`, and checked
+against it.** This table used to be authored, and it said `TestCycle`,
+`TestExecution`, `Defect`, `Alert`, `Metrics` and `Logs` were excluded for a
+year after their trigger — *execution results are ingested* — had actually
+arrived and `execution_intake.py` had been written to land them. It also listed
+`Endpoint`, which is an active label. A staging plan that is wrong about what is
+staged is worse than no staging plan, because it is the document somebody checks
+before arguing for a label that already exists.
+
 ### 8.8 Committed by this section
 
-- Twelve labels, each with a named writer and reader (D-1, §8.2)
+- Forty-three labels, each with a named writer and reader (D-1, §8.2)
 - Closed ontology under a four-place governance rule (D-2)
 - Journey, surface, guard and code structure as properties, not nodes (§8.2)
 - Traceability only via `AcceptanceCriterion → Transition` (D-4)
@@ -2390,7 +2556,9 @@ presentation; it is throughput.
 
 | Surface | Role |
 |---|---|
-| **Web review UI** | **Primary.** All six decisions, plus model visualisation and coverage |
+| **Web review UI** | **Primary.** Model visualisation, coverage, sign-in, and rendered decision pages for approve-the-model and name-a-state; all six decisions are served as JSON |
+| | *Status, precisely. **Rendered as pages**: the model view (N-2), G1 approval, name-a-state, and the audit trail — each behind a session established by exchanging a credential at `/login`, with `Screen.can_decide` false rendering the refusal and **no submit control** rather than a disabled one (N-4). **Served as JSON only**: resolve-divergence, confirm-match and decide-drift, because each needs an item the review context does not hold — two anchored sides, a proposed match, or a three-way drift comparison — so a caller must supply it. That is a real boundary, not an oversight: a page cannot render a divergence Métis was never given. G2 confirmation is served by the HTTP API (§9.6).* |
+| | *Forms, not scripting. The CSP omits `script-src` and `pages.py` uses plain `<form method="post">` so it can stay that way; `form-action 'self'` is set explicitly because it does not inherit from `default-src`. The session cookie is `HttpOnly; SameSite=Strict` — the second is the CSRF defence on a state-changing POST. Sessions live in memory and die with the process (NF-4: one local instance), so a review session cannot outlive the server that authenticated it.* |
 | **CLI** | Automation, CI, scripted runs, export/import of review decisions |
 | **Agent / MCP tools** | Read-only query and explanation from a development session |
 | **HTTP API** | The UI's backend; also the integration point for other tools |
@@ -2892,6 +3060,55 @@ it.** Solve that once and deduplication (across sources) and incrementality
 **I-1.** The natural key defined below is also the **correspondence mechanism**
 that §4.5's reconciliation assumed without specifying. "Sources agree on an
 element" is now defined: *they produced elements with the same natural key.*
+
+### 14.1a Two identity rules, because there are two kinds of thing
+
+The rest of this section is about **elements** — states and transitions
+recovered from a system. A second rule governs **claims**, and the difference is
+load-bearing rather than a detail.
+
+**I-1a — an element that changes is the same element, modified.** A transition's
+natural key is its meaning: `(source, trigger, outcome)`. Editing its guard does
+not make it a different transition, so the node persists and its approval is
+**revoked explicitly** (I-17/I-18) rather than being lost with the node.
+
+**I-1b — a claim that changes is a new claim.** *The system shall reject the
+request* and *the system shall refresh the token* are two claims, not one with a
+changed attribute. So a digest of the text goes into the id, and the reworded
+claim lands at `Quarantine` because it **is** new. The previous window is closed
+by supersession; nothing is deleted, and *what did we believe in March* survives
+the correction.
+
+```mermaid
+flowchart TB
+  subgraph EL["An element - the same node, modified"]
+    direction LR
+    E1["Transition t01<br/>guard: attempts &lt; 5"] -->|guard edited| E2["Transition t01<br/>guard: attempts &lt; 3"]
+    E2 --> E3(["approval revoked<br/>explicitly - I-17"])
+  end
+  subgraph CL["A claim - a new node, the old one closed"]
+    direction LR
+    C1["REQ-3@3eac8b6f<br/>shall reject the request"] -->|reworded| C2["REQ-3@e8c8bb26<br/>shall refresh the token"]
+    C1 --> C3(["window closed<br/>superseded, not deleted"])
+    C2 --> C4(["lands at Quarantine<br/>because it is new"])
+  end
+```
+
+**I-1c — the rule applies to four labels and no others.** `Intent`,
+`Specification`, `Requirement` and `AcceptanceCriterion` carry validity windows;
+everything else follows I-1a. Those four are the ones somebody *asserted*, and an
+assertion that changed its words is a different assertion.
+
+**I-1d — the logical key survives the digest.** `REQ-3@3eac8b6f` and
+`REQ-3@e8c8bb26` are two revisions of `REQ-3`, and reading the stable half back
+is one call. A graph landed before the digest existed carries a bare id, which
+still reads as its own logical key — so it is readable but cannot be superseded,
+and re-ingestion rather than migration is how it catches up.
+
+**I-1e — the revision number is stamped from the graph, not from the plan.**
+Every writer hardcodes `1` because a plan builder cannot know the history; the
+graph knows how many revisions precede this one and is the only thing that can
+say.
 
 ### 14.2 Natural keys
 
@@ -3564,3 +3781,316 @@ criteria 1–5 against a real service. Recognise it as a **scope decision with n
 losses** (§21.3), never as a quiet deferral — that quiet deferral is exactly what
 removed R4 once already and produced a requirements-management platform instead of
 model-driven testing.
+
+
+---
+
+## 22. Test design
+
+**Status: agreed.** Test design is the question that comes *before* generation.
+§6 chooses which walks to take through a machine; §7 renders them. Neither asks
+what testing this behaviour should consist of, at which level, or what nobody
+knows — and a suite generated without those answers is a suite that covers what
+was easy to reach.
+
+### 22.1 What a test design is, and what it is not
+
+**TD-1 — a design is a document, not a node.** It is Markdown, in the team's
+repository, beside the code. `TestDesign` stays in `STAGED_OUT`;
+`docs/academy/PROPOSAL-test-design-in-the-graph.md` carries the argument and the
+four conditions that would reverse it. The short version: seven of a design's
+inputs are `asked`, and a node whose defining fields are unanswered is a form
+rather than a fact.
+
+**TD-2 — a design is not a test plan.** No schedule, no estimate, no resourcing.
+
+**TD-3 — a design states conditions, never data** (M-9, X-6e). `attempts = 4` is
+a requirement a fixture must satisfy; producing the fixture belongs to whoever
+executes the test.
+
+**TD-4 — nothing generates from a design.** Generation reads an *approved model*
+(D-10). A design that could feed generation would let a document a person edited
+become the source of what gets tested, which is §4.1's circularity arriving by a
+longer route.
+
+### 22.2 The gather-or-ask ledger
+
+**TD-5 — every input is declared, with its source.** `gathered` names the tool
+that supplies it; `asked` carries the exact question to put to a person. Every
+input states what its absence *means*, and no such string may read as
+reassurance.
+
+**TD-6 — a design missing a required input is `incomplete`, never lean.** The
+word appears **above the first section**, not below the last. An unfinished
+design read as a finished one is the failure this ordering prevents.
+
+**TD-7 — the architecture and the design specification are `asked`.** Métis could
+describe an architecture by summarising what it recovered, and that description
+would be the implementation restated as its own intent — S-19 in a new place. So
+both are questions, and the design says which sections it therefore could not
+state.
+
+**TD-8 — no completeness percentage is computed.** A design missing an
+architecture and one missing an optional contradiction search are not
+nearly-finished in the same way; one of them cannot be executed at all, and a
+single number would hide which.
+
+### 22.3 The template is data
+
+**TD-9 — the shape is served, never restated.** Groups, sections, columns and
+closed vocabularies come from a registry and are returned by a tool. A template
+written as prose in a skill is a shape a model imitates, and two runs imitate it
+differently.
+
+**TD-10 — every closed vocabulary is imported from the module that owns it.**
+The six test levels, the three existing-coverage grades, the viability and
+performance verdicts, the four risk bands. A second copy is how a design starts
+reporting a level the coverage ledger has never heard of.
+
+**TD-11 — no skill may enumerate a section's columns.** A prose copy of a
+generated fact is the copy nothing checks.
+
+### 22.4 The sections
+
+Fourteen, in six groups. The registry is the source; the diagram is a reading of
+it.
+
+```mermaid
+flowchart TB
+  subgraph B["1 - What this design rests on"]
+    B1["1 Basis"] --> B2["2 Condition completeness"]
+  end
+  subgraph C["2 - What must be varied"]
+    C1["3 Negative obligations"] --> C2["4 Techniques"]
+    C2 --> C3["5 Guard dimensions"] --> C4["6 Test data"]
+  end
+  subgraph E["3 - Where it runs, and whether it can"]
+    E1["7 Levels"] --> E2["8 Defect-proneness"] --> E3["9 Setup cost"]
+  end
+  subgraph Q["4 - Quality attributes"]
+    Q1["10 Authorisation"] --> Q2["11 Load"]
+  end
+  subgraph I["5 - Across a boundary"]
+    I1["12 Contract"] --> I2["13 Journeys"]
+  end
+  subgraph U["6 - What we do not know"]
+    U1["14 Open questions"]
+  end
+  B --> C --> E --> Q --> I --> U
+```
+
+**TD-12 — every section renders, including the empty ones.** An absent section is
+something a reader has to interpret, and the two things it could mean are the
+pair this document exists to separate.
+
+**TD-13 — three states, and they are not the same.**
+
+```mermaid
+flowchart TD
+  A{"rows?"} -->|yes| B{"required inputs<br/>all supplied?"}
+  A -->|no| C{"required inputs<br/>all supplied?"}
+  B -->|yes| D["the section"]
+  B -->|no| E["the table, plus <b>Partial</b><br/>the dangerous case:<br/>it looks complete and is not"]
+  C -->|yes| F["<b>empty_means</b><br/>it was stated, and<br/>there is nothing in it"]
+  C -->|no| G["<b>absent_means</b> + waiting on<br/>nobody could state it"]
+```
+
+A section with rows **and** missing inputs is the dangerous one: an empty section
+announces itself, and this one has to be told to.
+
+### 22.5 Condition completeness — the denominator
+
+**TD-14 — a positive case is not coverage for a condition it never asserts.** It
+says what the system does. It does not say what the system must reject, prevent,
+limit or leave alone, and counted as coverage for those it excuses exactly the
+gaps testing is for.
+
+**TD-15 — every behaviour gets a row for all eight classes**, including the ones
+that do not apply, **with a reason**. A `boundary` row marked `not-applicable`
+because the guard is a predicate is the mechanism; a class that silently
+disappears is the failure.
+
+| Class | Métis reaches it from |
+|---|---|
+| `allowed` | the transition itself |
+| `prohibited` | a rejecting sibling on the same `(state, trigger)` |
+| `partition` | the guard's equivalence partitions |
+| `boundary` | the guard's numeric thresholds |
+| `state-transition` | the machine |
+| `authorization` | declared security |
+| `dependency-failure` | **undrawn** |
+| `non-goal` | **undrawn** |
+
+**TD-16 — the two undrawn classes come back `clarify` and say why.** What happens
+when something outside this code stops answering, and what was deliberately
+excluded, are not in the source Métis read.
+
+**TD-17 — Métis proposes; a person decides.** `proposed` and `decision` are
+separate columns. A class Métis could not reach reads `clarify`, which is neither
+"we will test it" nor "it does not apply".
+
+**TD-18 — an absent authorisation check is `clarify`, never `not-applicable`.**
+Declarative security is all extraction sees, so that is *nobody looked*, never
+*open*.
+
+### 22.6 Negative obligations
+
+**TD-19 — an obligation is raised by a recovered fact, never by a name** (X-6). A
+path parameter obliges a not-found; a declared security requirement obliges a
+refusal; a body or a required query parameter obliges a rejection; an enumerated
+input obliges a case per constant.
+
+**TD-20 — an obligation is judged against the statuses the endpoint was seen to
+produce**, and both are reported. *`GET /metric/{id}` produces 200, 204 and 400,
+and no 404* is a question somebody can answer; *missing 404* is one they cannot.
+
+**TD-21 — `unmet` is a question, never a defect.** It says no such outcome was
+**recovered**. Whether the behaviour is unhandled or extraction did not see it is
+something only a person can settle, and saying otherwise asserts a conclusion
+from an absence.
+
+**TD-22 — either status of a pair satisfies its obligation.** 401 and 403 are
+both a refusal; 400 and 422 are both a rejection. Insisting on one of each would
+report an endpoint unmet for choosing the other.
+
+**TD-23 — no generic negative is manufactured per criterion.** A negative
+attached to every acceptance criterion by rule is boilerplate that duplicates
+what the condition inventory already states properly, and it dilutes the rows
+that were raised by a fact.
+
+### 22.7 The factors behind a band
+
+**TD-24 — a band says how much there is to get wrong and hides what**, and the
+answer changes the response: branching wants more cases, fan-in wants a contract
+nobody may break, fan-out wants a decision table. *Test this more* is the answer
+to none of them and the only one a band alone supports.
+
+**TD-25 — an unmeasured factor is a row saying so, never a blank.** A blank among
+counts reads as zero, and zero here reads as *simple*.
+
+**TD-26 — a counted-and-never-repaired file is not a file nobody counted.** Only
+the repair window separates them, and it is empty exactly when nobody asked.
+
+### 22.8 Setup cost
+
+**TD-27 — cost is computed from the setup chain, not from a verb.** The chain a
+test must establish is what the machine already knows; a business verb is a
+stand-in for it.
+
+**TD-28 — the effect is `unknown` where the trigger carries no HTTP verb.**
+Falling through to `read-only` would call a credential submission a read and hand
+it the cheapest band.
+
+**TD-29 — the setup pattern is a person's choice.** Whether existing data can be
+reused, or an isolated entity must be provisioned, depends on what the
+environment holds and who owns cleanup — both `asked`. Métis costs the behaviour
+and states the two facts behind the cost.
+
+**TD-30 — the design walks the machine, not the generator.** Reaching a state is
+a property of the machine; whether the route may be generated *from* is D-10 and
+binds generation alone. A design is a pre-approval artefact — that is when it
+changes a decision — so it walks unfiltered and says so.
+
+### 22.9 The document
+
+**TD-31 — regeneration preserves what a person wrote.** The structure is
+rewritten every run; the human columns and every hand-added row survive. Without
+this the second run silently deletes every decision anybody recorded, and looks
+like a success doing it.
+
+**TD-32 — a row id is derived from what the row is about.** An id that counted
+rows off would renumber the moment a behaviour was added, moving every recorded
+decision onto the wrong row.
+
+**TD-33 — a row that lost its shape is reported, never dropped.** A discarded
+edit is the same defect as an overwritten one.
+
+**TD-34 — the document is verified structurally.** Python computes it, a person
+or a model writes into it, Python checks it is still the shape the merge can
+read. What is *not* checked is judgement: whether a decision is right, whether an
+owner is the correct one. A checker with an opinion about those is one people
+route around.
+
+### 22.10 The design-acceptance halt
+
+**TD-35 — a design is a set of proposals until a named person accepts it.** Métis
+derived every row and decided none of them, and a design whose sections are all
+full still needs accepting: *Métis derived this* is a statement about Métis.
+
+**TD-36 — the halt is not a third lettered gate.** §3.4 keeps two, G1 and G2.
+This is a workflow's own halt with its own check and its own literal, and the
+literal that passes it passes nothing else.
+
+---
+
+## 23. Pre-import analysis
+
+**Status: agreed.** §4 says where a model comes from. This says what happens to
+a *stated* claim before it becomes one.
+
+### 23.1 Intent is a pre-processor
+
+**BA-1 — a claim is read before it is landed, not after.** Intake ran fetch →
+validate → land → assess, so the first moment anybody saw what was wrong with a
+claim was after it was a node in the graph.
+
+```mermaid
+flowchart LR
+  F["fetch"] --> V["validate"] --> A["analysis<br/>reporting only"] --> R{"readiness"}
+  R -->|ready| L["land at Quarantine"] --> RR["requirement-risk"] --> G(["G1 - a human decides"])
+  R -->|not-ready| X["nothing is landed<br/>the claim itself must change"]
+```
+
+**BA-2 — the analysis stage never blocks.** The gaps are its output (F-4). A run
+that stopped there would withhold the very list somebody needs in order to close
+them.
+
+### 23.2 Four readings
+
+**BA-3 — a half-formed claim fails in four unrelated ways**, and each is
+invisible to the readers that catch the other three.
+
+| Reading | Asks | Sees what the others cannot |
+|---|---|---|
+| intent | is there a need, and did anybody say how it behaves? | a need with no statement; a specification belonging to no need |
+| requirement | can two people satisfy this the same way? | wording that is not EARS-conformant; unmeasurable criteria |
+| design | could anything ever test it? | a claim that is well worded, agreed, and impossible to verify |
+| risk | what does being wrong cost? | criticality and volatility, which no analysis produces |
+
+**BA-4 — three of the four are performed by skills outside the analysing
+family.** Each already runs the procedure it owns, and a second copy would drift
+from the one that runs. The hand-off is recorded as data so a test can check it.
+
+**BA-5 — every gap names the aspect that found it and what would close it.** A
+gap with no closer is a complaint.
+
+### 23.3 Ready is narrow
+
+**BA-6 — `not-ready` means the claim cannot be *represented*.** A need nobody has
+specified would become a node nothing can ever be checked against (D-1).
+
+**BA-7 — `ready` means representable, and nothing more.** It lands at
+`Quarantine` carrying every reported gap, and a person decides at G1 (S-4).
+Nobody has agreed with it.
+
+**BA-8 — an unfinished claim is imported, not refused.** A claim nobody has
+costed, whose environments are unlisted and which has no criteria yet, is
+`ready`. Refusing it would mean Métis only ever accepted claims that were already
+finished, which is not what intake is for.
+
+**BA-9 — the readiness stage is a blocking stage, not a gate.** There is no
+literal that passes it, because the claim itself has to change. That makes it
+F-9's contract: a stage that fails, names what failed, and states the action
+required.
+
+**BA-10 — a validator problem blocks, because landing refuses it anyway.** One
+definition rather than two. A gate that passes what the next step rejects is
+worse than no gate.
+
+**BA-11 — untestability is supplied, never inferred.** That verdict blocks an
+import, and a heuristic that got it wrong would refuse a real requirement at the
+door.
+
+**BA-12 — a document's claimed acceptance criteria are counted and never
+trusted** (S-13). A criterion asserted by the document that raised the
+requirement is not independent evidence of it.

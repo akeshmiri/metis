@@ -90,8 +90,9 @@ class GenerationResult:
         return groups
 
 
-def _shortest_setup(model: Model, goal_state: str,
-                    via_transition_id: str | None = None) -> tuple[str, ...] | None:
+def shortest_setup(model: Model, goal_state: str,
+                   via_transition_id: str | None = None,
+                   generatable_only: bool = True) -> tuple[str, ...] | None:
     """BFS from any initial state to `goal_state`, returning transition ids.
 
     Neighbours are explored in id order so the result is byte-identical across
@@ -101,6 +102,14 @@ def _shortest_setup(model: Model, goal_state: str,
     `via_transition_id` constrains the final setup step, which is how
     transition-pair coverage varies the arrival route (criteria.py's
     `via_transition_id`).
+
+    **`generatable_only` is the caller's question, not this walk's.** Reaching a
+    state is a property of the machine; whether the route may be *generated from*
+    is D-10, and only generation is bound by it. `metis-test-design` walks the
+    same machine before anything is approved — that is the moment a design is
+    most useful — so it passes `False` and says in its own output that the chain
+    it costed includes unapproved steps. Generation keeps the default, which is
+    why its behaviour is unchanged by this parameter existing.
     """
     initial = model.initial_state_ids()
     if not initial:
@@ -108,9 +117,12 @@ def _shortest_setup(model: Model, goal_state: str,
 
     if via_transition_id is not None:
         via = model.transitions.get(via_transition_id)
-        if via is None or not via.is_generatable or via.target != goal_state:
+        if via is None or via.target != goal_state:
             return None
-        prefix = _shortest_setup(model, via.source)
+        if generatable_only and not via.is_generatable:
+            return None
+        prefix = shortest_setup(model, via.source,
+                                generatable_only=generatable_only)
         if prefix is None:
             return None
         return prefix + (via.id,)
@@ -127,7 +139,7 @@ def _shortest_setup(model: Model, goal_state: str,
     seen = set(initial)
     while queue:
         state_id, so_far = queue.popleft()
-        for t in model.outgoing(state_id):  # already id-ordered
+        for t in model.outgoing(state_id, generatable_only):  # id-ordered
             if t.target in seen:
                 continue
             path = so_far + (t.id,)
@@ -165,6 +177,11 @@ def generate(model: Model, criterion: str = DEFAULT_CRITERION,
     return result
 
 
+#: The previous private name. Kept because a rename is not worth an import
+#: breaking somewhere this grep did not reach.
+_shortest_setup = shortest_setup
+
+
 def _generate_one(model: Model, target: CoverageTarget, criterion: str,
                   setup_cap: int, result: GenerationResult) -> None:
     validated = model.transitions.get(target.validated_transition_id)
@@ -177,7 +194,7 @@ def _generate_one(model: Model, target: CoverageTarget, criterion: str,
         ))
         return
 
-    setup = _shortest_setup(model, validated.source, target.via_transition_id)
+    setup = shortest_setup(model, validated.source, target.via_transition_id)
     if setup is None:
         result.uncoverable.append(Uncoverable(
             target_key=target.key,

@@ -117,10 +117,30 @@ import java.io.PrintWriter
   val droppedAccessors = droppedMethods.count(isInertAccessor)
   val droppedBoilerplate = droppedMethods.size - droppedAccessors
 
+  // **Cyclomatic complexity, stated rather than assumed.** McCabe's number for a
+  // method is its decision points plus one. Decision points here are the AST's
+  // control structures (`if`, `for`, `while`, `switch`, `catch`) plus the
+  // short-circuiting boolean operators, because `a && b` is a branch the CFG
+  // takes and a reader has to reason about.
+  //
+  // A ternary is counted: javasrc2cpg models it as a `CONDITIONAL_EXPRESSION`
+  // control structure, which is what it is.
+  //
+  // Reported as a number and never as a verdict. `risk/product.py` bands it
+  // against thresholds a project can change; the pack's job is to measure.
+  def complexityOf(m: Method): Int = {
+    val branches = m.ast.isControlStructure.size
+    val shortCircuits = m.ast.isCall
+      .nameExact("<operator>.logicalAnd", "<operator>.logicalOr")
+      .size
+    branches + shortCircuits + 1
+  }
+
   val methods = internal.map { m =>
     s"""{"id":"${esc(m.fullName)}","name":"${esc(m.name)}",""" +
     s""""type_name":"${esc(m.typeDecl.name.headOption.getOrElse(""))}",""" +
     s""""signature":"${esc(m.signature)}","is_external":false,""" +
+    s""""complexity":${complexityOf(m)},"size":${m.numberOfLines},""" +
     s""""anchor":${anchor(m.filename, m.lineNumber)}}"""
   }
 

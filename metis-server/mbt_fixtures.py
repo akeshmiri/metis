@@ -13,6 +13,8 @@ than by pointing at a path a reader cannot open.
 Kept out of the test files themselves so three suites can share it without
 importing each other.
 """
+from pathlib import Path
+
 from metis_mcp.mbt.model import APPROVED, IMPLEMENTED, PLANNED, QUARANTINE, Model, State, Transition
 
 # (state id, is_initial)
@@ -87,3 +89,18 @@ def login_model_source() -> dict:
                          "guard": t[4], "implementation_status": t[5]}
                         for t in TRANSITIONS],
     }
+
+def authored_source(tmpdir: str):
+    """The `authored` source, produced from `login_model_source` in a temp dir.
+
+    Shared because two suites need the same starting point -- `test_model_sources`
+    and `test_reproducibility` each carried a byte-identical copy, which is one
+    fixture with two places to update.
+    """
+    import json
+
+    from metis_mcp.model_sources import get
+
+    path = Path(tmpdir) / "login-api.json"
+    path.write_text(json.dumps(login_model_source(), indent=2))
+    return get("authored").produce(path=str(path), author="alice")

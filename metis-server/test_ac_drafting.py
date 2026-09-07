@@ -217,3 +217,96 @@ if __name__ == "__main__":
             print(f"ERROR {t.__name__}: {type(e).__name__}: {e}")
     print(f"\n{len(tests) - failures}/{len(tests)} passed")
     sys.exit(1 if failures else 0)
+
+
+# --------------------------------------------------------------------------
+# Landing the drafts — the chain that was broken in three places
+# --------------------------------------------------------------------------
+#
+# `ac_draft` reported "13/13 implemented transitions drafted" and the graph held
+# ZERO `AcceptanceCriterion` nodes: `context.drafts` was read by one check and
+# consumed by nothing else. That is one of three breaks in a single chain, and
+# together they are why every real run ended at `reconcile -> no acceptance
+# criteria in scope` and why `AcceptanceCriterion-[:VALIDATES]->Transition` had
+# no instances at all.
+
+
+def test_drafts_become_criteria_joined_to_the_transitions_they_describe():
+    from metis_mcp.model_sources.ac_drafting import plan_drafts
+
+    model = login_model()
+    drafts = draft_from_model(model).drafts
+    plan = plan_drafts(drafts, model, surface="api", episode_id="ep-1")
+
+    criteria = plan.by_label("AcceptanceCriterion")
+    assert len(criteria) == len(drafts)
+    assert len(plan.edges) == len(drafts)
+    assert {e.rel_type for e in plan.edges} == {"VALIDATES"}
+
+
+def test_the_edge_targets_the_id_landing_actually_writes():
+    """**The mistake this exists to stop, made three times before it worked.**
+
+    `graph_transition_id`'s own docstring says it: *"Every writer of a transition
+    id must go through here. One that mints its own plans an edge against a node
+    that does not exist, which `land` reports as unmatched rather than failing."*
+
+    Namespacing the source id gave `m::m::1cd54a2…`. Bare-then-namespace still
+    failed, because landing does not keep the source id at all — it derives the
+    node id from the natural key `(model, source, trigger, target)`, so `t01`
+    becomes a digest. Both attempts landed the criteria and zero edges.
+    """
+    from metis_mcp.model_sources.ac_drafting import plan_drafts
+    from metis_mcp.model_sources.landing import graph_transition_id
+
+    model = login_model()
+    drafts = draft_from_model(model).drafts
+    plan = plan_drafts(drafts, model, surface="api", episode_id="ep-1")
+
+    expected = {graph_transition_id(model, d.transition_id) for d in drafts}
+    assert {e.to_id for e in plan.edges} == expected
+    # And it is NOT the source id, however it is decorated.
+    assert not any(e.to_id.endswith(f"::{d.transition_id}")
+                   for e, d in zip(plan.edges, drafts)
+                   if "::" not in d.transition_id)
+
+
+def test_the_edge_targets_the_specialised_label_not_the_generic_one():
+    """A `VALIDATES` edge planned against `:Transition` passes the ontology
+    check — `is_allowed` walks the specialisation chain — and then merges
+    nothing, because the node carries `:ApiCall`. `land` reports that as
+    unmatched and does not fail. The most expensive mistake in this repository."""
+    from metis_mcp.model_sources.ac_drafting import plan_drafts
+
+    model = login_model()
+    drafts = draft_from_model(model).drafts
+
+    api = plan_drafts(drafts, model, surface="api", episode_id="e")
+    ui = plan_drafts(drafts, model, surface="ui", episode_id="e")
+    assert {e.to_label for e in api.edges} == {"ApiCall"}
+    assert {e.to_label for e in ui.edges} == {"UiAction"}
+
+
+def test_a_landed_draft_is_quarantined_and_code_derived():
+    """S-4 and S-19 together. A drafted criterion agrees with the code because
+    it was written from it, which proves nothing — and the provenance is what
+    stops `reconcile` counting it as intent."""
+    from metis_mcp.model_sources.ac_drafting import plan_drafts
+
+    model = login_model()
+    plan = plan_drafts(draft_from_model(model).drafts, model,
+                       surface="api", episode_id="ep-1")
+    for node in plan.by_label("AcceptanceCriterion"):
+        assert node.properties["lifecycle_state"] == "Quarantine"
+        assert node.properties["provenance"] == CODE_DERIVED
+        # Invisible to `search_knowledge` without it, and to every
+        # validity-respecting read without the window.
+        assert node.properties["search_text"]
+        assert node.properties["valid_to"] == ""
+
+
+def test_planning_drafts_for_an_empty_set_is_a_no_op():
+    from metis_mcp.model_sources.ac_drafting import plan_drafts
+
+    plan = plan_drafts([], login_model(), surface="api", episode_id="ep-1")
+    assert plan.nodes == [] and plan.edges == []

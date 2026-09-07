@@ -307,3 +307,91 @@ def test_a_page_with_no_body_is_empty_rather_than_a_traceback():
     item = T.item_from_payload("confluence", "1", {"id": "1", "title": "T"}, BASE)
     assert item.description == ""
     assert item.title == "T"
+
+
+# ---------------------------------------------------------------------------
+# Links, read from the response already being fetched
+# ---------------------------------------------------------------------------
+#
+# No endpoint was added for this. `fields.parent` and `fields.issuelinks` are in
+# the issue payload the reader already GETs, so `ENDPOINTS` stays the closed
+# allowlist `assert_read_only` checks (X-7a) and no new read surface exists.
+
+def test_a_jira_parent_becomes_a_parent_link():
+    item = T.item_from_payload("jira", "PROJ-1", {
+        "key": "PROJ-1",
+        "fields": {"summary": "x", "issuetype": {"name": "Story"},
+                   "parent": {"key": "PROJ-100"}}},
+        base_url="https://tracker.example.com")
+    (link,) = item.links
+    assert link.relation == "parent"
+    assert link.target_id == "PROJ-100"
+    assert link.target_url.endswith("/browse/PROJ-100")
+
+
+def test_a_classic_epic_link_is_normalised_to_parent():
+    """Three spellings, one relation.
+
+    `parent` (next-gen), an `Epic Link` and an inward `is subtask of` all mean
+    the same thing to a reader. Normalising is what makes "which stories are
+    under this epic" one question rather than three.
+    """
+    item = T.item_from_payload("jira", "PROJ-1", {
+        "key": "PROJ-1",
+        "fields": {"summary": "x", "issuetype": {"name": "Story"},
+                   "issuelinks": [{"type": {"inward": "is subtask of",
+                                            "outward": "has subtask"},
+                                   "inwardIssue": {"key": "PROJ-100"}}]}})
+    assert [(l.relation, l.target_id) for l in item.links] == [
+        ("parent", "PROJ-100")]
+
+
+def test_an_ordinary_link_keeps_the_trackers_own_relation_name():
+    """Carried, and interpreted by nobody.
+
+    A `relates to` means whatever the team that clicked it meant. Métis records
+    that the tracker asserted it and reads nothing into it.
+    """
+    item = T.item_from_payload("jira", "PROJ-2", {
+        "key": "PROJ-2",
+        "fields": {"summary": "x", "issuetype": {"name": "Bug"},
+                   "issuelinks": [{"type": {"inward": "is caused by",
+                                            "outward": "causes"},
+                                   "outwardIssue": {"key": "PROJ-1"}}]}})
+    assert [(l.relation, l.target_id) for l in item.links] == [
+        ("causes", "PROJ-1")]
+
+
+def test_the_direction_the_payload_states_is_the_one_recorded():
+    """`blocks` and `is blocked by` are not flattened into one claim."""
+    inward = T.item_from_payload("jira", "A", {
+        "key": "A", "fields": {"summary": "x", "issuetype": {"name": "Bug"},
+                               "issuelinks": [{"type": {"inward": "is blocked by",
+                                                        "outward": "blocks"},
+                                               "inwardIssue": {"key": "B"}}]}})
+    outward = T.item_from_payload("jira", "A", {
+        "key": "A", "fields": {"summary": "x", "issuetype": {"name": "Bug"},
+                               "issuelinks": [{"type": {"inward": "is blocked by",
+                                                        "outward": "blocks"},
+                                               "outwardIssue": {"key": "B"}}]}})
+    assert inward.links[0].relation == "is blocked by"
+    assert outward.links[0].relation == "blocks"
+
+
+def test_a_tracker_with_no_link_concept_reports_none():
+    """Zephyr Scale has no issue links. An empty tuple is a fact about the
+    tracker, not a gap in the reader."""
+    item = T.item_from_payload("scale", "T-1", {"key": "T-1", "name": "x"})
+    assert item.links == ()
+
+
+def test_reading_links_adds_no_endpoint():
+    """The whole point of taking them from the existing payload.
+
+    A search or a link-expansion endpoint would be an allowlist change, and the
+    allowlist is what makes this intake read-only by construction rather than by
+    intention.
+    """
+    assert set(T.ENDPOINTS) == {T.JIRA, T.ZEPHYR, T.CONFLUENCE}
+    assert "issuelink" not in " ".join(T.ENDPOINTS.values())
+    assert "search" not in " ".join(T.ENDPOINTS.values())

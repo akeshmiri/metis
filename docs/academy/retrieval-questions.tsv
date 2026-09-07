@@ -55,3 +55,48 @@ what does an empty valid_to mean	lesson:07-time-what-was-true-and-when
 how do I ask what was true in the past	lesson:07-time-what-was-true-and-when
 what are the three surfaces	lesson:08-finding-things
 what will ask refuse to answer	lesson:08-finding-things
+which skill should I use	lesson:11-which-skill-and-why
+how do I check coverage	lesson:11-which-skill-and-why
+how do I know if something is ready to release	lesson:11-which-skill-and-why
+does Metis review my code	lesson:11-which-skill-and-why
+why are there so many skills	lesson:11-which-skill-and-why
+what do I use to see what a change breaks	lesson:11-which-skill-and-why
+how do I get a repository into Metis	lesson:11-which-skill-and-why
+what is Metis for	lesson:12-what-metis-is-for
+why would I use this	lesson:12-what-metis-is-for
+does Metis tell me if my system is correct	lesson:12-what-metis-is-for
+what do I actually get out of it	lesson:12-what-metis-is-for
+what is a transition	lesson:13-the-words-we-use
+what does quarantine mean	lesson:13-the-words-we-use
+what is an acceptance criterion	lesson:13-the-words-we-use
+what does EARS mean	lesson:13-the-words-we-use
+what is provenance	lesson:13-the-words-we-use
+what is the difference between a journey and a surface	lesson:13-the-words-we-use
+I am a business analyst where do I start	lesson:14-your-first-week
+I am a QA lead what do I do first	lesson:14-your-first-week
+what does the first month look like	lesson:14-your-first-week
+what happens to a ticket after I import it	lesson:15-one-requirement-end-to-end
+why did my ticket become a finding instead of a requirement	lesson:15-one-requirement-end-to-end
+show me an example from start to finish	lesson:15-one-requirement-end-to-end
+what does the review screen show me	lesson:16-the-screens-you-will-use
+can I approve my own work	lesson:16-the-screens-you-will-use
+what am I deciding when I approve a model	lesson:16-the-screens-you-will-use
+what happens if the evidence is missing	lesson:16-the-screens-you-will-use
+what does blocked G1 mean	lesson:17-when-metis-refuses
+why does it say not EARS conformant	lesson:17-when-metis-refuses
+what does unverifiable mean	lesson:17-when-metis-refuses
+why is there a placeholder instead of a value	lesson:17-when-metis-refuses
+what is the difference between uncovered and unmeasurable	lesson:17-when-metis-refuses
+why does Metis not generate test code	lesson:09-generating-code-from-a-flow
+what is a flow manifest	lesson:09-generating-code-from-a-flow
+where should I put a new tool	lesson:10-where-a-thing-belongs
+should this be a skill or a tool	lesson:10-where-a-thing-belongs
+what is test design in Metis	lesson:18-designing-what-to-test
+what are the eight condition classes	lesson:18-designing-what-to-test
+why is my test design incomplete	lesson:18-designing-what-to-test
+why does Metis ask me for the architecture	lesson:18-designing-what-to-test
+what does a partial section mean in a design	lesson:18-designing-what-to-test
+what happens to a ticket before it is imported	lesson:19-before-a-claim-becomes-a-node
+what does not-ready mean	lesson:19-before-a-claim-becomes-a-node
+why was my requirement refused at intake	lesson:19-before-a-claim-becomes-a-node
+does ready mean the requirement is approved	lesson:19-before-a-claim-becomes-a-node

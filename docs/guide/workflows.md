@@ -6,6 +6,19 @@
 
 A stage marked **gate** stops for a person. Métis does not approve its own work: everything recovered lands at `Quarantine` (S-4) and generation reads only `Approved` (D-10).
 
+## `change-approval`
+
+Re-recover after a change, show which approvals it cost, and settle only what moved with a human.
+
+| # | stage | gate | blocking |
+|---|---|---|---|
+| 1 | extract |  | yes |
+| 2 | change-impact |  |  |
+| 3 | land |  | yes |
+| 4 | validate |  | yes |
+| 5 | change-review |  |  |
+| 6 | model-approval | **yes** | yes |
+
 ## `coverage-report`
 
 Report coverage for a scope. Read-only; no gates.
@@ -13,6 +26,31 @@ Report coverage for a scope. Read-only; no gates.
 | # | stage | gate | blocking |
 |---|---|---|---|
 | 1 | report |  |  |
+| 2 | risk-weighted |  |  |
+
+## `intake`
+
+Bring what a tracker or wiki SAYS the system should do into the graph as claims, and stop for a human.
+
+| # | stage | gate | blocking |
+|---|---|---|---|
+| 1 | fetch |  | yes |
+| 2 | validate |  |  |
+| 3 | analysis |  |  |
+| 4 | readiness |  | yes |
+| 5 | land |  | yes |
+| 6 | requirement-risk |  |  |
+| 7 | model-approval | **yes** | yes |
+
+## `intent-review`
+
+Read a stated intent from four directions — is there a need, can its wording be satisfied twice, could anything test it, does anybody know what being wrong costs — before it reaches the graph.
+
+| # | stage | gate | blocking |
+|---|---|---|---|
+| 1 | analysis |  |  |
+| 2 | readiness |  | yes |
+| 3 | document |  | yes |
 
 ## `knowledge-capture`
 
@@ -24,7 +62,8 @@ Turn a stated requirement into atomic acceptance criteria, compare them against 
 | 2 | mine |  | yes |
 | 3 | compare |  |  |
 | 4 | land |  | yes |
-| 5 | model-approval | **yes** | yes |
+| 5 | requirement-risk |  |  |
+| 6 | model-approval | **yes** | yes |
 
 ## `model-build`
 
@@ -39,6 +78,18 @@ Recover behaviour from code, work out what it should do, and settle that with a 
 | 5 | reconcile |  |  |
 | 6 | model-approval | **yes** | yes |
 
+## `risk-review`
+
+Assess the risk a requirement or a release carries, gathering what Métis knows and asking for what it cannot.
+
+| # | stage | gate | blocking |
+|---|---|---|---|
+| 1 | gather |  | yes |
+| 2 | open-questions |  |  |
+| 3 | assess |  | yes |
+| 4 | risk-acceptance | **yes** | yes |
+| 5 | document |  | yes |
+
 ## `spec-writeback`
 
 Regenerate the stakeholder specification and write it back (§18).
@@ -50,6 +101,18 @@ Regenerate the stakeholder specification and write it back (§18).
 | 1 | spec |  | yes |
 | 2 | write-back | **yes** | yes |
 
+## `test-design`
+
+Design what to test and how, declaring what Métis gathered and what a person must still answer.
+
+| # | stage | gate | blocking |
+|---|---|---|---|
+| 1 | gather |  | yes |
+| 2 | sections |  | yes |
+| 3 | open-questions |  |  |
+| 4 | design-acceptance | **yes** | yes |
+| 5 | document |  | yes |
+
 ## `test-generate`
 
 Generate covering paths and render them as test cases.
@@ -59,6 +122,7 @@ Generate covering paths and render them as test cases.
 | # | stage | gate | blocking |
 |---|---|---|---|
 | 1 | generate-paths |  | yes |
-| 2 | render |  | yes |
-| 3 | publication-confirmation | **yes** | yes |
-| 4 | publish |  | yes |
+| 2 | prioritise |  | yes |
+| 3 | render |  | yes |
+| 4 | publication-confirmation | **yes** | yes |
+| 5 | publish |  | yes |

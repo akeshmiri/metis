@@ -91,6 +91,16 @@ def search_text_for(*values: str) -> str:
 
     This copy exists to be MATCHED, never displayed — nothing renders it — so
     duplication inside it costs storage and nothing else.
+
+    **Do not try to boost a title by repeating it in here — that was measured and
+    it does nothing.** The hypothesis was that "what is Métis for" loses to
+    lesson 01 because a five-word title is diluted by two thousand words of body
+    in a single field. It is not: `metis_search` is a fulltext index over FIVE
+    properties — `name`, `text`, `search_text`, `description`, `statement` — so
+    a lesson's title is already its own field and Lucene already scores it as
+    one. Repeating it 1x/4x/8x/16x scored 41/40/40/41 of 72 on the academy
+    benchmark: no gain, and slightly negative in the middle. The misses have a
+    different cause.
     """
     joined = " ".join(v for v in values if v)
     return fold(joined + " " + split_identifiers(joined)).strip()

@@ -1,6 +1,16 @@
 ---
 name: metis-behavior-modeling
 description: Check a state machine for determinism, guard completeness, reachability and observability before anything is generated from it, and report unverifiable guards as the third outcome they are rather than as a pass. Use when a user is defining or reviewing states and transitions and wants them checked for well-formedness.
+allowed-tools:
+  - list_workflows
+  - run_status
+  - ask
+  - get_model
+  - validate_model
+  - coverage
+  - get_entity
+knowledge-from:
+  - mbt.validation
 ---
 
 # Métis behavior-modeling
@@ -43,6 +53,11 @@ and say in the report that they did.
 `steps/01-research.md`, `steps/02-plan.md`, `steps/03-implementation.md`. Read
 `../shared/knowledge/anti-hallucination-protocol.md` once; its gates apply here.
 
+
+The reasoning behind the engine this skill drives is in
+`knowledge/index.md` — generated from the module docstrings that are its
+source of truth, so it cannot drift from the code it explains. Read a
+fragment when you need the why, not before.
 ## Naming a technique when you report a gap
 
 Guard completeness and boundary coverage are the same question asked twice, and
@@ -50,9 +65,27 @@ the second phrasing is the one a tester acts on. `mbt/criteria.py` implements
 ISO/IEC/IEEE 29119-4's boundary value analysis and equivalence partitioning by
 name, and `mbt/dimensions.py` builds the equivalence classes — so when a guard
 turns on a range, a length or a count, say which technique the gap belongs to.
-`../shared/knowledge/test-techniques-reference.md` is the table to name it from.
+`../shared/references/test-techniques-reference.md` is the table to name it from.
 It is a vocabulary, not a checklist: do not run through it looking for
 techniques to apply.
+
+## The complement of a guard is a required decision
+
+Guard completeness asks whether the guards on a trigger cover the input space.
+It does **not** ask what the system does in the branch nobody wrote, and those
+are different questions: a guard set can be complete and still leave the
+rejection path unstated.
+
+So for every guarded transition, the complement is a **required condition
+decision, not an optional one** — either a criterion says what happens there, or
+the gap is recorded with a reason. The eight classes to walk are in
+`../shared/knowledge/requirement-condition-coverage.md`; `prohibited` and
+`boundary` are the two that most often turn a "complete" guard set into an
+unverifiable one.
+
+Report an undecided complement as a gap. Do not fill it in — inventing the
+rejection behaviour is exactly the failure the unverifiable-guard outcome exists
+to keep visible.
 
 ## What this skill must not do
 

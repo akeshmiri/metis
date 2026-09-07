@@ -284,3 +284,95 @@ def test_an_in_repo_profile_is_reported_and_not_read(tmp_path, monkeypatch):
     assert len(profile.notes) == 1
     assert "was ignored" in profile.notes[0]
     assert str(repo / ".metis" / "project.json") in profile.notes[0]
+
+
+# ---------------------------------------------------------------------------
+# Where a project's requirements come from — configuration, not arguments
+# ---------------------------------------------------------------------------
+#
+# `intake fetch` read one item at a time from flags. A real backlog is not one
+# item, and which tracker, which project and which items are decisions a
+# deployment makes and changes without a release — so they belong in the profile
+# beside `journeys`, not in whatever command somebody happens to type.
+
+def _with_requirements(block):
+    return {
+        "version": "metis.project-profile/1",
+        "project": "p", "language": "javasrc", "framework": "spring-mvc",
+        "journeys": [{"journey": "j", "surface": "api", "modules": ["m"]}],
+        "requirements": block,
+    }
+
+
+def test_a_profile_may_state_where_its_requirements_come_from():
+    from code_analysis.project_profile import load
+
+    profile = load(_with_requirements({
+        "system": "jira", "token_env": "METIS_JIRA_TOKEN",
+        "query": {"jql": "project = PROJ AND type = Story"},
+        "fixture_dir": "demo_project/trackers",
+        "keys": ["DEMO-1", "DEMO-2"]}))
+    source = profile.requirements
+    assert source.is_configured
+    assert source.system == "jira"
+    assert source.keys == ("DEMO-1", "DEMO-2")
+    assert source.query["jql"].startswith("project = PROJ")
+
+
+def test_a_profile_without_a_requirements_block_is_still_valid():
+    """A project that keeps its requirements somewhere Métis does not read is a
+    complete configuration, not an incomplete one."""
+    from code_analysis.project_profile import load
+
+    assert not load(_with_requirements({}) | {"requirements": None}).requirements.is_configured
+
+
+def test_a_fixture_configuration_does_not_read_live():
+    """What makes the batch path testable with no tracker in existence.
+
+    `reads_live` is what a caller checks before opening a transport, so a
+    fixture-configured profile can never accidentally reach a network.
+    """
+    from code_analysis.project_profile import load
+
+    fixture_only = load(_with_requirements(
+        {"system": "jira", "fixture_dir": "demo_project/trackers"}))
+    assert fixture_only.requirements.is_configured
+    assert not fixture_only.requirements.reads_live
+
+    live = load(_with_requirements(
+        {"system": "jira", "base_url": "https://tracker.example.com",
+         "keys": ["A-1"]}))
+    assert live.requirements.reads_live
+
+
+def test_a_token_in_the_variable_name_field_is_refused():
+    """PLT-005, at the point the mistake is easiest to make.
+
+    `token_env` NAMES a variable; a token is a string and so is a name, so
+    nothing but a check distinguishes them — and the failure mode is a secret
+    committed to a repository.
+    """
+    import pytest
+
+    from code_analysis.project_profile import ProfileInvalid, load
+
+    with pytest.raises(ProfileInvalid) as e:
+        load(_with_requirements({"system": "jira",
+                                 "token_env": "ATATT3xFfGF0-real-looking-token"}))
+    assert "PLT-005" in str(e.value)
+
+
+def test_an_unsupported_tracker_is_refused_when_the_profile_is_read():
+    """Not when a run later tries to fetch from it.
+
+    A profile naming `github` is a configuration error, and the honest place to
+    say so is where the configuration is loaded.
+    """
+    import pytest
+
+    from code_analysis.project_profile import ProfileInvalid, load
+
+    with pytest.raises(ProfileInvalid) as e:
+        load(_with_requirements({"system": "github", "keys": ["1"]}))
+    assert "jira" in str(e.value) and "scale" in str(e.value)

@@ -220,6 +220,55 @@ def tools_page() -> str:
     body += ["", "Enabling writes adds landing and the gates, each costing an "
              "identity, the evidence fingerprint, and a literal confirmation "
              "word. The CLI remains the fullest surface."]
+
+    # **The surface is not only tools any more, and a page that said so would
+    # be the dead list this file exists to replace.** Prompts and resources are
+    # discovered from the skills and `docs/`, so they are reported by count and
+    # by kind rather than enumerated -- naming ninety-seven documents here would
+    # be a second copy of the tree.
+    from metis_mcp import library
+
+    described = library.describe()
+    body += ["", "## Prompts and resources", ""]
+    if not described.get("available"):
+        body += [f"Not served by this deployment: {described['reason']}", ""]
+    else:
+        kinds = described.get("by_kind", {})
+        body += [
+            f"{described['prompts']} prompts and {described['resources']} "
+            f"resources, discovered from `plugins/metis/skills/` and `docs/` "
+            f"rather than declared here.",
+            "",
+            "A skill is a **prompt**: the procedure, its order, its gates, its "
+            "refusals. Its steps, knowledge and references are **resources**, "
+            "so progressive disclosure survives — `SKILL.md` is paid for when "
+            "the prompt is invoked, and a step costs nothing until it is "
+            "fetched.",
+            "",
+            "| Kind | Count |", "|---|---|",
+        ]
+        body += [f"| `{kind}` | {count} |"
+                 for kind, count in sorted(kinds.items())]
+
+        # **The prompts are named, and the resources are not.** Thirteen is an
+        # inventory a person reads; ninety-seven is a copy of the tree. This
+        # page is where `grep '@mcp.prompt'` sends a reader, because the
+        # decorator deliberately does not exist — so the names have to be here
+        # or they are nowhere.
+        body += ["", "### The prompts", "",
+                 "One per skill, discovered from `plugins/metis/skills/`. "
+                 "There is no `@mcp.prompt` in `server.py` on purpose: "
+                 "thirteen decorators would be a second copy of the skill "
+                 "tree. This list is generated, so it cannot drift from it.",
+                 ""]
+        body += [f"- `{doc.name}`"
+                 for doc in library.documents() if doc.kind == library.SKILL]
+        body += ["", f"Resources are not listed: {described['resources']} of "
+                 "them is the tree, not an inventory. Addressed as "
+                 f"`{described['scheme']}` — `metis://skill/<name>`, "
+                 "`metis://skill/<name>/steps/<step>`, `metis://guide/<page>`, "
+                 "`metis://academy/<lesson>`, `metis://spec`."]
+
     return _page("The MCP surface", "metis_mcp/server.py", body)
 
 
@@ -241,6 +290,145 @@ def cli_page() -> str:
     return _page("The CLI", "metis_mcp/mbt/cli.py --help", body)
 
 
+def surfaces_page() -> str:
+    """Which surface holds what, and which client can reach it.
+
+    **Written because the question kept being asked and the answer kept being
+    assembled by hand.** Métis has four surfaces — MCP, skills, agents, the CLI
+    — and two clients that can each reach a different subset. Every figure below
+    is derived: the tools from the live registry, the skills and agents from the
+    tree, the CLI from its own parser. A hand-written version of this page
+    drifted three times in one session before it was generated.
+
+    **This page counts a directory it is written into.** `library.documents()`
+    globs `docs/guide/*.md`, and this page reports that count — so the run that
+    first adds a guide page records the total from before it existed, and a
+    second `metis guide` converges. `--check` catches the gap rather than
+    hiding it, which is the behaviour worth keeping; the alternative was for
+    the page to report a number derived from `PAGES` instead of from the tree,
+    which would make it agree with itself and disagree with what is served.
+    """
+    import asyncio
+    import re
+    import subprocess
+    import sys
+
+    from metis_mcp import library, server
+    from metis_mcp.agent_generator import AGENT_TARGETS, read_skills
+
+    tools = sorted(t.name for t in _tools(server.mcp))
+    prompts = sorted(p.name for p in asyncio.run(server.mcp.list_prompts()))
+    described = library.describe()
+    skills = read_skills()
+
+    verbs = set()
+    try:
+        out = subprocess.run([sys.executable, "-m", "metis_mcp.mbt.cli", "--help"],
+                             capture_output=True, text=True, timeout=60).stdout
+        verbs = set(re.findall(r"^\s{4}([a-z][a-z-]+)", out, re.M))
+    except Exception:                                     # pragma: no cover
+        pass
+
+    # A tool a person could otherwise reach from a shell. Named individually
+    # rather than guessed, because a wrong pairing here would understate what is
+    # lost by dropping the MCP surface.
+    loose = {"coverage": "report", "flow_scaffold": "scaffold",
+             "model_sources": "sources", "list_workflows": "workflow list",
+             "run_status": "workflow status", "validate_model": "validate",
+             "get_spec": "spec"}
+
+    def analogue(name):
+        if name in verbs:
+            return name
+        if name.replace("_", "-") in verbs:
+            return name.replace("_", "-")
+        return loose.get(name)
+
+    only_mcp = [t for t in tools if not analogue(t)]
+    shared = [(t, analogue(t)) for t in tools if analogue(t)]
+
+    body = [
+        "Four surfaces, two clients, and they do not overlap the way the "
+        "directory tree suggests. Every count here is derived from the running "
+        "system rather than restated.",
+        "",
+        "## Which client reaches what", "",
+        "| Surface | Claude Code | Copilot |",
+        "|---|---|---|",
+        "| **MCP** — tools, prompts, resources | yes | yes |",
+        "| The CLI, over a shell | yes | yes |",
+        "| The plugin (`plugins/metis/`) — skills and agents | yes | via the marketplace |",
+        "",
+        "**Agents live in ONE place**, `plugins/metis/agents/`, and are "
+        "distributed with the plugin. There was a byte-identical second copy "
+        "under `.github/agents/` for Copilot to read directly; two copies of a "
+        "generated artefact is two things to regenerate and one of them "
+        "eventually is not, so the surface was collapsed to the plugin.",
+        "",
+        "A specialist has **no agent of its own** — its parent's agent routes to "
+        "it as a skill, which is what keeps a client's agent list one entry per "
+        "capability rather than one per file.",
+        "",
+        "## MCP", "",
+        f"{len(tools)} tools, {described.get('prompts', 0)} prompts, "
+        f"{described.get('resources', 0)} resources.",
+        "",
+        f"**{len(only_mcp)} of the {len(tools)} tools have no CLI path at "
+        f"all.** This is the concrete cost of dropping the MCP surface: each "
+        f"one would have to become a CLI verb or be deleted.",
+        "",
+    ]
+    body += [f"- `{name}`" for name in only_mcp]
+    body += ["", f"{len(shared)} have a CLI analogue:", ""]
+    body += [f"- `{name}` ~ `metis {verb}`" for name, verb in shared]
+
+    body += [
+        "",
+        "Prompts are the skills, read from the same files the plugin loads — "
+        "one source, two transports, nothing to drift. Resources are the "
+        "documents a step cites, so progressive disclosure survives the move.",
+        "",
+        "| Resource kind | Count |", "|---|---|",
+    ]
+    body += [f"| `{k}` | {v} |"
+             for k, v in sorted(described.get("by_kind", {}).items())]
+
+    body += [
+        "", "## Skills", "",
+        f"{len(skills)} under `plugins/metis/skills/`. Each declares its own "
+        "`workflow:` and `allowed-tools:`, which is what the agents are "
+        "generated from.",
+        "",
+    ]
+    body += [f"- `{s.name}`" + (f" — drives `{s.workflow}`" if s.workflow else "")
+             for s in skills]
+
+    body += ["", "## Agents", ""]
+    body += [f"- `{target.relative_to(library.repo())}` — "
+             f"{len(list(target.glob('*.agent.md')))} files"
+             for target in AGENT_TARGETS]
+    scopes = {s.name: len(s.tools) for s in skills}
+    body += [
+        "",
+        f"Generated from the skills' frontmatter. They hold scope and nothing "
+        f"else: {len(set(frozenset(s.tools) for s in skills))} distinct tool "
+        f"sets, {min(scopes.values())}–{max(scopes.values())} tools each out "
+        f"of {len(tools)}. **MCP has no primitive for this** — neither a "
+        "prompt nor a resource has a field expressing tool scope — which is "
+        "why agents stay on the filesystem in both client formats.",
+        "",
+        "## The CLI", "",
+        f"{len(verbs)} top-level verbs, and the fullest surface. **The gates "
+        "live here and only here**: `metis publish` is G2, `metis review "
+        "export` / `apply` is the diffable decision file (N-7). "
+        "`resume_workflow` on the MCP surface deliberately accepts no "
+        "confirmation, so an agent cannot supply G2's literal itself.",
+    ]
+    return _page("The surfaces, and who can reach them",
+                 "the live MCP registry, the skill tree and the CLI parser",
+                 body)
+
+
 PAGES = {
     "README.md": None,          # built last, from the others
     "ontology.md": ontology_page,
@@ -248,6 +436,7 @@ PAGES = {
     "workflows.md": workflows_page,
     "mcp-tools.md": tools_page,
     "cli.md": cli_page,
+    "surfaces.md": surfaces_page,
 }
 
 

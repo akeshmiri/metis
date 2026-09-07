@@ -111,20 +111,49 @@ def call_recipe(journey: str, route: str = "") -> dict:
     # endpoint no transition models has no recipe, because there is no modelled
     # behaviour to exercise. It is reported as an `unmodelled` Finding instead
     # of being answered with a call nobody has specified.
+    # **`journey` scopes the query or it is decoration.** It reached the
+    # signature and the returned label and nothing in between, so asking for
+    # athena-core returned all 91 endpoints across seven modules — git's
+    # `/commit` among them — each stamped `"journey": "athena-core"`. Scoped,
+    # athena-core is 20. `functional_areas` is the same key `review queue`
+    # narrows on, and it holds the journey without its surface suffix.
+    #
+    # **REQUIRES and EXPECTS are matched apart because they are opposite
+    # halves of a case.** The ontology: REQUIRES is "a payload type whose field
+    # constraints a case must satisfy or violate", EXPECTS is "the response
+    # body a case should assert". Collected into one `bodies` list they were
+    # both rendered as `-d`, so every GET sent its own response schema as a
+    # request payload and the assertion half was not lost but relocated into
+    # the request.
     rows = _rows(f"""
         MATCH (t:{_TRANSITION})-[:DERIVED_FROM]->(e:Endpoint)
-        OPTIONAL MATCH (t)-[:EXPECTS|REQUIRES]->(b:{_TYPE})
+        WHERE $journey IN coalesce(t.functional_areas, [])
+        OPTIONAL MATCH (t)-[:REQUIRES]->(req:{_TYPE})
+        OPTIONAL MATCH (t)-[:EXPECTS]->(resp:{_TYPE})
         OPTIONAL MATCH (e)-[:SECURED_BY]->(sec:SecurityScheme)
         WITH e, t.c_inputs AS inputs,
-             collect(DISTINCT b.id) AS bodies,
+             collect(DISTINCT req.id) AS request_bodies,
+             collect(DISTINCT resp.id) AS response_bodies,
              collect(DISTINCT t.c_outcome_status) AS statuses,
              collect(DISTINCT properties(sec)) AS security
-        RETURN properties(e) AS endpoint, inputs, bodies, statuses, security
-        ORDER BY e.path, e.http_method""")
+        RETURN properties(e) AS endpoint, inputs, request_bodies,
+               response_bodies, statuses, security
+        ORDER BY e.path, e.http_method""", journey=journey)
 
+    # Scoped by the same key. Five mappings exist in the whole graph and every
+    # one of them appeared on all 91 recipes, so a core endpoint was documented
+    # as raising git's exceptions.
+    #
+    # **The transition points at the mapping, not the reverse.** Written the
+    # other way round this matched nothing and every recipe lost its
+    # rejections silently — the same shape of bug, introduced by the fix for
+    # it. `test_a_scoped_rejection_still_reaches_the_recipe` fails on an empty
+    # result, which asserting the query text alone did not.
     rejections = [(str(r["status"]), r["cause"]) for r in _rows(
-        "MATCH (m:ExceptionMapping) RETURN m.status AS status, "
-        "m.exception_type AS cause ORDER BY m.status, m.exception_type")]
+        f"MATCH (t:{_TRANSITION})-[:DERIVED_FROM]->(m:ExceptionMapping) "
+        "WHERE $journey IN coalesce(t.functional_areas, []) "
+        "RETURN DISTINCT m.status AS status, m.exception_type AS cause "
+        "ORDER BY m.status, m.exception_type", journey=journey)]
 
     out = []
     for row in rows:
@@ -140,11 +169,16 @@ def call_recipe(journey: str, route: str = "") -> dict:
         # ACCEPTS. It used to ride on the endpoint as parallel arrays that could
         # not express a scheme with two roles.
         endpoint["security"] = [x for x in row["security"] if x]
-        bodies = tuple(filter(None, (_payload_for(b) for b in row["bodies"] if b)))
+        bodies = tuple(filter(None, (_payload_for(b)
+                                     for b in row["request_bodies"] if b)))
         built = _recipe.build(endpoint, base_url=_base_url(), payload_types=bodies,
                               outcomes=sorted(s for s in row["statuses"] if s),
                               rejections=rejections)
-        out.append({"route": wanted, "curl": _recipe.as_curl(built), **built})
+        # The response types stay on the recipe as what a case checks, rather
+        # than being dropped now that they no longer go into the request.
+        asserts = sorted({b for b in row["response_bodies"] if b})
+        out.append({"route": wanted, "curl": _recipe.as_curl(built),
+                    "asserts": asserts, **built})
 
     if not out:
         return {"ok": False,
@@ -176,12 +210,18 @@ def auth_facts(journey: str) -> dict:
     # return `security_schemes` and `security_roles` as two arrays off the
     # endpoint — and they were positional, so a scheme with two roles made the
     # correspondence undecodable. A third of the demo corpus was misaligned.
+    # **Scoped, like everything else here.** `journey` reached the returned
+    # label and none of these three queries, so `auth_facts("athena-core")`
+    # answered for all seven modules: `endpoints: 91`, and a header required
+    # only by tms reported as required for core.
     declared = _rows(
-        "MATCH (e:Endpoint)-[:SECURED_BY]->(s:SecurityScheme) "
-        "RETURN e.path AS path, e.http_method AS verb, "
+        f"MATCH (t:{_TRANSITION})-[:DERIVED_FROM]->(e:Endpoint)"
+        "-[:SECURED_BY]->(s:SecurityScheme) "
+        "WHERE $journey IN coalesce(t.functional_areas, []) "
+        "RETURN DISTINCT e.path AS path, e.http_method AS verb, "
         "s.scheme AS scheme, s.expression AS expression, "
         "coalesce(s.roles, []) AS roles, s.source AS source "
-        "ORDER BY e.path, s.expression")
+        "ORDER BY e.path, s.expression", journey=journey)
     # **Counted from the behaviour, and decoded here rather than in Cypher.**
     # This read `Endpoint-[:ACCEPTS]->Parameter{location:'header'}` until
     # `Parameter` was staged out. The same facts live in the transition's
@@ -196,7 +236,8 @@ def auth_facts(journey: str) -> dict:
     required_of: dict[str, bool] = {}
     for row in _rows(f"""
             MATCH (t:{_TRANSITION})-[:DERIVED_FROM]->(e:Endpoint)
-            RETURN t.c_inputs AS inputs, e.id AS endpoint"""):
+            WHERE $journey IN coalesce(t.functional_areas, [])
+            RETURN t.c_inputs AS inputs, e.id AS endpoint""", journey=journey):
         for parameter in _inputs_of(row["inputs"]):
             if parameter.get("location") != "header":
                 continue
@@ -211,7 +252,10 @@ def auth_facts(journey: str) -> dict:
           "required": required_of.get(name, False)}
          for name, endpoints in seen_by.items()),
         key=lambda h: (-h["endpoints"], h["name"]))
-    total = (_rows("MATCH (e:Endpoint) RETURN count(e) AS n") or [{"n": 0}])[0]["n"]
+    total = (_rows(
+        f"MATCH (t:{_TRANSITION})-[:DERIVED_FROM]->(e:Endpoint) "
+        "WHERE $journey IN coalesce(t.functional_areas, []) "
+        "RETURN count(DISTINCT e) AS n", journey=journey) or [{"n": 0}])[0]["n"]
 
     return {
         "ok": True,
@@ -516,7 +560,7 @@ def _names_a_system(text: str) -> bool:
 
 
 def _ask_academy(question: str):
-    """The academy's answer to a question about Métis itself, or `None`.
+    """The academy's answer to a question about a system it covers, or `None`.
 
     **Why this exists at all.** `ask` routed only to the four product tools, so
     a question the academy answers in full came back "no tool answers this" —
@@ -550,9 +594,9 @@ def _ask_academy(question: str):
         return {
             "ok": False,
             "question": question,
-            "reason": (f"this reads as a question about Métis itself, which the "
-                       f"academy answers — and the academy lives in the graph, "
-                       f"which is not reachable: {e}"),
+            "reason": (f"this reads as a question the academy answers — and "
+                       f"the academy lives in the graph, which is not "
+                       f"reachable: {e}"),
             "remedy": "metis lessons, once a graph is configured",
             "tools": ["call_recipe", "auth_facts", "payload_shape",
                       "journey_walkthrough"],
@@ -572,8 +616,37 @@ def _ask_academy(question: str):
             "topics": related["topics"],
             "read_next": [r["name"] for r in related["related"]],
         },
+        # **The runners-up, because one hit is not what the retrieval knows.**
+        #
+        # Measured over `retrieval-questions.tsv` through THIS function, not
+        # through the bench (they rank differently — the bench resolves passage
+        # chunks): the wanted lesson is first for 39 of 72 questions, inside the
+        # top three for 58, and inside the top five for 67.
+        #
+        # `ask` returned `hits[0]` alone, so it was as good as the first figure —
+        # 54% — and threw the rest away. A reader was handed one lesson while the
+        # one that answered them sat second, unmentioned. Carrying four
+        # runners-up raises what reaches them from 54% to 93%.
+        #
+        # These are candidates, not an answer. Each carries a title and the
+        # passage that matched so a reader can tell in a line whether it is
+        # worth opening; none carries a body, because stacking three bodies
+        # invites reading them as one composite answer. `ask` composes tool
+        # output and never narrates over it — a fluent wrong answer is the worst
+        # thing this surface can produce, and it stays exactly as true with
+        # three sources as with one.
+        "also_relevant": [
+            {"lesson": h["id"], "title": h.get("name", ""),
+             "matched_passage": h.get("matched_passage", "")}
+            for h in hits[1:5]
+        ],
+        # **No system name here.** This caption is attached to every academy
+        # answer, and the graph holds an academy per corpus -- so naming one
+        # captioned all six Athena lessons as writing about Métis. The point of
+        # the sentence is authored-versus-recovered, which is true of any
+        # corpus; the lesson itself says which system it is about.
         "rule": ("the academy is authored, not recovered: this is what somebody "
-                 "wrote about Métis, not a fact extracted from a running system"),
+                 "wrote, not a fact extracted from a running system"),
     }
 
 
@@ -588,7 +661,7 @@ def _academy_suggestion(question: str) -> dict | None:
 
     try:
         with session() as s:
-            hits = _academy_hits(s, question, limit=1)
+            hits = _academy_hits(s, question, limit=5)
     except (GraphNotConfigured, Exception):        # noqa: BLE001 - a suggestion
         return None                                # is never worth an error
     if not hits:
@@ -596,6 +669,21 @@ def _academy_suggestion(question: str) -> dict | None:
     return {
         "lesson": hits[0]["id"],
         "title": hits[0].get("name", ""),
+        # **Five candidates rather than one, because one was wrong half the
+        # time.** Measured over `retrieval-questions.tsv` through
+        # `_academy_hits`: the wanted lesson is first for 39 of 72 questions and
+        # inside the top five for 67. Offering only the first made this
+        # suggestion right 54% of the time when the retrieval underneath knew
+        # the answer 93% of the time.
+        #
+        # This does NOT weaken the refusal above it. Nothing here is classified,
+        # nothing claims to answer, and no body is carried — these are titles a
+        # reader can take or ignore, which is exactly what the single one was.
+        # Widening a suggestion is not the same as deciding a question belongs to
+        # this corpus, and that decision was measured three ways and is still
+        # refused.
+        "others": [{"lesson": h["id"], "title": h.get("name", "")}
+                   for h in hits[1:5]],
         # **The note used to name Métis.** With a second corpus landed it told a
         # reader asking about Athena that "the academy is about Métis itself" and
         # to "ask again naming Métis" — false, and advice that would not have
@@ -664,6 +752,39 @@ def ask(question: str, journey: str = "") -> dict:
                   "call_recipe": lambda: call_recipe(journey),
                   "journey_walkthrough": lambda: journey_walkthrough(journey),
                   }[routed]()
+
+        # **A route that ran and failed for want of a journey should also say
+        # what the academy has** — added to its refusal, never in place of it.
+        #
+        # The bug: *"can I approve my own work"* hits `journey_walkthrough` on
+        # *how do*, is given no journey, and comes back `no transitions for
+        # journey ''`. That is useless for a question the academy answers
+        # outright (N-10), and the pre-route guard above cannot catch it because
+        # the sentence never names this system.
+        #
+        # Returning the lesson INSTEAD was tried and is wrong: *"explain the
+        # flow"* then answers with lesson 09 rather than with the refusal that
+        # tells the caller to pass a journey, which is the more useful of the
+        # two. The tool's own failure is actionable and must survive.
+        #
+        # So this attaches a suggestion, exactly as the unroutable branch below
+        # does, with the same caveat and the same absence of any claim. Nothing
+        # is displaced and nothing is classified.
+        suggestion = None
+        if not answer.get("ok") and routed in _NEEDS_JOURNEY and not journey:
+            suggestion = _academy_suggestion(question)
+            if suggestion:
+                # `_academy_suggestion` writes its note for the unroutable case
+                # — "no tool routed this question" — which is false here: one
+                # did, and it failed. A caveat that misdescribes its own
+                # situation is the kind of small wrongness that makes a reader
+                # stop trusting the larger claim.
+                suggestion["note"] = (
+                    f"not an answer — `{routed}` matched this question and could "
+                    f"not run without a `journey`, so this is what the academy "
+                    f"holds nearby. Nothing checked that it is the right corpus. "
+                    f"Pass `journey` to get the product tool's real answer.")
+
         return {
             "ok": answer.get("ok", False),
             "question": question,
@@ -671,6 +792,7 @@ def ask(question: str, journey: str = "") -> dict:
             "answer": answer,
             "rule": ("everything above came from the graph. Any sentence you "
                      "add that is not in it is not something Métis recovered"),
+            **({"academy_may_cover": suggestion} if suggestion else {}),
         }
 
     if _names_a_system(text):

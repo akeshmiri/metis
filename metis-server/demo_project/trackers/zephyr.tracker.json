@@ -7,8 +7,14 @@
       "key": "DEMO-T1",
       "name": "Archived record rejects an update",
       "objective": "While a record is archived, the system shall respond 409 to PUT /record/{id}.",
-      "status": {"name": "Approved"},
-      "labels": ["regression"]
+      "status": {
+        "name": "Approved"
+      },
+      "labels": [
+        "regression"
+      ],
+      "createdOn": "2026-06-10T08:00:00Z",
+      "updatedOn": "2026-07-01T12:30:00Z"
     }
   ]
 }

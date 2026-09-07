@@ -137,3 +137,91 @@ def test_the_query_uses_the_specialisation_expression_not_a_bare_transition():
     """A classified transition carries `:ApiCall` INSTEAD of `:Transition`, so
     a bare `:Transition` matches nothing on a recovered estate."""
     assert "ApiCall" in I.IMPACT_CYPHER and "UiAction" in I.IMPACT_CYPHER
+
+
+# ---------------------------------------------------------------------------
+# The commit-range form (the MCP tool, not the engine).
+#
+# `code_analysis.engine.changed_files` returns `[]` for BOTH "nothing changed"
+# and "git could not tell me", and its docstring hands that distinction to the
+# caller. The tool is that caller, so these assert it does not pass the ambiguity
+# on as a confident zero.
+# ---------------------------------------------------------------------------
+
+def _tool(**kw):
+    import json
+
+    from metis_mcp import server
+    return json.loads(server.impact(**kw))
+
+
+def test_a_range_git_cannot_resolve_is_not_reported_as_no_impact():
+    """The failure this exists to prevent: `0 transitions` is an answer, and an
+    unresolvable range is not one."""
+    out = _tool(repo="..", since="deadbeef99", until="HEAD")
+    assert out["ok"] is False
+    assert out["range_unresolved"] == "deadbeef99..HEAD"
+    assert "transitions" not in out
+
+
+def test_calling_it_with_nothing_says_what_to_pass():
+    out = _tool()
+    assert out["ok"] is False
+    assert "changed_files" in out["reason"] and "since" in out["reason"]
+
+
+def _tool_with_graph(monkeypatch, **kw):
+    """`impact`, with the graph read stubbed.
+
+    **The suite runs with no Neo4j** — that is a property of this engine, not a
+    convenience — so a test that reaches for a session passes only while a
+    container happens to be up. These two did, and failed the moment it stopped.
+    """
+    import json
+
+    from metis_mcp import server
+    monkeypatch.setattr("metis_mcp.impact.impact",
+                        lambda files: {"ok": True, "files_supplied": len(files),
+                                       "transitions": []})
+    return json.loads(server.impact(**kw))
+
+
+def test_an_explicit_file_list_still_works_unchanged(monkeypatch):
+    """The single-argument form predates the range form and must be untouched:
+    the range-form refusal here would mean the argument was ignored."""
+    out = _tool_with_graph(monkeypatch,
+                           changed_files=["nothing/matches/this/File.java"])
+    assert out["ok"] is True
+    assert "range_unresolved" not in out
+    assert out["files_supplied"] == 1
+
+
+def test_a_resolved_range_echoes_what_it_actually_compared(monkeypatch, tmp_path):
+    """A caller who asked about two commits is owed the file list the answer was
+    computed from — otherwise there is no way to tell a narrow diff from a
+    mismatched path root.
+
+    Builds its own two-commit repository rather than using this one: CI clones
+    with `fetch-depth=2`, so `HEAD~2` is not guaranteed to exist and the first
+    version of this test passed locally and failed there.
+    """
+    import subprocess
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=tmp_path, check=True,
+                       capture_output=True)
+
+    git("init", "-q")
+    git("config", "user.email", "t@example.com")
+    git("config", "user.name", "t")
+    (tmp_path / "A.java").write_text("one")
+    git("add", "-A")
+    git("commit", "-qm", "first")
+    (tmp_path / "B.java").write_text("two")
+    git("add", "-A")
+    git("commit", "-qm", "second")
+
+    out = _tool_with_graph(monkeypatch, repo=str(tmp_path), since="HEAD~1",
+                           until="HEAD")
+    assert out["resolved_range"] == "HEAD~1..HEAD"
+    assert out["resolved_files"] == ["B.java"], out["resolved_files"]

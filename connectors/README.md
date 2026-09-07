@@ -28,13 +28,21 @@ reasoning survives in `v1-source/connectors/` and in git history.
 
 ## The rule the schema exists to enforce
 
-**X-7a: Métis never executes anything against the System Under Test.** It reads
-from intake sources and writes to its own graph. It does not call the API it
-models, drive the UI it models, or run a query against the database it models.
+**No intake executes anything against the System Under Test.** An intake reads a
+source and writes to Métis's own graph. It does not call the API it models, drive
+the UI it models, or run a query against the database it models.
 
-The distinction that does the work: *a database Métis reads to learn structure is
-an intake source; the same database reached to check a test's outcome is the
-System Under Test.* Same server, different act, and only the first is available.
+Read that as scoped to *intakes*, because it is. **X-7a used to state it
+absolutely** — Métis never touches the system it models, at all — and that
+prohibition was lifted by an explicit product decision. Contact is now a tier:
+`METIS_EXECUTE` is `off` (the default, where the modules are never even imported)
+| `observe` | `run`, enforced in `metis_mcp/execution.py`. See spec §5.3.
+
+**None of it arrives through here**, which is what this file is asserting. The
+distinction that does the work: *a database Métis reads to learn structure is an
+intake source; the same database reached to check a test's outcome is the System
+Under Test.* Same server, different act — and the second one goes through
+`execution.py`, never through an intake.
 
 That is structural, not remembered. Every `access` mode is read-only —
 `local_files`, `read_only_connection`, `authored_file`, `uif_document` — and

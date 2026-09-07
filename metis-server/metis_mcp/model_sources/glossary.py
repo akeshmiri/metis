@@ -263,8 +263,7 @@ def plan_glossary(glossary: Glossary, episode_id: str = "",
     explicit `episode_id` means "somebody else owns this Episode" and none is
     planned.
     """
-    from metis_mcp.model_sources.landing import LandingPlan, PlannedEdge, PlannedNode
-    from metis_mcp.ontology.validation import validate as validate_node
+    from metis_mcp.model_sources.landing import LandingPlan, PlannedEdge
     from metis_mcp.ontology.validation import validate_relationship
 
     owns_episode = not episode_id
@@ -272,17 +271,9 @@ def plan_glossary(glossary: Glossary, episode_id: str = "",
     recorded = t_recorded or datetime.now(timezone.utc).isoformat(timespec="seconds")
     plan = LandingPlan(episode_id=episode_id)
 
-    def add_node(label: str, props: dict) -> bool:
-        outcome = validate_node(label, props)
-        if not outcome.valid:
-            plan.errors.extend(outcome.errors)
-            return False
-        plan.nodes.append(PlannedNode(label=label, properties=props))
-        return True
-
     # Exempt from source_episode_id: it IS the provenance record (BASELINE_EXEMPT).
     if owns_episode:
-        add_node("Episode", {
+        plan.add_node("Episode", {
             "id": episode_id,
             "name": f"glossary: {len(glossary.areas)} area(s), "
                     f"{len(glossary.entities)} entities",
@@ -293,13 +284,13 @@ def plan_glossary(glossary: Glossary, episode_id: str = "",
         })
 
     for area in glossary.areas:
-        add_node("BusinessArea", {
+        plan.add_node("BusinessArea", {
             "id": area.id, "source_episode_id": episode_id,
             "name": area.name, "description": area.description,
         })
 
     for entity in glossary.entities:
-        ok = add_node("BusinessEntity", {
+        ok = plan.add_node("BusinessEntity", {
             "id": entity.id, "source_episode_id": episode_id,
             "name": entity.name, "description": entity.description,
             "search_text": search_text_for(entity.name, entity.description),

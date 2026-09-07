@@ -159,6 +159,16 @@ def create_app(tickets: ConfirmationTickets | None = None) -> FastAPI:
     def policy_view(who=Depends(identity_of)) -> Any:
         return _answer(_tool("describe_policy"))
 
+    @app.get("/queue")
+    def queue(workflow: str = "", who=Depends(identity_of)) -> Any:
+        """What is waiting on a person, across every run.
+
+        Needs no graph: run records are files. So this answers on a deployment
+        where every other read returns 204, which is correct — a gate somebody
+        owes a decision on does not stop mattering because Neo4j is down.
+        """
+        return _answer(_tool("decision_queue", workflow=workflow))
+
     @app.get("/models/{journey}")
     def model(journey: str, surface: str = "api", detail: bool = False,
               who=Depends(identity_of)) -> Any:
@@ -193,7 +203,8 @@ def create_app(tickets: ConfirmationTickets | None = None) -> FastAPI:
         earlier self.
         """
         try:
-            grant = policy.authorise(policy_capability_confirm(), who.name, who.role)
+            grant = policy.authorise(policy_capability_confirm(), who.name, who.role,
+                                   verified=who)
         except Exception as exc:                       # policy raises its own types
             raise _as_http(exc)
         ticket = secrets.token_urlsafe(24)
@@ -212,7 +223,8 @@ def create_app(tickets: ConfirmationTickets | None = None) -> FastAPI:
         the caller needs to re-read rather than re-send.
         """
         try:
-            policy.authorise(policy_capability_confirm(), who.name, who.role)
+            policy.authorise(policy_capability_confirm(), who.name, who.role,
+                                   verified=who)
             confirmation = app.state.tickets.redeem(
                 ticket, literal, fingerprint, who.name)
         except ConfirmationReplayed as exc:
@@ -224,8 +236,20 @@ def create_app(tickets: ConfirmationTickets | None = None) -> FastAPI:
         return {"batch_id": batch_id, "confirmed_by": confirmation.confirmed_by,
                 "at": confirmation.at, "literal": confirmation.literal,
                 "published": False,
-                "note": "dry-run is the only transport registered (T-21/C3); "
-                        "nothing was sent"}
+                # **This endpoint confirms; it does not publish.** Redeeming a
+                # ticket records that a human said the literal word for this
+                # batch (T-18). Sending is `metis publish`, which requires the
+                # confirmation AND -- for the one live transport, zephyr-scale --
+                # `METIS_ALLOW_EXTERNAL_WRITES=yes` on the installation.
+                #
+                # The note here used to read "dry-run is the only transport
+                # registered", which stopped being true when that transport
+                # landed and would have told a caller their confirmed batch
+                # could not possibly be sent.
+                "note": "confirmation recorded; nothing was sent. Publishing is "
+                        "a separate act (`metis publish`), and a live transport "
+                        "additionally requires METIS_ALLOW_EXTERNAL_WRITES=yes "
+                        "on the installation (T-20)"}
 
     @app.post("/models/{model_id}/elements/{element_id}/approval")
     def approve(model_id: str, element_id: str, rationale: str = "",
@@ -270,7 +294,7 @@ def create_app(tickets: ConfirmationTickets | None = None) -> FastAPI:
                        "not accept one (N-1). Nothing was changed.")
 
         try:
-            policy.authorise(APPROVE_MODEL, who.name, who.role)
+            policy.authorise(APPROVE_MODEL, who.name, who.role, verified=who)
         except Exception as exc:
             raise _as_http(exc)
 
@@ -316,9 +340,16 @@ def create_app(tickets: ConfirmationTickets | None = None) -> FastAPI:
 
         # N-1: the same record the CLI and the UI write, differing only in the
         # surface it names.
+        #
+        # This comment was true of every field except the one N-13 and N-14 are
+        # about. `evidence_fingerprint` defaults to "" and only `policy.py`
+        # passed it, so three of four surfaces recorded decisions with no digest
+        # of what the decider was shown -- while `Screen.fingerprint` sat there
+        # documenting why that field is what makes a record answerable later.
         decision = record_decision(
             context.audit, who, APPROVE_MODEL, element_id,
-            outcome="Approved", evidence=screen.evidence, rationale=rationale,
+            outcome="Approved", evidence=screen.evidence,
+            evidence_fingerprint=screen.fingerprint(), rationale=rationale,
             self_approval=outcome.is_self_approval, surface="rest")
 
         return {"recorded": True, "element_id": element_id,

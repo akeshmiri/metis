@@ -17,10 +17,19 @@ before the transport is ever reached.
 approval, which is worse than no gate: it manufactures a record of consent
 without the attention that record implies.
 
-**T-21 -- dry-run only in the first release (C3).** The real path is built and
-gated; `DryRunTransport` is the only transport registered. A real transport is a
-class implementing `Transport`, and the gate in front of it is identical -- which
-is the point of building it now rather than bolting it on later.
+**T-21 -- dry-run is the DEFAULT, and a live transport now exists (C3).** This
+said "dry-run only in the first release" and that stopped being true when
+`zephyr-scale` landed -- a safety claim wrong in the dangerous direction, because
+it tells a reader Metis cannot write to their tracker when it can.
+
+`TRANSPORTS` registers two: `DryRunTransport`, which remains what you get unless
+somebody deliberately selects otherwise, and `ZephyrScaleTransport`. Selecting
+the live one takes `--transport zephyr-scale` AND
+`METIS_ALLOW_EXTERNAL_WRITES=yes` on the installation -- two keys, because the
+first can be supplied by whatever drives the run, including an agent, and the
+second is set by a human on a machine. `Transport.check_permitted` enforces it,
+so the gate in front of a real transport is identical to the one in front of the
+dry run -- which is the point of having built it that way.
 """
 from __future__ import annotations
 
@@ -234,11 +243,17 @@ class DryRunTransport(Transport):
 
     **One real consequence, stated rather than left to be discovered.** Because it
     sends nothing, it never learns a published id, so it cannot populate
-    `PublicationLedger.published`. Until a real transport exists, the
-    `MANUALLY_EDITED` and `OBSOLETE` drift classes have no live source of published
-    content to compare against -- they are fully implemented and tested, but in a
-    dry-run-only deployment they will always read zero. That is a property of C3,
-    not a gap in §7.6.
+    `PublicationLedger.published`. In a dry-run-only deployment the
+    `MANUALLY_EDITED` and `OBSOLETE` drift classes therefore always read zero --
+    they are fully implemented and tested, and have nothing to compare against.
+    That is a property of C3, not a gap in §7.6.
+
+    **What that zero must not be read as.** It means "this deployment cannot
+    tell", not "there is no drift", and `compare` says so in the detail of every
+    `NEW` item while `ledger.live_publications` is zero. A live transport
+    (`publishing/zephyr.py`) now exists and records ids through
+    `drift.record_publication`, so the distinction is between two real states
+    rather than between a state and a limitation.
     """
 
     name = "dry-run"
@@ -266,6 +281,35 @@ class PublishResult:
     refused: str = ""
     confirmed_by: str = ""
     withheld: list[tuple[str, str]] = field(default_factory=list)
+
+
+# **The transports a `--transport` flag may name.** One place, so the CLI's two
+# `choices=` tuples and any prose about "the only transport" are all derived from
+# the same fact rather than restating it.
+#
+# `docs/academy/01-what-metis-does-not-do.md` asserted "`DryRunTransport` is the
+# only registered transport" for as long as it took somebody to check, which was
+# well after `zephyr-scale` landed. That is the wrong direction for a safety
+# claim to be stale in: it tells a reader Métis cannot reach their tracker when
+# it can. `test_documentation_sync.py` now derives the claim from here.
+#
+# Keyed name -> whether selecting it can cause an external write. A dry-run
+# transport builds and validates the real payload and sends nothing.
+TRANSPORTS: dict[str, bool] = {
+    "dry-run": True,
+    "zephyr-scale": False,
+}
+
+DEFAULT_TRANSPORT = "dry-run"
+
+
+def dry_run_transports() -> tuple[str, ...]:
+    return tuple(n for n, dry in TRANSPORTS.items() if dry)
+
+
+def live_transports() -> tuple[str, ...]:
+    """Transports that leave Métis. Empty means the academy's old claim is true."""
+    return tuple(n for n, dry in TRANSPORTS.items() if not dry)
 
 
 def publish(batch: Batch, transport: Transport,

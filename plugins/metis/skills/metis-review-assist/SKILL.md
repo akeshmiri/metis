@@ -1,6 +1,22 @@
 ---
 name: metis-review-assist
 description: Walk a reviewer through the G1 model-approval gate — the outstanding elements, the validation findings and reconciliation gaps that are the evidence for deciding, and the acceptance criteria each rule carries — ending in a recorded decision and a resumed run. Use when a workflow has halted at model-approval, or when a user wants help deciding approve/reject on a model's elements. Not for batch-approving a queue.
+allowed-tools:
+  - list_workflows
+  - run_status
+  - decision_queue
+  - ask
+  - describe_policy
+  - why_read_only
+  - get_model
+  - validate_model
+  - coverage
+  - get_requirement
+  - search_knowledge
+  - trace
+knowledge-from:
+  - policy
+  - workflow.stages
 ---
 
 # Métis review-assist
@@ -18,6 +34,18 @@ This skill helps a person make that decision well. It does not make it for them.
 |---|---|
 | **For** | One model whose run has halted at `model-approval`, where a reviewer wants the evidence assembled and the decision recorded properly |
 | **Not for** | Approving everything to get past the gate. A bulk approve buys `lifecycle_state: Approved` and nothing else — it cannot buy intent (S-19), and pretending otherwise is the failure this gate exists to prevent |
+
+### Finding what is waiting
+
+`decision_queue` answers *what is waiting on me* across every run — the question
+`run_status` cannot, because it needs an id you only have if you started the run.
+Use it to pick up a review nobody remembered, or to see the whole backlog before
+starting one.
+
+**It lists; it decides nothing.** A queue is not a licence to work through it —
+each entry still needs its own evidence assembled and its own decision recorded,
+which is the row above. If reading the queue makes bulk approval tempting, that
+is the temptation this skill exists to refuse.
 
 ## The evidence a reviewer is owed (N-3)
 
@@ -37,6 +65,11 @@ Each stage pauses before the next begins. Read
 `../shared/knowledge/anti-hallucination-protocol.md` once; its four gates apply
 throughout and are not repeated here.
 
+
+The reasoning behind the engine this skill drives is in
+`knowledge/index.md` — generated from the module docstrings that are its
+source of truth, so it cannot drift from the code it explains. Read a
+fragment when you need the why, not before.
 ## The commands this skill actually runs
 
 All real, all in `metis-server`:

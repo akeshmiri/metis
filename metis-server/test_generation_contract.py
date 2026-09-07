@@ -561,11 +561,13 @@ def test_a_consumed_fact_survives_the_file_loader(fact):
     value = {"outcome_status": 201, "inputs": [{"name": "n", "location": "body"}],
              "security": [{"scheme": "bearer"}], "media_types": ["application/json"],
              "data_requirements": ["@Size(max=64)"],
-             # The full record: `GuardCheck` has four fields and the encoder
-             # writes all of them, so a partial fixture fails on the defaults
-             # rather than on a loss.
+             # The full record: the encoder writes every `GuardCheck` field, so
+             # a partial fixture fails on the defaults rather than on a loss.
+             # `id` joined them when `mbt/dimensions.build_chain` turned out to
+             # read it — this fixture failing on the addition is the check
+             # working, not a nuisance.
              "checks": [{"expression": "a", "order": 1,
-                         "dimension_class": "", "anchor": ""}],
+                         "dimension_class": "", "anchor": "", "id": "chk:a"}],
              "trigger": "POST /x", "guard": "g",
              "implementation_status": "implemented"}.get(fact.field, "CARRIED")
     assert _round_trip(fact.element, fact.field, value) == value, (

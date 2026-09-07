@@ -4,7 +4,7 @@
 # downstream consumes the contract, never Joern's raw output -- so an engine
 # upgrade touches this pack and nothing else (spec X-3).
 name: jvm-structural
-version: 0.2.0
+version: 0.3.0
 contract: metis.cpg-extract/1
 
 engine:
@@ -19,9 +19,11 @@ layers: [1, 2, 3]          # structural, endpoints, type registry
 status: working
 verified_against:
   repo: demo_project/records-service
-  java_files: 27
-  result: "12 endpoints, 5 exception mappings, 0 unparsed. 64 methods declared,
-    10 dropped as noise (7 inert accessors, 3 boilerplate), 54 kept."
+  java_files: 28
+  result: "12 endpoints, 5 exception mappings, 0 unparsed. 66 methods declared,
+    10 dropped as noise (7 inert accessors, 3 boilerplate), 56 kept. Every kept
+    method carries `complexity` and `size`; the corpus spans 1..14, with
+    RetentionPolicy.retentionDays at the top and RetentionPolicy.isRetained at 1."
   # Both directions, and both now go through annotation COMPOSITION rather than
   # a literal name match -- see `composedWith` / `verbOf` in query.sc.
   endpoints_cross_checked: "12 — asserted in test_extraction.py against the
@@ -56,6 +58,15 @@ known_limits:
      annotated GlobalExceptionHandler, so nothing is misreported here — but the
      map is not a complete inventory of what maps to what, and must not be read
      as one"
+  - "`complexity` is McCabe's number: control structures plus short-circuiting
+     boolean operators plus one. It counts what the CFG branches on and nothing
+     else — it is not a defect prediction and not a quality score. `risk/product.py`
+     bands it against thresholds a project can change; the pack measures.
+     A method the pack drops as noise carries no figure, so an absent value means
+     `not emitted` and never `simple`"
+  - "`size` is `numberOfLines` as the frontend reports it, which includes blank
+     and comment lines inside the method body. Comparable between methods in one
+     extraction; not comparable to a line count from another tool"
   - "Layers 4-5 (transitions, AC matching) are not in this pack — §13 scope banner"
 
 frameworks:

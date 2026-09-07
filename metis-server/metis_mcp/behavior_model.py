@@ -47,8 +47,8 @@ _THRESHOLD_RE = re.compile(r"^\s*(?P<var>\w+)\s*(?P<op>>=|<=|==|>|<)\s*(?P<num>-
 def _parse_guard(expression: str):
     """Returns (var, op, num) for a simple '<var> <op> <num>' guard, or
     None if the expression doesn't match this shape -- callers must treat
-    None as 'cannot verify', not 'assume safe' (fail-closed, matching this
-    project's classification_gate.py precedent)."""
+    None as 'cannot verify', not 'assume safe' -- M-17 is fail-closed, and a
+    guard this parser cannot read is a third outcome rather than a pass."""
     m = _THRESHOLD_RE.match(expression)
     if not m:
         return None
@@ -63,7 +63,7 @@ def _parse_guard(expression: str):
 # The interval machinery below decides guards of the shape `<var> <op> <number>`.
 # Real recovered guards are mostly not that shape -- `t.isEmpty()` versus
 # `NOT (t.isEmpty())` -- and were therefore reported `unverifiable`: 135 of 223
-# such findings on the the pilot estate estate alone.
+# such findings on the pilot estate alone.
 #
 # Those are decidable, and decidable *without interpretation*: two guards whose
 # conjuncts are identical except that exactly one appears negated in one and
@@ -236,7 +236,9 @@ def guards_conflict(guard_a: str, guard_b: str) -> tuple[bool, str]:
     (the shape this project's own confidence-tiering boundaries use, e.g.
     'confidence >= 0.9'). Guards outside this shape are conservatively
     flagged as unverifiable-but-potentially-ambiguous, never silently
-    assumed safe -- fail-closed, same discipline as classification_gate.py."""
+    assumed safe -- M-17 fail-closed, the discipline `mbt/validation.py` states
+    in full: unverifiable blocks by default and is lifted only by a recorded
+    flag, never by the checker deciding quietly."""
     relation = syntactic_relation(guard_a, guard_b)
     if relation == "exclusive":
         return False, (f"'{guard_a}' and '{guard_b}' are mutually exclusive: an atom "

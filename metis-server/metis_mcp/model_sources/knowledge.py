@@ -57,6 +57,8 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+
+from metis_mcp.identity.keys import claim_id
 from pathlib import Path
 
 import re
@@ -426,28 +428,11 @@ def plan_documentation(knowledge: KnowledgeFile, episode_id: str,
     intent, until a person edits or affirms one.
     """
     from metis_mcp.model_sources.landing import (
-        LandingPlan, PlannedEdge, PlannedNode, ensure_namespaced, transition_label_for,
+        LandingPlan, ensure_namespaced, transition_label_for,
     )
-    from metis_mcp.ontology.validation import validate, validate_relationship
 
     plan = LandingPlan(episode_id=episode_id)
     mapping = criterion_transitions or {}
-
-    def add_node(label: str, props: dict) -> bool:
-        outcome = validate(label, props)
-        if not outcome.valid:
-            plan.errors.extend(outcome.errors)
-            return False
-        plan.nodes.append(PlannedNode(label=label, properties=props))
-        return True
-
-    def add_edge(from_label: str, from_id: str, rel: str,
-                 to_label: str, to_id: str) -> None:
-        outcome = validate_relationship(from_label, rel, to_label)
-        if not outcome.valid:
-            plan.errors.extend(outcome.errors)
-            return
-        plan.edges.append(PlannedEdge(from_label, from_id, rel, to_label, to_id))
 
     requirement = knowledge.requirement
     if requirement is None:
@@ -455,15 +440,33 @@ def plan_documentation(knowledge: KnowledgeFile, episode_id: str,
             "no requirement in the knowledge file — call validate() first")
         return plan
 
+    # **The author's id is the LOGICAL key; the node id carries the text too.**
+    #
+    # `REQ-3` names the same requirement across every revision of its wording,
+    # which is what an edge in an authored file references and what an anchor
+    # keeps pointing at. The node id is `REQ-3@<digest>`, so re-writing the
+    # requirement produces a new node at Quarantine rather than overwriting an
+    # approved one in place (D-8, D-15).
+    #
+    # Minted once, up here, because every edge below must reach the SAME node
+    # the writer created -- an edge built from the bare author id would validate
+    # against the ontology and then match nothing, which is the silent-success
+    # failure this codebase has shipped twice.
+    requirement_node_id = claim_id(requirement.id, requirement.text)
+    criterion_ids = {e.id: claim_id(e.id, e.text) for e in knowledge.entries}
+
     if knowledge.area:
-        add_edge("Requirement", requirement.id, "BELONGS_TO",
+        plan.add_edge("Requirement", requirement_node_id, "BELONGS_TO",
                  "BusinessArea", knowledge.area)
 
     ears = requirement.ears
     recorded = t_recorded or datetime.now(timezone.utc).isoformat(timespec="seconds")
 
-    add_node("Requirement", {
-        "id": requirement.id, "source_episode_id": episode_id,
+    plan.add_node("Requirement", {
+        "id": requirement_node_id, "source_episode_id": episode_id,
+        # `name` stays the author's id: it is display data (D-8), and a reviewer
+        # reading `REQ-3@6baff72b` in a queue learns nothing the id does not
+        # already say twice.
         "name": requirement.id, "text": requirement.text,
         "search_text": search_text_for(requirement.id, requirement.text,
                                        knowledge.statement),
@@ -480,8 +483,9 @@ def plan_documentation(knowledge: KnowledgeFile, episode_id: str,
     })
 
     for entry in knowledge.entries:
-        if not add_node("AcceptanceCriterion", {
-            "id": entry.id, "source_episode_id": episode_id,
+        criterion_id = criterion_ids[entry.id]
+        if not plan.add_node("AcceptanceCriterion", {
+            "id": criterion_id, "source_episode_id": episode_id,
             "name": entry.id, "text": entry.text,
             "search_text": search_text_for(entry.id, entry.text),
             "revision": 1,
@@ -498,16 +502,16 @@ def plan_documentation(knowledge: KnowledgeFile, episode_id: str,
             "valid_from": recorded, "valid_to": "",
         }):
             continue
-        add_edge("Requirement", requirement.id, "HAS_AC",
-                 "AcceptanceCriterion", entry.id)
+        plan.add_edge("Requirement", requirement_node_id, "HAS_AC",
+                 "AcceptanceCriterion", criterion_id)
         # The same criterion, reached from the specified behaviour it formalises.
         # Both edges are real and neither replaces the other: a requirement is
         # what was asked for, a specification is how it behaves, and §7.8's
         # chain runs through the first while the Feature path runs through the
         # second.
         if knowledge.specification_id:
-            add_edge("Specification", knowledge.specification_id, "HAS_AC",
-                     "AcceptanceCriterion", entry.id)
+            plan.add_edge("Specification", knowledge.specification_id, "HAS_AC",
+                     "AcceptanceCriterion", criterion_id)
         # D-13's REFERENCES edge — what makes impact answerable in either
         # direction: which criteria touch this noun, and which nouns does this
         # requirement depend on. A catalogued relationship nothing wrote would be
@@ -515,7 +519,7 @@ def plan_documentation(knowledge: KnowledgeFile, episode_id: str,
         if glossary is not None:
             from metis_mcp.model_sources.glossary import entities_referenced_by
             for entity_id in entities_referenced_by(entry.text, glossary):
-                add_edge("AcceptanceCriterion", entry.id, "REFERENCES",
+                plan.add_edge("AcceptanceCriterion", criterion_id, "REFERENCES",
                          "BusinessEntity", entity_id)
 
         for transition_id in mapping.get(entry.id, ()):
@@ -523,7 +527,7 @@ def plan_documentation(knowledge: KnowledgeFile, episode_id: str,
             # written as `:ApiCall` or `:UiAction` INSTEAD of its parent, and an
             # edge planned against the parent passes the ontology check and then
             # matches no node at all.
-            add_edge("AcceptanceCriterion", entry.id, "VALIDATES",
+            plan.add_edge("AcceptanceCriterion", criterion_id, "VALIDATES",
                      transition_label_for(knowledge.surface),
                      # The id the node is WRITTEN with: landing namespaces every
                      # element by model, so the bare mined id matches nothing.

@@ -39,8 +39,12 @@ then merged nothing, because the node carries `:ApiCall`. `land` reported it as
 `unmatched`; it did not fail. Both stages said "landed", the counts looked
 plausible, and the chain was broken.
 
-The same applies to `Query` (`Postgres`, `Oracle`, `MySql`, `JpaQuery`),
-`DbObject` (`Table`, `View`, `Function`), `Component` and `UiElement`.
+The same applies to every specialisation in the catalogue. Today that is
+`Transition` (`ApiCall`, `UiAction`), `Component` (`RestServer`, `WebServer`)
+and `Class` (`Enum`); the database and UI-widget hierarchies that
+used to be the other examples here — `Query`, `DbObject`, `UiElement` — were
+staged out in the 2026-08-31 re-baseline, so the trap is narrower than it was
+and the rule is unchanged. `ontology.specialisations_of` is the live answer.
 
 ## Ids are namespaced
 
@@ -50,10 +54,17 @@ reports success.
 
 ## The ontology is closed
 
-37 labels, and `metis_mcp/ontology/labels.py` is the single source: `LABELS`,
+44 labels, and `metis_mcp/ontology/labels.py` is the single source: `LABELS`,
 `ALLOWED_RELATIONSHIPS`, and `STAGED_OUT` — the deliberately-excluded labels,
 each recorded with the trigger that would bring it back. An absence with a
 reason is a decision; an absence without one is an oversight.
+
+**Six of them record what a running system did** — `TestExecution`, `TestCycle`,
+`Defect`, `Metrics`, `Logs`, `Alert`. Each was staged out *with the condition
+that would bring it back*, and those conditions were met. Everything in that
+layer carries `provenance: observed_from_running_system` and none of it reaches
+the coverage ledger: "is this tested?" and "did it pass?" are different
+questions, and one figure answering both would answer neither.
 
 The Cypher schema is **generated** from `labels.py`, so those two cannot drift.
 Adding a label or a relationship is a reviewed change under **D-2**, and **D-1**

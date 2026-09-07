@@ -124,6 +124,90 @@ def _approved(context) -> CheckResult:
     return OK
 
 
+@check("risk_is_accepted")
+def _risk_accepted(context) -> CheckResult:
+    """A risk acceptance names a person, and that is verified outside the handler.
+
+    G1 declares `model_is_approved` and G2 has its own literal; this gate
+    declared **no checks at all**, so the only thing standing between an
+    unaccepted assessment and a passed stage was the handler's own `if`. Every
+    other gate in this engine is guarded twice on purpose -- a handler decides
+    what to report, a check decides whether the stage may pass -- and a gate with
+    one of those is a gate whose guarantee rests on nobody editing the handler.
+
+    Checks the identity rather than the literal. The literal is what the person
+    typed this run and the handler has already compared it; the *name* is what
+    the audit record keeps, and an acceptance with no name is the one thing
+    `references/risk-governance.md` says the trail cannot be missing: "who / when
+    / what / why -- without the last one the trail is useless", and without the
+    first there is no trail at all.
+    """
+    answers = getattr(context, "risk_answers", None) or {}
+    who = str(answers.get("accepted_by") or "").strip()
+    if not who:
+        return failed(
+            "the assessment has not been accepted by a named person. Accepting "
+            "takes ownership of every probability in it — Métis set none, and an "
+            "acceptance nobody signed is not one")
+    return OK
+
+
+@check("design_is_accepted")
+def _design_accepted(context) -> CheckResult:
+    """A design acceptance names a person, verified outside the handler.
+
+    The same double guard every gate in this engine has, and for the reason
+    `risk_is_accepted` gives: a handler decides what to report, a check decides
+    whether the stage may pass, and a gate with only the first rests its
+    guarantee on nobody editing the handler.
+
+    Checks the identity rather than the literal. The literal is what somebody
+    typed this run and the handler has already compared it; the NAME is what
+    survives into the document, and a design nobody signed is a set of proposals
+    -- which is what Métis produced and is exactly what accepting is meant to
+    change.
+    """
+    answers = getattr(context, "design_answers", None) or {}
+    who = str(answers.get("accepted_by") or "").strip()
+    if not who:
+        return failed(
+            "the design has not been accepted by a named person. Accepting it "
+            "takes ownership of every decision in it — Métis proposed the rows "
+            "and decided none of them")
+    return OK
+
+
+@check("intent_is_reviewed")
+def _intent_reviewed(context) -> CheckResult:
+    """Nothing is imported until the four readers have looked at it.
+
+    **This is what makes intent a pre-processor rather than a post-mortem.**
+    `intake` used to fetch, validate, land and only then assess risk, so the
+    first moment anybody saw what was wrong with a claim was after it was a node
+    in the graph. This check sits before `land`.
+
+    It refuses on `not-ready` only, which is narrow on purpose. `not-ready`
+    means the claim cannot be *represented* honestly -- a need with no
+    specification would become a node nothing can ever be checked against (D-1).
+    A claim nobody has costed, or whose environments are unlisted, is `ready`
+    and lands with every one of those gaps recorded beside it: refusing those
+    would mean Métis only ever accepted claims that were already finished, which
+    is not what intake is for.
+    """
+    analysis = getattr(context, "analysis", None)
+    if analysis is None:
+        return failed(
+            "no intent review ran, so nothing has looked at this claim. "
+            "`analysis` is set by the `analysis` stage — a run that reached "
+            "here without it has skipped the reading, not passed it")
+    if analysis.get("status") == "not-ready":
+        blocking = analysis.get("blocking") or []
+        return failed(
+            f"{len(blocking)} gap(s) mean this cannot be represented in the "
+            f"graph as it stands: " + "; ".join(blocking[:3]))
+    return OK
+
+
 @check("landed_at_quarantine")
 def _quarantine(context) -> CheckResult:
     """S-4: a source produces candidates, never approved facts."""

@@ -157,29 +157,12 @@ def plan_features(result: DerivationResult, episode_id: str):
     planned per specification, so a feature that groups three specifications
     carries the criteria of all three.
     """
-    from metis_mcp.model_sources.landing import LandingPlan, PlannedEdge, PlannedNode
-    from metis_mcp.ontology.validation import validate as validate_node
-    from metis_mcp.ontology.validation import validate_relationship
+    from metis_mcp.model_sources.landing import LandingPlan, PlannedEdge
 
     plan = LandingPlan(episode_id=episode_id)
 
-    def add_node(label: str, props: dict) -> bool:
-        outcome = validate_node(label, props)
-        if not outcome.valid:
-            plan.errors.extend(outcome.errors)
-            return False
-        plan.nodes.append(PlannedNode(label=label, properties=props))
-        return True
-
-    def add_edge(from_label: str, from_id: str, rel: str, to_label: str, to_id: str) -> None:
-        outcome = validate_relationship(from_label, rel, to_label)
-        if not outcome.valid:
-            plan.errors.extend(outcome.errors)
-            return
-        plan.edges.append(PlannedEdge(from_label, from_id, rel, to_label, to_id))
-
     for feature in result.features:
-        if not add_node("Feature", {
+        if not plan.add_node("Feature", {
             "id": feature.id, "source_episode_id": episode_id,
             "name": feature.name,
             "basis": feature.basis,
@@ -194,7 +177,7 @@ def plan_features(result: DerivationResult, episode_id: str):
         # never overlap. `land`'s unmatched reporting is the only reason that
         # was visible rather than a feature silently connected to nothing.
         for spec_id in feature.specification_ids:
-            add_edge("Specification", spec_id, "REALISED_BY", "Feature", feature.id)
+            plan.add_edge("Specification", spec_id, "REALISED_BY", "Feature", feature.id)
 
     return plan
 

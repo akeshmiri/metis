@@ -126,6 +126,10 @@ class TestCase:
     target_key: str
     precondition_steps: tuple[Step, ...]
     act_step: Step
+    # The state the act runs from, in the state's own words where it has them.
+    # `precondition_of` produced this all along and only the objective sentence
+    # ever saw it, so the rendered case could not name its own Given.
+    given: str = ""
     labels: tuple[str, ...] = ()
     data_requirements: tuple[DataRequirement, ...] = ()
     precondition_group: tuple[str, ...] = ()
@@ -306,6 +310,7 @@ def render_path(model: Model, path: Path,
         target_key=path.target_key,
         precondition_steps=tuple(precondition_steps),
         act_step=act_step,
+        given=given,
         labels=(model.id, path.criterion),
         data_requirements=data_requirements,
         data_note=path.data_note or "",
@@ -327,31 +332,49 @@ def render(model: Model, paths: list[Path],
 
 
 def format_case(case: TestCase) -> str:
-    """Human-readable form. The machine-readable companion is payload.py (T-9a)."""
+    """Human-readable form, as Given / When / Then (spec SP-3).
+
+    **The model has been Given/When/Then all along and the artefact was not.**
+    `State -[:WHEN]-> Transition -[:THEN]-> State` is the shape SP-3 names, the
+    §18 specification renders it that way, acceptance criteria are drafted that
+    way, and review evidence is phrased that way — but the case a QA engineer
+    executes said Precondition / Step / Expected result, so the vocabulary
+    changed at the last step of the chain.
+
+    **Setup steps come before the state they establish.** The `When` acts from
+    `case.given`, and the setup steps are what leave the system there; naming
+    the state first and then the steps that produce it reads backwards.
+
+    The machine-readable companion is payload.py (T-9a).
+    """
+    def clause(keyword: str, text: str) -> str:
+        # Gherkin's own alignment: keywords right-aligned so the clause text
+        # starts in one column and the case reads as a column of statements.
+        return f"  {keyword:>5} {text}"
+
     lines = [
         f"{case.id}  {case.name}",
         f"  Objective: {case.objective}",
         "",
-        "  Precondition:",
     ]
-    if case.precondition_steps:
-        for n, step in enumerate(case.precondition_steps, 1):
-            lines.append(f"    {n}. {step.description}")
-            if step.guard_verbatim:
-                lines.append(f"       requires: {step.guard_verbatim}")
-    else:
-        lines.append("    (none — starts from the initial state)")
-    lines += [
-        "",
-        "  Step:",
-        f"    {case.act_step.description}",
-    ]
+
+    steps = list(case.precondition_steps)
+    given_clauses: list[tuple[str, str]] = [(s.description, s.guard_verbatim)
+                                            for s in steps]
+    # The state is the last Given when steps established it, and the only one
+    # when the case starts where it acts.
+    given_clauses.append((case.given or "the system is in the initial state", ""))
+
+    for n, (text, guard) in enumerate(given_clauses):
+        lines.append(clause("Given" if n == 0 else "And", text))
+        if guard:
+            lines.append(f"          (requires {guard})")
+
+    lines.append(clause("When", case.act_step.description))
     if case.act_step.guard_verbatim:
-        lines.append(f"      requires: {case.act_step.guard_verbatim}")
-    lines += [
-        "",
-        f"  Expected result: {case.act_step.expected_result}",
-    ]
+        lines.append(f"          (requires {case.act_step.guard_verbatim})")
+    lines.append(clause("Then", case.act_step.expected_result))
+
     # Split by kind (T-9): "what you must send" and "what must already be true"
     # are prepared differently, and one undifferentiated list hides that.
     inputs = [r for r in case.data_requirements if r.kind == INPUT]

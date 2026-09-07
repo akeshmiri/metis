@@ -88,6 +88,13 @@ spec:
         - name: {{ .name | lower }}
           secret:
             secretName: {{ printf "%s-%s" $.Release.Name .name | trunc 63 | trimSuffix "-" }}
+            # Kubernetes mounts a secret 0644 unless told otherwise, and Métis
+            # refuses a config file holding a literal secret that is readable
+            # beyond its owner. The config no longer holds one -- it names a
+            # variable (PLT-005) -- so this is defence in depth rather than the
+            # fix. It costs nothing and it is what the file's own permissions
+            # should have said all along.
+            defaultMode: 0400
       {{- end }}
       {{- end }}
 {{- end }}

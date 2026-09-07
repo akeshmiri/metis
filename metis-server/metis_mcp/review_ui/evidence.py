@@ -83,6 +83,30 @@ class Screen:
         if not self.can_decide:
             raise EvidenceMissing(self.blocked_reason)
 
+    def fingerprint(self) -> str:
+        """A digest of the evidence actually shown (N-13, N-14).
+
+        The approval path binds a decision to `model_fingerprint`, which is the
+        right anchor there because the model IS the evidence. The other three
+        decisions are not about the model: a divergence resolution is about two
+        anchored sides, a match about one criterion and one transition, a drift
+        item about a three-way comparison. Hashing what the screen assembled is
+        what makes those auditable against what the reviewer saw, rather than
+        against something that merely existed at the time.
+
+        Sorted and JSON-encoded so the same evidence hashes the same way
+        whatever order a caller built it in -- an unstable fingerprint records
+        nothing, and does it convincingly.
+        """
+        import hashlib
+        import json
+
+        payload = json.dumps({"decision": self.decision,
+                              "element_id": self.element_id,
+                              "evidence": self.evidence},
+                             sort_keys=True, default=str)
+        return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
 
 def _screen(decision: str, element_id: str, provided: dict,
             notes: list[str] | None = None) -> Screen:
@@ -214,7 +238,8 @@ def resolve_divergence_screen(element_id: str, code_side: dict | None,
 # --------------------------------------------------------------------------
 
 def confirm_match_screen(model: Model, ac_id: str, ac_text: str, transition_id: str,
-                         proposal=None, code_anchor: str = "") -> Screen:
+                         proposal=None, code_anchor: str = "",
+                         why_proposed: dict | None = None) -> Screen:
     """N-3: the AC text, the transition's full tuple, the code anchor, and **why
     it was proposed** — which pre-filter evidence matched.
 
@@ -239,6 +264,18 @@ def confirm_match_screen(model: Model, ac_id: str, ac_text: str, transition_id: 
             "ambiguous": proposal.is_ambiguous,
             "note": proposal.note or "",
         }
+    elif why_proposed is not None:
+        # **The same evidence, from a caller that has it as data.** A `Proposal`
+        # lives inside a reconciliation run; an HTTP client holds what that run
+        # reported and no object. Without this the web route could never satisfy
+        # X-17 -- it would build a screen missing `why_proposed`, N-4 would
+        # block it, and the decision would be unreachable over that surface for
+        # a reason that looks like a bug rather than a rule.
+        #
+        # It is a fallback, not an override: a real `Proposal` wins, so a caller
+        # cannot pass prettier evidence than the one the matcher actually
+        # produced.
+        provided["why_proposed"] = dict(why_proposed)
     notes = []
     if proposal is not None and proposal.is_ambiguous:
         notes.append("candidates tie on evidence — a human decides (X-17)")

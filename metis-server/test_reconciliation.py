@@ -290,7 +290,7 @@ def test_s19_the_report_separates_intent_from_documentation():
 
 
 def test_s19_an_all_documentation_run_supports_no_correctness_claim():
-    """The the pilot estate case: specs marked IMPLEMENTED, documenting what was built."""
+    """The pilot estate case: specs marked IMPLEMENTED, documenting what was built."""
     ac = _ac("ac1", "GET /commit returns 204 when empty")
     proposal = prefilter(ac, MODEL, ROUTES)
     doc = confirm(proposal, "get-commit-empty", "bob", provenance=CODE_DERIVED)

@@ -106,6 +106,25 @@ class PublicationLedger:
     model_id: str = ""
     last_generated: dict[str, str] = field(default_factory=dict)
     published: dict[str, PublishedCase] = field(default_factory=dict)
+    # How many operations this ledger has recorded as actually sent.
+    #
+    # **Zero and "nothing is published" are not the same fact**, and without this
+    # they were indistinguishable. `DryRunTransport` sends nothing and therefore
+    # learns no published id, so `published` stays empty however many times a run
+    # completes -- and `compare` read that empty map as "no published case for
+    # this path", which is a confident claim of absence built on no information.
+    # Optional in `from_json`, so ledgers written before this field load fine and
+    # honestly report zero.
+    live_publications: int = 0
+
+    @property
+    def can_see_published_content(self) -> bool:
+        """Whether an empty `published` entry means anything.
+
+        False when nothing has ever been recorded as sent: the ledger is blind,
+        not empty, and every absence it reports is `unknown` rather than `no`.
+        """
+        return self.live_publications > 0
 
     def to_json(self) -> str:
         return json.dumps({
@@ -116,6 +135,7 @@ class PublicationLedger:
                       "model change and a manual edit are indistinguishable (D-9)."),
             "last_generated": self.last_generated,
             "published": {k: asdict(v) for k, v in self.published.items()},
+            "live_publications": self.live_publications,
         }, indent=2)
 
     @staticmethod
@@ -126,6 +146,7 @@ class PublicationLedger:
             model_id=data.get("model_id", ""),
             last_generated=dict(data.get("last_generated", {})),
             published={k: PublishedCase(**v) for k, v in data.get("published", {}).items()},
+            live_publications=int(data.get("live_publications", 0)),
         )
 
     @staticmethod
@@ -197,6 +218,39 @@ def _diff_lines(a: TestCase | None, b: TestCase) -> tuple[str, ...]:
     return tuple(out)
 
 
+def classify(last: str | None, published_hash: str | None, new_hash: str,
+             *, can_see_published: bool = True) -> tuple[str, str]:
+    """The three-way decision, with the SHAPE of the artefact factored out.
+
+    **Extracted so a second artefact does not get a second drift model.** T-13's
+    reasoning — that a two-way diff conflates a model change with a human edit,
+    and that the edit must decide because overwriting it is the irreversible
+    outcome — is about hashes, not about test cases. A requirement written back
+    to a tracker needs exactly the same decision over exactly the same three
+    inputs, and reimplementing it beside this one is how the two would come to
+    disagree about what a manual edit is.
+
+    `can_see_published` is the ledger's own honesty flag: with no recorded
+    publication, "no published artefact exists" is not something it knows, and a
+    caller must be able to tell that from a real absence.
+
+    Returns `(drift_class, action)`. Callers build their own detail text, because
+    a useful sentence names the artefact and that is theirs to name.
+    """
+    if last is None and published_hash is None:
+        return NEW, PROPOSE_CREATE
+
+    # The order matters: a manual edit is checked FIRST. An artefact that was
+    # both hand-edited and model-changed must never be proposed for update.
+    if published_hash is not None and last is not None and published_hash != last:
+        return MANUALLY_EDITED, PROPOSE_NOTHING
+
+    if last != new_hash:
+        return CHANGED, PROPOSE_UPDATE
+
+    return UNCHANGED, NO_ACTION
+
+
 def compare(new_cases: list[TestCase], ledger: PublicationLedger,
             previous_cases: dict[str, TestCase] | None = None) -> DriftReport:
     """The three-way comparison (spec T-12, T-14).
@@ -215,19 +269,31 @@ def compare(new_cases: list[TestCase], ledger: PublicationLedger,
         last = ledger.last_generated.get(case.id)
         published = ledger.published.get(case.id)
 
-        if last is None and published is None:
+        # **Routed through `classify`, not decided again here.** Two copies of
+        # the same three-way rule agreeing today is not the same as one rule.
+        drift_class, action = classify(
+            last, published.content_hash if published else None, new_hash,
+            can_see_published=ledger.can_see_published_content)
+
+        if drift_class == NEW:
+            # **The detail says which of two facts this is.** With a ledger that
+            # has never recorded a send, "no published case for this path" is not
+            # something it can know -- and reporting it as knowledge is how a
+            # second copy of every case gets created the first time a live
+            # transport runs against a dry-run ledger.
+            seen_before = (f"{case.name}: no published case for this path"
+                           if ledger.can_see_published_content else
+                           f"{case.name}: this ledger has never recorded a "
+                           f"publication, so whether a published case exists is "
+                           f"UNKNOWN, not no. Verify before creating")
             report.items.append(DriftItem(
-                case_id=case.id, drift_class=NEW, action=PROPOSE_CREATE,
-                detail=f"{case.name}: no published case for this path"))
+                case_id=case.id, drift_class=drift_class, action=action,
+                detail=seen_before))
             continue
 
-        # T-13, and the order matters: a manual edit is checked FIRST. A case
-        # that was both hand-edited and model-changed must never be proposed for
-        # update -- the edit is the fact that decides, because overwriting it is
-        # the irreversible outcome.
-        if published is not None and last is not None and published.content_hash != last:
+        if drift_class == MANUALLY_EDITED:
             report.items.append(DriftItem(
-                case_id=case.id, drift_class=MANUALLY_EDITED, action=PROPOSE_NOTHING,
+                case_id=case.id, drift_class=drift_class, action=action,
                 published_id=published.published_id,
                 detail=(f"{case.name}: published content differs from what Métis last "
                         f"generated — someone edited it by hand. Proposing nothing; "
@@ -235,16 +301,16 @@ def compare(new_cases: list[TestCase], ledger: PublicationLedger,
                 diff=_diff_lines(previous.get(case.id), case)))
             continue
 
-        if last != new_hash:
+        if drift_class == CHANGED:
             report.items.append(DriftItem(
-                case_id=case.id, drift_class=CHANGED, action=PROPOSE_UPDATE,
+                case_id=case.id, drift_class=drift_class, action=action,
                 published_id=published.published_id if published else "",
                 detail=f"{case.name}: the model moved",
                 diff=_diff_lines(previous.get(case.id), case)))
             continue
 
         report.items.append(DriftItem(
-            case_id=case.id, drift_class=UNCHANGED, action=NO_ACTION,
+            case_id=case.id, drift_class=drift_class, action=action,
             published_id=published.published_id if published else "",
             detail=f"{case.name}: unchanged"))
 
@@ -259,6 +325,45 @@ def compare(new_cases: list[TestCase], ledger: PublicationLedger,
                     "It is never deleted: its execution history is evidence (T-16)")))
 
     return report
+
+
+def record_publication(ledger: PublicationLedger, operations, sent: list[str],
+                       cases: list[TestCase], *, dry_run: bool) -> int:
+    """Record what actually left Métis, so the next comparison can see it.
+
+    **Nothing called this, and that made two things untrue at once.** No code
+    path ever wrote `ledger.published` -- only deserialisation and the tests did
+    -- so `MANUALLY_EDITED` and `OBSOLETE` could never fire, and the returned
+    published id from a real transport went nowhere. The dry-run docstring
+    explained the first as a property of C3, which was true and hid the second.
+
+    A dry run records nothing, deliberately: it learns no published id, and
+    writing a fabricated one would put a fiction where the drift comparison
+    reads its evidence.
+
+    Returns the number of operations recorded.
+    """
+    if dry_run:
+        return 0
+
+    by_id = {case.id: case for case in cases}
+    recorded = 0
+    for operation, published_id in zip(operations, sent):
+        if not published_id:
+            continue
+        case = by_id.get(operation.case_id)
+        ledger.published[operation.case_id] = PublishedCase(
+            case_id=operation.case_id,
+            published_id=published_id,
+            # The hash of what was SENT. A later hand edit moves the published
+            # content away from this, which is the whole detection mechanism.
+            content_hash=content_hash(case) if case else "",
+            published_status=("deprecated" if operation.action == "deprecate"
+                              else "active"),
+        )
+        recorded += 1
+    ledger.live_publications += recorded
+    return recorded
 
 
 def record_generation(ledger: PublicationLedger, model_id: str,

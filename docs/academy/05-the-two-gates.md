@@ -53,8 +53,61 @@ proxy can retry and a client can resend. So a confirmation over the API is a
 single-use ticket bound to the batch shown and the identity shown it, consumed on
 first use (**N-19**).
 
-Today publication is dry-run only. The gate is real; the transport behind it
-sends nothing.
+The default transport is the dry run: the gate is real and the transport behind
+it sends nothing. **A live one exists** — `metis publish --transport zephyr-scale`
+writes into a real Zephyr Scale project — and reaching it takes a second key the
+G2 confirmation cannot supply: `METIS_ALLOW_EXTERNAL_WRITES=yes`, set on the
+installation by a person. Lesson 01 has the full argument for why that second key
+is the one that matters.
+
+## Four things stop a run, and only two of them are gates
+
+The title still holds — there are two **lettered** gates and there will not be a
+third. But a run can stop in four ways now, and telling them apart is the useful
+skill.
+
+```mermaid
+flowchart TB
+  subgraph L["Lettered gates - a person decides"]
+    direction LR
+    G1(["G1 - model approval<br/>anything is generated"])
+    G2(["G2 - publication<br/>any external write"])
+  end
+  subgraph W["Workflow-owned halts - a person accepts, and owns it"]
+    direction LR
+    RA(["risk-acceptance<br/>the ratings become yours"])
+    DA(["design-acceptance<br/>the decisions become yours"])
+  end
+  subgraph B["A blocking stage - nobody can decide it"]
+    direction LR
+    RD(["readiness<br/>the claim itself must change"])
+  end
+  L --- W --- B
+```
+
+**A gate waits for a decision.** G1 and G2 are the two moments where the system
+would otherwise act on its own judgement: generating from behaviour nobody
+approved, and writing to somebody else's tracker.
+
+**A workflow-owned halt waits for ownership.** `risk-acceptance` and
+`design-acceptance` are not asking whether to proceed — they are asking somebody
+to put their name to ratings and decisions Métis proposed and did not make. Each
+costs its own literal, and the literal that passes one passes nothing else.
+That is deliberate: a single word that opened two different doors would stop
+meaning either.
+
+**A blocking stage waits for nothing.** `readiness` refuses a claim that cannot
+be represented — a need nobody has specified would become a node nothing can
+ever be checked against. There is no literal, no override, no "import it
+anyway", because there is nothing to decide: the claim itself has to change.
+That makes it a *failed* stage rather than a blocked one, and it says what
+failed and what to do about it.
+
+**Why this is not a third gate.** A gate's whole value is that it is rare and it
+means one thing. Four lettered gates would mean four kinds of "somebody
+approved", and the first time two of them got confused the guarantee would be
+gone. So the count stays at two, and everything else is named for what it
+actually is.
 
 ## What this costs, honestly
 

@@ -362,3 +362,59 @@ if __name__ == "__main__":
             print(f"ERROR {t.__name__}: {type(e).__name__}: {e}")
     print(f"\n{len(tests) - failures}/{len(tests)} passed")
     sys.exit(1 if failures else 0)
+
+
+# --------------------------------------------------------------------------
+# The join to the loader.
+#
+# **These two halves never met.** `build_chain` reads `check.id`; the loader
+# builds `GuardCheck`, which had no such field. Nothing caught it because
+# `Transition.checks` came back empty on every real graph (the evidence edges
+# were landed before their target nodes existed), so the one consumer of the one
+# producer was never called with a populated list.
+# --------------------------------------------------------------------------
+
+def test_a_guard_check_carries_everything_build_chain_reads():
+    """The shape contract, asserted rather than assumed.
+
+    `build_chain` documents its input as "`CheckFact`-shaped: `id`,
+    `expression`, `order`, optionally `dimension_class` and `anchor`" — and the
+    loader's `GuardCheck` is the type that actually arrives.
+    """
+    from metis_mcp.mbt.model import GuardCheck
+
+    check = GuardCheck(id="chk:1", expression="t.isEmpty()", order=1)
+    for field in ("id", "expression", "order", "dimension_class", "anchor"):
+        assert hasattr(check, field), f"GuardCheck has no {field}"
+
+
+def test_a_chain_builds_from_loader_shaped_checks():
+    """The call that raised `AttributeError` the first time it was made against
+    a real model. It is the whole reason `mbt/dimensions.py` had no caller."""
+    from metis_mcp.mbt.dimensions import build_chain
+    from metis_mcp.mbt.model import GuardCheck
+
+    chain = build_chain("records-api::t1", [
+        GuardCheck(id="chk:a", expression="request is authenticated", order=1),
+        GuardCheck(id="chk:b", expression="payload_valid", order=2),
+    ])
+    assert chain.is_resolved, chain.unresolved_reason
+    assert [d.id for d in chain.ordered()] == ["chk:a", "chk:b"]
+    assert chain.index_of("chk:b") == 1
+    # Classification still comes from the expression where the graph carried no
+    # `dimension_class` — X-10c: an unclassified check keeps its position.
+    assert [d.dimension_class for d in chain.ordered()] == ["authentication", "validation"]
+
+
+def test_two_loader_checks_sharing_an_order_are_reported_not_tie_broken():
+    """GD-9 through the real type: a tie-break on id would be the guess the rule
+    forbids, wearing determinism's clothes."""
+    from metis_mcp.mbt.dimensions import PRECEDENCE_UNRESOLVED, build_chain
+    from metis_mcp.mbt.model import GuardCheck
+
+    chain = build_chain("records-api::t1", [
+        GuardCheck(id="chk:a", expression="payload_valid", order=1),
+        GuardCheck(id="chk:b", expression="t.isEmpty()", order=1),
+    ])
+    assert not chain.is_resolved
+    assert PRECEDENCE_UNRESOLVED in chain.unresolved_reason

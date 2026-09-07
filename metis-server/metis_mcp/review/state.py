@@ -30,7 +30,12 @@ from pathlib import Path
 
 from metis_mcp.mbt.model import APPROVED, Model, State, Transition
 
-STATE_VERSION = "metis.review-state/1"
+# Bumped from /1 when the three remaining human decisions gained a durable
+# record. `from_json` reads a /1 file unchanged -- the new collections default to
+# empty -- because a version bump that orphans every existing review file is a
+# migration nobody asked for.
+STATE_VERSION = "metis.review-state/2"
+LEGACY_STATE_VERSIONS = ("metis.review-state/1",)
 
 
 def _bare(element_id: str, model_id: str) -> str:
@@ -101,6 +106,75 @@ class ElementState:
     rationale: str = ""
 
 
+# ---------------------------------------------------------------------------
+# The three decisions that had a screen and no record
+# ---------------------------------------------------------------------------
+#
+# §9.1 names six human decision points and `review_ui/evidence.py` builds a
+# screen for all six, each refusing to render without its evidence (N-4). Three
+# of them could not be *recorded* anywhere: `metis divergence` reported and
+# nothing accepted a resolution, `reconciliation.matching` proposed and nothing
+# accepted a confirmation, `drift.compare` classified and nothing accepted a
+# decision. So the evidence layer was complete and the apply layer did not exist,
+# and the spec's claim that the review UI is "Primary. All six decisions" was
+# two-thirds aspiration.
+#
+# They live beside `states` and `transitions` for the reason those do: this file
+# is the durable human-fact store, re-extraction must not touch it (I-14), and a
+# second store would be a second thing that can disagree about what was decided.
+
+
+@dataclass
+class DivergenceResolution:
+    """S-11: which side was accepted, by whom, and why.
+
+    A rationale is REQUIRED. S-10 says neither side wins automatically -- one of
+    a defect and a stale requirement is right and no rule can say which -- so a
+    resolution with no reason recorded is the precedence rule S-10 forbids,
+    written down after the fact.
+    """
+
+    choice: str                     # accept_code | accept_ac
+    rationale: str
+    decided_by: str = ""
+    decided_at: str = ""
+    evidence_fingerprint: str = ""
+
+
+@dataclass
+class MatchConfirmation:
+    """X-18: a proposed AC-to-transition match, confirmed or rejected by a human.
+
+    `confirmed` is a tri-state in effect: absent means nobody has looked, which
+    is why a rejection is stored rather than deleted. A proposal that was
+    considered and refused must not come back looking new on the next run.
+    """
+
+    ac_id: str
+    transition_id: str
+    confirmed: bool
+    rationale: str = ""
+    decided_by: str = ""
+    decided_at: str = ""
+    evidence_fingerprint: str = ""
+
+
+@dataclass
+class DriftDecision:
+    """T-14: what to do about one published case that no longer matches.
+
+    `resolution` is one of drift's own actions, so this cannot invent a verb the
+    publisher does not implement.
+    """
+
+    case_id: str
+    resolution: str
+    rationale: str = ""
+    decided_by: str = ""
+    decided_at: str = ""
+    evidence_fingerprint: str = ""
+
+
 @dataclass
 class ReviewState:
     """Human facts for one model. The audit list is append-only (spec N-15)."""
@@ -110,6 +184,10 @@ class ReviewState:
     source_fingerprint: str = ""
     states: dict[str, ElementState] = field(default_factory=dict)
     transitions: dict[str, ElementState] = field(default_factory=dict)
+    # Keyed by element id, by `<ac>-><transition>`, and by case id respectively.
+    divergences: dict[str, DivergenceResolution] = field(default_factory=dict)
+    matches: dict[str, MatchConfirmation] = field(default_factory=dict)
+    drift: dict[str, DriftDecision] = field(default_factory=dict)
     audit: list[dict] = field(default_factory=list)
 
     def to_json(self) -> str:
@@ -123,6 +201,9 @@ class ReviewState:
             ),
             "states": {k: asdict(v) for k, v in self.states.items()},
             "transitions": {k: asdict(v) for k, v in self.transitions.items()},
+            "divergences": {k: asdict(v) for k, v in self.divergences.items()},
+            "matches": {k: asdict(v) for k, v in self.matches.items()},
+            "drift": {k: asdict(v) for k, v in self.drift.items()},
             "audit": self.audit,
         }, indent=2)
 
@@ -135,6 +216,14 @@ class ReviewState:
             source_fingerprint=data.get("source_fingerprint", ""),
             states={k: ElementState(**v) for k, v in data.get("states", {}).items()},
             transitions={k: ElementState(**v) for k, v in data.get("transitions", {}).items()},
+            # `.get(..., {})` is what makes a /1 file readable: the collections
+            # simply come back empty, which is the truth about a file written
+            # before these decisions could be recorded.
+            divergences={k: DivergenceResolution(**v)
+                         for k, v in data.get("divergences", {}).items()},
+            matches={k: MatchConfirmation(**v)
+                     for k, v in data.get("matches", {}).items()},
+            drift={k: DriftDecision(**v) for k, v in data.get("drift", {}).items()},
             audit=list(data.get("audit", [])),
         )
 

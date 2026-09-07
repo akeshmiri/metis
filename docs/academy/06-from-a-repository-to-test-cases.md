@@ -19,6 +19,36 @@ be extracted, with a deviating OpenAPI document beside it.
 | **G1** | a human approves | — |
 | `test-generate` | paths, rendering, coverage ledger | nothing, if nothing is `Approved` |
 
+## Where the other paths join it
+
+This is the code path. Two others reach the same model, and one thing runs
+deliberately *before* the gate rather than after it.
+
+```mermaid
+flowchart LR
+  subgraph IN["what somebody said"]
+    T["tracker or wiki"] --> AN["analysis + readiness<br/>lesson 19"] --> LQ["land at Quarantine"]
+  end
+  subgraph CO["what the code does"]
+    R["repository"] --> EX["analyse"] --> LQ
+  end
+  LQ --> V["validate / reconcile"] --> G1(["G1 - a human approves"])
+  V -.-> TD["test-design<br/>lesson 18"]
+  G1 --> TG["test-generate"] --> G2(["G2 - publication"])
+  TD -.->|informs, never feeds| TG
+```
+
+**The dotted lines are the two that surprise people.**
+
+`test-design` runs against an **unapproved** model on purpose. That is when it is
+most useful: a design that says *nothing here can be asserted* is worth having
+while somebody can still change the code. It reads the model, and it carries the
+approval state in its own basis section rather than refusing to run.
+
+And it **never feeds generation**. Generation reads an approved model, not a
+design — a document a person edited becoming the source of what gets tested is
+the circularity this whole system is built to avoid.
+
 ## What extraction actually recovers
 
 From the demo service, measured rather than claimed:

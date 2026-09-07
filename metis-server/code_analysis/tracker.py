@@ -39,7 +39,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 TRACKER_VERSION = "metis.tracker-item/1"
-UIF_VERSION = "1.0"
+# The schema pins this as a `const`, and the emitted "1.0" failed it while
+# `intake_landing` accepted any `1.x` — so every document `metis intake fetch`
+# wrote was invalid against the contract the intake skill points producers at,
+# and nothing noticed because nothing validated.
+UIF_VERSION = "1.0.0"
 
 # `source_system` values, keyed as `intake_landing.ANCHORS` already keys them:
 # Zephyr Scale's extractor writes "scale", not "zephyr", and renaming it here
@@ -84,17 +88,47 @@ MARKUP: frozenset = frozenset({CONFLUENCE})
 # be diagnosed by reading one dict.
 FIELDS: dict[str, dict[str, str]] = {
     JIRA: {"title": "summary", "description": "description",
-           "item_type": "issuetype", "status": "status", "labels": "labels"},
+           "item_type": "issuetype", "status": "status", "labels": "labels",
+           # `scope.created_at` and `scope.last_updated_at` are REQUIRED by the
+           # UIF schema and were produced by nothing, so every document Métis
+           # wrote was invalid on two counts before it was read. The trackers
+           # return them; the reader simply did not ask.
+           "created_at": "created", "updated_at": "updated",
+           # `metadata.priority` is in the schema and is one of the requirement
+           # attributes the graph had no way to carry.
+           "priority": "priority"},
     ZEPHYR: {"title": "name", "description": "objective",
              "item_type": "$static:TestCase", "status": "status",
-             "labels": "labels"},
+             "labels": "labels",
+             "created_at": "createdOn", "updated_at": "updatedOn",
+             "priority": "priority"},
     # Dotted paths, because Confluence nests the body three deep. `status` is
     # the real `current`/`draft` the API returns rather than a static -- a page
     # still in draft is exactly the thing a reviewer needs to see flagged.
     CONFLUENCE: {"title": "title", "description": "body.storage.value",
                  "item_type": "$static:Page", "status": "status",
-                 "labels": "metadata.labels.results"},
+                 "labels": "metadata.labels.results",
+                 "created_at": "history.createdDate",
+                 "updated_at": "version.when",
+                 "priority": "$static:"},
 }
+
+
+@dataclass(frozen=True)
+class ItemLink:
+    """One link a tracker item declares to another.
+
+    **Provenance, not traceability.** The tracker asserts the relationship and
+    Métis records that assertion; it is never inferred from wording, and
+    `parent` is the only relation anything reads. The rest are carried so
+    nothing is silently dropped and interpreted by nobody -- a `relates to` in
+    Jira means whatever the team that clicked it meant.
+    """
+
+    relation: str
+    target_id: str
+    target_system: str = ""
+    target_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -115,6 +149,19 @@ class TrackerItem:
     status: str = ""
     labels: tuple[str, ...] = ()
     source_url: str = ""
+    # Required by the UIF schema, and absent from every document this produced
+    # until the intake workflow's validate stage said so.
+    created_at: str = ""
+    updated_at: str = ""
+    # Optional in the schema, and the first requirement ATTRIBUTE the graph can
+    # carry. Empty where the tracker states none -- never defaulted to a middle
+    # value, which would be Métis asserting a priority nobody set.
+    priority: str = ""
+    # What this item says it is linked to. Read from the SAME response the
+    # reader already fetches -- `fields.parent` and `fields.issuelinks` are in
+    # the issue payload -- so no endpoint is added and `ENDPOINTS` stays the
+    # closed GET allowlist it is (X-7a).
+    links: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -125,6 +172,35 @@ class TrackerRead:
 
     def keys(self) -> set[str]:
         return {i.key for i in self.items}
+
+
+# **Discovery, kept separate from reading, and separately allowlisted.**
+#
+# `intakes.json` said this reader "does NOT crawl a tracker", and named-keys-only
+# does not survive a real backlog: nobody types 400 Jira keys. What was missing
+# was never the ability to fetch an item -- `read` already does that -- but a way
+# to ask the tracker WHICH items.
+#
+# So this is two steps rather than one bigger one. `search` resolves a query to
+# a list of keys; `read` then fetches each of them through exactly the path it
+# always used. "Named items only" still describes every item read; the query is
+# what names them, and the two allowlists stay independently reviewable.
+#
+# `{query}` is URL-encoded by the caller, so a JQL string with spaces and quotes
+# cannot smuggle a second parameter into the URL.
+SEARCH_ENDPOINTS: dict[str, str] = {
+    JIRA: "{base}/rest/api/3/search?jql={query}&maxResults={limit}&fields=key",
+    # CQL rather than a bare space key: a team scoping intake to one space and a
+    # team scoping it to a label need the same field, and `spaceKey=` cannot
+    # express the second.
+    CONFLUENCE: "{base}/rest/api/content/search?cql={query}&limit={limit}",
+    ZEPHYR: "{base}/v2/testcases?projectKey={query}&maxResults={limit}",
+}
+
+# A crawl that silently stopped at a page boundary would under-report a backlog,
+# and under-reporting is indistinguishable from a small backlog. So there is a
+# cap, it is explicit, and `search` says when it was reached.
+SEARCH_LIMIT = 100
 
 
 def assert_read_only(urls) -> None:
@@ -140,12 +216,19 @@ def assert_read_only(urls) -> None:
     # `/rest/api/3/issue/X/transitions` — the endpoint that MOVES a ticket —
     # because the allowed read path is a prefix of it. The key is one segment
     # and nothing may follow it.
-    patterns = [
-        re.compile("^" + re.escape(template)
-                   .replace(r"\{base\}", r".+")
-                   .replace(r"\{key\}", r"[^/?#]+") + "$")
-        for template in ENDPOINTS.values()]
-    allowed = ", ".join(sorted(ENDPOINTS.values()))
+    def pattern(template: str):
+        return re.compile("^" + re.escape(template)
+                          .replace(r"\{base\}", r".+")
+                          .replace(r"\{key\}", r"[^/?#]+")
+                          # A query is percent-encoded before it is substituted,
+                          # so it can carry no `&` of its own — which is what
+                          # stops a JQL string appending a parameter.
+                          .replace(r"\{query\}", r"[^&#]*")
+                          .replace(r"\{limit\}", r"\d+") + "$")
+
+    templates = list(ENDPOINTS.values()) + list(SEARCH_ENDPOINTS.values())
+    patterns = [pattern(t) for t in templates]
+    allowed = ", ".join(sorted(templates))
     for url in urls:
         if not any(p.match(url) for p in patterns):
             raise TrackerRefused(
@@ -278,6 +361,66 @@ def storage_text(markup: str) -> str:
     return "\n".join(line for line in lines if line).strip()
 
 
+def _links_from(system: str, body: dict, base_url: str) -> tuple:
+    """Links the payload declares, normalised. Pure.
+
+    Jira only, for now: Zephyr Scale has no issue-link concept and Confluence's
+    ancestry is a different shape that would need its own reading. An empty
+    tuple for those is a fact about the tracker, not a gap in this function.
+
+    **A parent is recorded as `parent`, whatever Jira called it.** `parent`
+    (next-gen), `Epic Link` (classic) and an inward `is subtask of` all mean the
+    same thing to a reader, and normalising them is what makes "which stories
+    are under this epic" one question rather than three.
+    """
+    if system != JIRA or not isinstance(body, dict):
+        return ()
+
+    template = BROWSE.get(system, "")
+
+    def url_for(target: str) -> str:
+        return (template.format(base=base_url.rstrip("/"), key=target)
+                if base_url and template and target else "")
+
+    found: list[ItemLink] = []
+    seen: set[tuple] = set()
+
+    def add(relation: str, target: str) -> None:
+        target = str(target or "").strip()
+        if not target or (relation, target) in seen:
+            return
+        seen.add((relation, target))
+        found.append(ItemLink(relation=relation, target_id=target,
+                              target_system=system, target_url=url_for(target)))
+
+    parent = body.get("parent")
+    if isinstance(parent, dict):
+        add("parent", parent.get("key", ""))
+
+    for link in body.get("issuelinks") or ():
+        if not isinstance(link, dict):
+            continue
+        # Jira states a link from one side; `inward`/`outward` says which. The
+        # relation name is taken from the side the payload actually carries, so
+        # a "blocks" and an "is blocked by" are not flattened into one claim.
+        kind = link.get("type") or {}
+        for side, name_key in (("inwardIssue", "inward"), ("outwardIssue", "outward")):
+            issue = link.get(side)
+            if isinstance(issue, dict) and issue.get("key"):
+                relation = str(kind.get(name_key) or "relates to").strip().lower()
+                # Classic Jira models an epic as a link rather than a parent.
+                add("parent" if relation in _PARENT_RELATIONS else relation,
+                    issue["key"])
+    return tuple(found)
+
+
+# Jira link names that mean "this item is beneath that one". Normalised to
+# `parent` so decomposition is one relation rather than three spellings.
+_PARENT_RELATIONS = frozenset({
+    "is subtask of", "is child of", "is part of", "epic link",
+})
+
+
 def item_from_payload(system: str, key: str, payload: dict,
                       base_url: str = "") -> TrackerItem:
     """One tracker response object, normalised. Pure."""
@@ -291,9 +434,13 @@ def item_from_payload(system: str, key: str, payload: dict,
     body = payload.get("fields") if isinstance(payload.get("fields"), dict) else payload
 
     def pick(which: str):
-        name = names[which]
+        # `.get` rather than `[...]`: not every system declares every field, and
+        # a KeyError here would refuse a whole tracker over one absent mapping.
+        name = names.get(which, "")
+        if not name:
+            return None
         if name.startswith("$static:"):
-            return name.split(":", 1)[1]
+            return name.split(":", 1)[1] or None
         return _dig(body, name)
 
     description = _text(pick("description"))
@@ -323,6 +470,10 @@ def item_from_payload(system: str, key: str, payload: dict,
         labels=tuple(n for n in (_named(x) for x in labels) if n),
         source_url=(template.format(base=base_url.rstrip("/"), key=resolved)
                     if base_url and template else ""),
+        created_at=_text(pick("created_at")),
+        updated_at=_text(pick("updated_at")),
+        priority=_named(pick("priority")),
+        links=_links_from(system, body if isinstance(body, dict) else {}, base_url),
     )
 
 
@@ -345,6 +496,81 @@ def from_fixture(path: str | Path) -> TrackerRead:
         system=system, base_url=base_url,
         items=tuple(item_from_payload(system, p.get("key", ""), p, base_url)
                     for p in data.get("items", ())))
+
+
+# How each tracker names an item in a search response. Declared rather than
+# guessed per call: a shape that changed would otherwise surface as "0 items"
+# from a query that matched hundreds.
+_SEARCH_SHAPE: dict[str, tuple[str, str]] = {
+    JIRA: ("issues", "key"),
+    CONFLUENCE: ("results", "id"),
+    ZEPHYR: ("values", "key"),
+}
+
+
+def search(system: str, base_url: str, query: str, get,
+           limit: int = SEARCH_LIMIT) -> list[str]:
+    """Resolve a query to item keys. Reading them is still `read`'s job.
+
+    **Two steps on purpose.** "Named items only" remains true of every item
+    fetched — this is what names them. Keeping discovery separate means the
+    per-item read path, and the allowlist entry that guards it, are untouched by
+    adding a crawl.
+
+    **A truncated result is reported, never silently returned.** A backlog cut
+    off at the page boundary looks exactly like a small backlog, and a coverage
+    figure computed over half a backlog is worse than none. The caller gets a
+    refusal naming the cap rather than a short list.
+    """
+    if system not in SEARCH_ENDPOINTS:
+        raise TrackerRefused(
+            f"{system!r} has no search endpoint. Searchable: "
+            f"{', '.join(sorted(SEARCH_ENDPOINTS))}")
+    if not base_url:
+        raise TrackerRefused("no base_url — nothing says which tracker to read")
+    if not (query or "").strip():
+        raise TrackerRefused(
+            "no query. Pass one, or name items with `keys` — this does not "
+            "read a whole tracker by default")
+
+    import urllib.parse
+
+    url = SEARCH_ENDPOINTS[system].format(
+        base=base_url.rstrip("/"),
+        # `safe=""` so `&`, `=` and `?` inside a JQL string are encoded and
+        # cannot become URL structure. The allowlist above then holds.
+        query=urllib.parse.quote(query.strip(), safe=""),
+        limit=int(limit))
+    assert_read_only([url])
+
+    payload = get(url)
+    if not isinstance(payload, dict):
+        raise TrackerRefused(
+            f"{url}: expected a JSON object and got {type(payload).__name__}")
+
+    field, key_name = _SEARCH_SHAPE[system]
+    rows = payload.get(field)
+    if not isinstance(rows, list):
+        raise TrackerRefused(
+            f"{url}: expected {field!r} to be a list and got "
+            f"{type(rows).__name__}. The tracker's response shape has changed, "
+            f"and reading it as empty would report a matching query as no match")
+
+    total = payload.get("total")
+    if isinstance(total, int) and total > len(rows):
+        raise TrackerRefused(
+            f"the query matched {total} item(s) and this read {len(rows)}. "
+            f"Narrow the query, or raise the limit deliberately — a backlog "
+            f"truncated at a page boundary is indistinguishable from a small "
+            f"one, and every figure computed from it would be quietly wrong")
+
+    keys = [str(r.get(key_name)) for r in rows if isinstance(r, dict)
+            and r.get(key_name)]
+    if len(keys) != len(rows):
+        raise TrackerRefused(
+            f"{url}: {len(rows) - len(keys)} row(s) carried no {key_name!r}. "
+            f"Dropping them would under-report the query silently")
+    return keys
 
 
 def read(system: str, base_url: str, keys, get) -> TrackerRead:
@@ -384,6 +610,132 @@ def read(system: str, base_url: str, keys, get) -> TrackerRead:
     return TrackerRead(system=system, base_url=base_url, items=tuple(items))
 
 
+# ---------------------------------------------------------------------------
+# Normalisation — the UIF's vocabulary, not the tracker's
+# ---------------------------------------------------------------------------
+#
+# **The schema is authoritative and the producer was not matching it.** Nothing
+# validated between `intake fetch` and `intake land`, so documents Métis writes
+# failed the schema Métis publishes for external producers, four ways:
+# `metadata.status` was the tracker's raw string where an object is required,
+# `scope.created_at` and `scope.last_updated_at` were required and absent, and
+# `scope.primary_type` carried `Story` where a lowercase enum is declared.
+#
+# Normalising is what makes one query span Jira, Confluence and Zephyr: a
+# reviewer asking "every story awaiting review" should not need to know that one
+# system spells it `Story`, another `story`, and a third has no such concept.
+#
+# **Where a value does not map, it is omitted rather than guessed** (X-6e). A
+# tracker's workflow states are per-project and arbitrary; deciding that
+# somebody's `Awaiting Signoff` means `under_review` is an invention, and an
+# invented status reads exactly like an observed one.
+
+# Tracker item types -> the schema's `scope.primary_type` enum.
+_ITEM_TYPES: dict[str, str] = {
+    "story": "story", "user story": "story",
+    "epic": "epic",
+    "feature": "feature", "new feature": "feature",
+    "task": "task", "sub-task": "task", "subtask": "task",
+    "bug": "defect", "defect": "defect",
+    "page": "page",
+    "test case": "test_case", "testcase": "test_case", "test": "test_case",
+}
+
+# The one status axis a tracker's own workflow state maps onto:
+# `normalized_status.summary_status`. The other axes (`approval_state`,
+# `automation_status`, …) describe things a tracker does not track, and filling
+# them from a workflow name would be fabrication.
+_SUMMARY_STATUS: dict[str, str] = {
+    "backlog": "draft", "draft": "draft", "to do": "draft", "open": "draft",
+    "new": "draft",
+    "in progress": "active", "in review": "active", "active": "active",
+    "in development": "active", "current": "active",
+    "done": "completed", "closed": "completed", "resolved": "completed",
+    "complete": "completed", "completed": "completed",
+    "deferred": "deferred", "on hold": "deferred",
+    "blocked": "blocked",
+}
+
+
+# `metadata.priority` is an enum too, and for the same reason: "P1" in one
+# project and "Highest" in another mean the same thing to a reader and nothing
+# to a query.
+_PRIORITIES: dict[str, str] = {
+    "blocker": "critical", "critical": "critical", "highest": "critical",
+    "p0": "critical",
+    "high": "high", "major": "high", "p1": "high",
+    "medium": "medium", "normal": "medium", "moderate": "medium", "p2": "medium",
+    "low": "low", "minor": "low", "p3": "low",
+    "lowest": "optional", "trivial": "optional", "optional": "optional",
+    "p4": "optional",
+}
+
+
+def normalise_priority(raw: str) -> str:
+    """A tracker's priority -> the schema's enum, or `""` where it does not map.
+
+    Empty rather than `medium`. A middle value is the tempting default and it is
+    a claim: it says somebody triaged this and decided it was ordinary, which is
+    a different fact from nobody having said.
+    """
+    return _PRIORITIES.get((raw or "").strip().lower(), "")
+
+
+def normalise_item_type(raw: str) -> str:
+    """A tracker's type name -> the schema's enum, or `task` as the floor.
+
+    `task` rather than an omission because `scope.primary_type` is REQUIRED: a
+    document with no type at all is invalid, and refusing to produce one for an
+    unrecognised type would mean a project's custom issue type could not be
+    landed at all. `task` is the least-claiming member of the enum -- it asserts
+    "a unit of work" and nothing about what kind.
+    """
+    return _ITEM_TYPES.get((raw or "").strip().lower(), "task")
+
+
+def normalise_status(raw: str, updated_at: str = "") -> dict:
+    """A tracker's workflow state -> a `normalized_status` object.
+
+    `normalized_status` has no required properties, so `{}` is valid -- which is
+    what makes omission possible. An unrecognised state yields an object
+    carrying only what IS known (when it last changed), rather than a guess at
+    what it means.
+    """
+    status: dict = {}
+    mapped = _SUMMARY_STATUS.get((raw or "").strip().lower())
+    if mapped:
+        status["summary_status"] = mapped
+    if updated_at:
+        status["last_status_update"] = updated_at
+    return status
+
+
+def _raw_status_fact(item: "TrackerItem", stamp: str) -> dict:
+    """The tracker's own status string, kept as an observed fact.
+
+    Normalising loses the original wording, and the original wording is what a
+    reviewer recognises -- "this is the ticket that says Awaiting Signoff". It
+    goes to `facts.current_state` as an OBSERVATION with its source rather than
+    into `metadata.status`, because the schema's status is a normalised
+    vocabulary and this is a quotation.
+    """
+    return {
+        "id": f"status-{item.key}",
+        "type": "current_state",
+        "name": "tracker status",
+        "value": item.status,
+        "confidence": "observed",
+        "timestamp": stamp,
+        "source_ref": {
+            "source_system": item.system,
+            "source_id": item.key,
+            "source_url": item.source_url,
+            "confidence": "direct",
+            "extracted_at": stamp,
+        },
+    }
+
+
 def to_uif(item: TrackerItem, *, generated_at: str = "") -> dict:
     """One item as a UIF document, ready for `metis intake land`.
 
@@ -400,22 +752,79 @@ def to_uif(item: TrackerItem, *, generated_at: str = "") -> dict:
     """
     stamp = generated_at or datetime.now(timezone.utc).isoformat(
         timespec="seconds")
-    return {
+    metadata = {
+        "title": item.title,
+        "description": item.description,
+        # The schema's normalised vocabulary, not the tracker's string. The raw
+        # wording is not lost -- it rides in `facts.current_state` as an
+        # observation with its source, because that is a quotation and this is a
+        # classification, and putting a quotation where a classification belongs
+        # is what made these documents invalid.
+        "status": normalise_status(item.status, item.updated_at),
+        # `tags` is the schema's name for these; `labels` was emitted under a
+        # key `metadata` does not allow (`additionalProperties: false`) and
+        # read by nothing downstream.
+        "tags": list(item.labels),
+    }
+    priority = normalise_priority(item.priority)
+    if priority:
+        # Omitted rather than defaulted, on both branches: where the tracker
+        # states none, and where it states one this vocabulary cannot express.
+        # A middle value would be Métis asserting a priority nobody set.
+        metadata["priority"] = priority
+
+    scope = {
+        "source_system": item.system,
+        "primary_id": item.key,
+        # A lowercase enum member, mapped. `Story` is what Jira calls it and
+        # `story` is what the UIF calls it; carrying the first meant a query
+        # spanning two trackers had to know both vocabularies.
+        "primary_type": normalise_item_type(item.item_type),
+        "uif_generated_at": stamp,
+    }
+    # Required by the schema. Emitted only where the tracker supplied them --
+    # a fabricated `created_at` would be a claim about when somebody raised a
+    # requirement, which is exactly the kind of invention X-6e forbids. A
+    # document missing them is invalid, and that is the honest outcome: the
+    # producer could not satisfy the contract for this item.
+    if item.created_at:
+        scope["created_at"] = item.created_at
+    if item.updated_at:
+        scope["last_updated_at"] = item.updated_at
+
+    document = {
         "uif_version": UIF_VERSION,
-        "scope": {
-            "source_system": item.system,
-            "primary_id": item.key,
-            "primary_type": item.item_type or "Item",
-            "uif_generated_at": stamp,
-        },
-        "metadata": {
-            "title": item.title,
-            "description": item.description,
-            "status": item.status,
-            "labels": list(item.labels),
-            "source_url": item.source_url,
+        "scope": scope,
+        "metadata": metadata,
+        # The source url was emitted as `metadata.source_url`, which the schema
+        # does not permit either — and provenance is not metadata. The schema
+        # models it properly: a `source_reference` carrying the system, the id
+        # and how the value was obtained. `direct` is the literal truth here;
+        # this came out of the tracker's own response, not from inference.
+        "traceability": {
+            "source_references": [{
+                "source_system": item.system,
+                "source_id": item.key,
+                "source_url": item.source_url,
+                "confidence": "direct",
+                "extracted_at": stamp,
+            }],
         },
     }
+    if item.status:
+        document["facts"] = {"current_state": [_raw_status_fact(item, stamp)]}
+    if item.links:
+        # Emitted only where the tracker declared some. An empty `links` array
+        # and an absent one both mean "none declared", and the absent form does
+        # not invite a reader to conclude somebody checked.
+        document["links"] = [
+            {k: v for k, v in
+             {"relation": link.relation, "target_id": link.target_id,
+              "target_system": link.target_system,
+              "target_url": link.target_url}.items() if v}
+            for link in item.links
+        ]
+    return document
 
 
 def describe(read_result: TrackerRead) -> str:

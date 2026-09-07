@@ -67,6 +67,12 @@ class MethodFact:
     signature: str
     anchor: Anchor
     is_external: bool = False
+    #: McCabe's number: decision points plus one, counting control structures
+    #: and short-circuiting boolean operators. Zero means the pack did not
+    #: report one, which is not the same as a straight-line method (that is 1).
+    complexity: int = 0
+    #: Source lines. Zero means not reported, for the same reason.
+    size: int = 0
 
 
 @dataclass(frozen=True)

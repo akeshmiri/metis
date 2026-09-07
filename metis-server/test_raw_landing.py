@@ -41,7 +41,7 @@ from metis_mcp.model_sources.raw_landing import (
 
 A = Anchor("RecordController.java", 42, "sha1")
 DTO_A = Anchor("RecordDto.java", 12, "sha1")
-REPO = "the pilot estate"
+REPO = "records"
 
 
 def _structural(**kw) -> ExtractionReport:
@@ -86,7 +86,7 @@ def _behaviour() -> ExtractionReport:
 
 
 def _plan(**kw):
-    return plan_raw_landing(_structural(**kw), journey="the pilot estate", repo=REPO,
+    return plan_raw_landing(_structural(**kw), journey="records", repo=REPO,
                             behaviour=kw.get("behaviour", _behaviour()),
                             ui_facts=kw.get("ui_facts"),
                             include_call_graph=kw.get("include_call_graph", True))
@@ -185,7 +185,7 @@ def test_ids_exclude_the_commit_so_a_new_commit_updates_in_place():
     The commit stays where it belongs — on the anchor."""
     later = _structural()
     later.commit = "sha2"
-    plan = plan_raw_landing(later, journey="the pilot estate", repo=REPO,
+    plan = plan_raw_landing(later, journey="records", repo=REPO,
                             behaviour=_behaviour())
     endpoints = [n for n in plan.nodes if n.label == "Endpoint"]
     assert endpoints[0].properties["id"] == endpoint_id(REPO, "POST", "/metric")
@@ -194,7 +194,7 @@ def test_ids_exclude_the_commit_so_a_new_commit_updates_in_place():
 
 
 def test_two_repositories_declaring_one_type_stay_two_nodes():
-    assert class_id("the pilot estate", "RecordDto") != class_id("other", "RecordDto")
+    assert class_id("records", "RecordDto") != class_id("other", "RecordDto")
 
 
 def test_the_journey_is_not_part_of_an_evidence_id():
@@ -353,7 +353,7 @@ def test_the_default_leaves_the_call_graph_out():
 # --------------------------------------------------------------------------
 
 def test_a_missing_behaviour_report_yields_a_partial_layer_not_an_error():
-    plan = plan_raw_landing(_structural(), journey="the pilot estate", repo=REPO)
+    plan = plan_raw_landing(_structural(), journey="records", repo=REPO)
     assert plan.is_legal
     assert _labels(plan)["Endpoint"] == 1
     assert _labels(plan)["DeclaredOutcome"] == 0

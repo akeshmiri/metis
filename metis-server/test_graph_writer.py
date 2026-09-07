@@ -7,9 +7,9 @@ needs Neo4j, and that is exercised by the live round-trip script.
 import sys
 
 from metis_mcp.mbt import ALL_TRANSITIONS, generate
+from metis_mcp.mbt.graph_loader import TRACE_CASE_CYPHER
 from metis_mcp.mbt.graph_writer import (
     COVERED_TRANSITIONS_CYPHER,
-    TRACE_CASE_CYPHER,
     UNCOVERED_TRANSITIONS_CYPHER,
     VERSION_DIFF_CYPHER,
     component_id,

@@ -142,3 +142,91 @@ def get_transition(transition_id: str) -> dict:
         "means": ("a code_derived criterion agreeing with this transition is "
                   "evidence of coverage, never of correctness (§4.1)"),
     }
+
+
+# ---------------------------------------------------------------------------
+# Requirement hierarchy — the reader `LINKS_TO` did not have
+# ---------------------------------------------------------------------------
+#
+# **The edge existed and nothing wrote it or read it.** D-1 asks for a named
+# writer AND a named reader; `JiraItem-[:LINKS_TO]->JiraItem` had neither, so a
+# query for "what does this issue link to" returned nothing and could not tell
+# that from "it links to nothing" — the difference between an answer and an
+# absence, which is the distinction this whole codebase is organised around.
+#
+# **Hierarchy without a new label.** An epic and its stories are two anchors
+# with this edge, each `REPRESENTS`ing a `Requirement`. So "which requirements
+# does this epic decompose into" is a two-hop traversal, and `Epic` stays staged
+# out: D-1's bar is a requirement question that needs it AS A NODE, and this one
+# does not.
+#
+# Both directions, because they are different questions. *What is under this*
+# is scoping; *what is this part of* is context for a reviewer looking at one
+# story and wondering what it belongs to.
+# `r.relation` is the KIND of link the tracker asserted — `parent`, `blocks`,
+# `causes`. It had nowhere to be stored until `PlannedEdge` grew a properties
+# field, so every link came back indistinguishable and this reported
+# `"type": "unknown"` for all of them. Without it "what are this epic's
+# children" cannot be told from "what blocks this", which is most of what a
+# backlog hierarchy is for.
+HIERARCHY_CYPHER = """
+MATCH (anchor:JiraItem {id: $id})
+OPTIONAL MATCH (anchor)-[ru:LINKS_TO]->(up:JiraItem)
+OPTIONAL MATCH (up)-[:REPRESENTS]->(ur:Requirement)
+  WHERE ur.valid_to IS NULL OR ur.valid_to = ''
+OPTIONAL MATCH (down:JiraItem)-[rd:LINKS_TO]->(anchor)
+OPTIONAL MATCH (down)-[:REPRESENTS]->(dr:Requirement)
+  WHERE dr.valid_to IS NULL OR dr.valid_to = ''
+RETURN anchor.jira_key AS key, anchor.issue_type AS item_type,
+       collect(DISTINCT {key: up.jira_key, type: up.issue_type,
+                         relation: coalesce(ru.relation, 'unrecorded'),
+                         requirement: ur.id, text: ur.text}) AS links_to,
+       collect(DISTINCT {key: down.jira_key, type: down.issue_type,
+                         relation: coalesce(rd.relation, 'unrecorded'),
+                         requirement: dr.id, text: dr.text}) AS linked_from
+"""
+
+
+def requirement_hierarchy(anchor_id: str) -> dict:
+    """What one tracker item links to, and what links to it.
+
+    Takes the ANCHOR id (`jira:PROJ-14`), not a requirement id: the hierarchy is
+    a fact about the artefacts, and it survives a requirement being rejected —
+    which is the whole reason the anchor is a separate node.
+
+    **What this does not claim.** The tracker asserted these links; Métis
+    recorded the assertion. A `parent` edge does not mean the child requirement
+    implements the parent, and nothing here reads it that way. An item linked
+    but never fetched appears with its key and no text, which is the honest
+    shape: Métis knows it exists and has not read it.
+    """
+    from metis_mcp.mbt.graph_session import session
+
+    with session() as s:
+        row = s.run(HIERARCHY_CYPHER, id=anchor_id).single()
+
+    if row is None:
+        return {"ok": False,
+                "reason": (f"no tracker item {anchor_id!r}. Anchor ids are "
+                           f"`<system>:<key>` — `jira:PROJ-14`, not `PROJ-14`.")}
+
+    def _rows(collected):
+        return [r for r in collected if r.get("key")]
+
+    up, down = _rows(row["links_to"]), _rows(row["linked_from"])
+    return {
+        "ok": True,
+        "anchor": anchor_id,
+        "key": row["key"],
+        "item_type": row["item_type"],
+        "links_to": up,
+        "linked_from": down,
+        "note": (
+            "Links are the TRACKER's assertion, recorded as provenance. A "
+            "`parent` link does not state that one requirement implements "
+            "another, and nothing reads it that way. An entry with a key and no "
+            "text is an item Métis knows exists and has not read."
+        ),
+        "unfetched": sorted({r["key"] for r in up + down
+                             if not r.get("requirement")}),
+    }

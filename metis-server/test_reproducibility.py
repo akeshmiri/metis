@@ -31,7 +31,7 @@ from pathlib import Path
 
 import pytest
 
-from mbt_fixtures import login_model_source
+from mbt_fixtures import authored_source as _authored, login_model_source
 from metis_mcp.model_sources import get, plan_landing
 
 FIXTURES = Path(__file__).parent / "test_fixtures"
@@ -42,10 +42,6 @@ CLOCK_A = "2026-01-01T00:00:00+00:00"
 CLOCK_B = "2027-06-15T12:34:56+00:00"
 
 
-def _authored(tmpdir: str):
-    path = Path(tmpdir) / "login-api.json"
-    path.write_text(json.dumps(login_model_source(), indent=2))
-    return get("authored").produce(path=str(path), author="alice")
 
 
 def _openapi():
@@ -263,8 +259,13 @@ def test_the_wall_clock_fallback_is_the_only_source_of_run_to_run_drift():
     # direction — `valid_from` is a claim about when something became true, so it
     # wants the data's own time (a commit date), not the clock. Recorded here
     # rather than waved through; see TIMESTAMP_NOT_THREADED.
+    # `repair_landing.py` joins the list and is the interesting case: a repair
+    # HAS a data-own time — the commit date, which it lands as `committed_at` on
+    # every `Commit`. What defaults to the clock is only `t_recorded`, the
+    # Episode's "when was this read", which is genuinely a fact about the run.
+    # So this one is already doing the right thing with the time that matters.
     assert found == {"landing.py", "raw_landing.py", "intake_landing.py",
-                     "intent.py", "glossary.py",
+                     "intent.py", "glossary.py", "repair_landing.py",
                      "knowledge.py", "lessons.py"}, (
         f"the set of modules defaulting to the clock changed: {sorted(found)}. "
         f"If one was fixed, remove it here; if one was added, it needs a "
@@ -303,7 +304,15 @@ def test_the_timestamp_is_written_once_and_never_re_asserted():
 
     assert HUMAN_FACTS == ("lifecycle_state", "name", "name_tier", "provenance")
     assert "t_recorded" not in HUMAN_FACTS, "a timestamp is not a reviewer's decision"
-    assert FIRST_SEEN_FACTS == ("t_recorded",)
+    # `revision` joined for the same reason and a sharper one. Every claim writer
+    # hardcodes `"revision": 1` -- a plan builder cannot know how many times a
+    # claim changed before, because that is a fact about the graph. While it was
+    # a machine fact the unconditional `SET` rewrote it to 1 on every land, so
+    # the property `Requirement` declares as REQUIRED, that §8.4 is named for,
+    # and that the whole bi-temporal design rests on, could never leave 1.
+    # `land` stamps it from `plan_supersession`.
+    assert FIRST_SEEN_FACTS == ("t_recorded", "revision")
+    assert "revision" not in HUMAN_FACTS, "a revision count is not a decision"
     # Validity joins the same clause for a third reason: `valid_to` is SET by
     # invalidation, so a re-land that re-asserted it would reset a superseded
     # fact to valid and undo the invalidation silently.

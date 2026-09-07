@@ -41,6 +41,10 @@ ACCESS_MODES = ("local_files", "read_only_connection", "authored_file",
                 "uif_document")
 
 
+class SchemaUnavailable(Exception):
+    """A UIF cannot be validated here, because the schema is not reachable."""
+
+
 class IntakesRefused(Exception):
     """The declaration could not be read at all — shape, not content."""
 
@@ -120,6 +124,87 @@ def describe() -> str:
             lines.append(f"           no reader — the capability does not exist")
         for limit in intake.get("limits", ())[:2]:
             lines.append(f"           · {limit[:70]}")
+    # The row nobody thinks to add: whether the document contract is reachable
+    # at all. A deployment that cannot open the schema validates nothing, and
+    # until this line existed it said so nowhere.
+    can_validate, why = uif_schema_available()
+    lines += ["", f"  [{'ok ' if can_validate else 'NONE'}] uif-schema  "
+                  f"validate a UIF against its declared shape"]
+    if not can_validate:
+        lines.append(f"           {why}")
     lines += ["", "None of these executes anything against the System Under "
                   "Test (X-7a)."]
     return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------
+# Validating a UIF against its own schema.
+#
+# `metis-intake-processor/SKILL.md` told a reader "a UIF is validated against
+# `../shared/schemas/unified-intake-format.schema.json` — 830 lines, and the
+# machine-readable half of everything below", and **nothing in the engine opened
+# that file**. The only reader in the tree was `test_independence.py`, which
+# pulls the `source_system` enum out of it to check the port was complete. So the
+# document shape was asserted by a skill and checked by nobody, which is the
+# silent-success shape CLAUDE.md names: a claim that reads as a guarantee.
+#
+# This does not replace `intake_landing.conformance`. That asks the questions the
+# schema cannot — whether the text is EARS-conformant, whether an anchor exists,
+# what will land as a `Finding` — and it runs at landing time. This asks the
+# narrower mechanical one, and it can be asked before anything is planned.
+# --------------------------------------------------------------------------
+
+def uif_schema_path() -> Path:
+    """Where the UIF schema lives: with the skills, not with the server.
+
+    It is the contract a *document producer* writes against, and the producers
+    are the skills. `test_independence.py` already reads it from here.
+    """
+    return (Path(__file__).resolve().parents[2] / "plugins" / "metis"
+            / "skills" / "shared" / "schemas"
+            / "unified-intake-format.schema.json")
+
+
+def uif_schema_available() -> tuple[bool, str]:
+    """Whether a UIF can be validated here, and what is missing if not.
+
+    The validator itself is never the missing half: `jsonschema` is a hard
+    dependency of `mcp`, so anything that can run the server has it. What is
+    genuinely absent in some deployments is the schema **file** — it ships in
+    `plugins/`, beside the skills that write against it, and a
+    `pip install metis-mcp-server` with no repository checked out beside it has
+    the code and not the contract. That deployment must say it cannot validate
+    rather than report a clean document.
+    """
+    path = uif_schema_path()
+    if not path.exists():
+        return False, (f"the UIF schema is not at {path} — it ships with "
+                       f"`plugins/`, not with this package, so an install "
+                       f"without the repository beside it cannot validate")
+    return True, ""
+
+
+def validate_uif(document: dict) -> list[dict]:
+    """Every way a document departs from the UIF schema.
+
+    Raises `SchemaUnavailable` rather than returning an empty list when the
+    schema cannot be read — "no errors found" and "nothing looked" are different
+    claims, and conflating them is exactly how the duplicate guard's `unknown`
+    verdict gets read as `no_match`.
+    """
+    available, why = uif_schema_available()
+    if not available:
+        raise SchemaUnavailable(why)
+
+    import jsonschema
+
+    schema = json.loads(uif_schema_path().read_text())
+    validator = jsonschema.Draft7Validator(schema)
+    return [
+        {"path": "/".join(str(p) for p in error.absolute_path) or "(document)",
+         "message": error.message}
+        # Sorted so the same document reports the same order twice running:
+        # an unstable error list makes a diff between two runs unreadable.
+        for error in sorted(validator.iter_errors(document),
+                            key=lambda e: list(e.absolute_path))
+    ]

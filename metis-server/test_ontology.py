@@ -82,8 +82,15 @@ def test_the_label_set_is_closed_and_each_label_is_argued():
     name the reader, say which requirement question needs it as a node, and if
     any of the three is "a file somebody will write one day", stage it in §8.7.
     """
-    assert len(KNOWN_LABELS) == 37, (
-        f"the ontology is thirty-seven labels (spec D-1); found "
+    # 37 -> 43: the six execution and operational labels were reinstated, and
+    # the review is in `labels.py` beside them. Each was staged out WITH the
+    # condition that would bring it back -- "execution results are ingested
+    # (spec C-10's trigger)" and "operational data enters scope" -- so pulling
+    # them is the argued change the staging existed to make possible, not a
+    # relaxation of D-1. The number is still asserted, because the point of the
+    # rule is that growth is deliberate and counted.
+    assert len(KNOWN_LABELS) == 44, (
+        f"the ontology is forty-four labels (spec D-1); found "
         f"{len(KNOWN_LABELS)}: {sorted(KNOWN_LABELS)}. Adding one requires "
         f"naming its writer, its reader, and the requirement question that "
         f"needs it as a node."
@@ -443,27 +450,129 @@ def test_checked_in_schema_matches_the_generator():
         )
 
 
+# **Both directions, and the second one is the one that was missing.**
+#
+# These checked only that every label in the code appears in the specification.
+# Nothing checked the converse, so §8.2 kept 27 labels the ontology no longer
+# has -- `Table`, `Column`, `Page`, `Field`, `Method`, `Route`, `UiElement` and
+# the rest of the 2026-08-31 re-baseline -- under a heading reading "Labels --
+# sixty-five, and closed" while `KNOWN_LABELS` held 43. §8.3 carried 21
+# relationship types that exist nowhere in code.
+#
+# The README says to read the specification first. A document that advertises a
+# data model 60% larger than the real one is exactly the failure D-1 opens by
+# describing: "would advertise capability that does not exist". And it passed,
+# because a one-directional check on the authoritative document is not a check.
+#
+# The staged-out labels still belong in the document -- in §8.7, which is where
+# §8.2's own table says they went. The rule is that §8.2 lists the ACTIVE
+# ontology and nothing else.
+_TABLE_ROW = re.compile(r"^\|\s*\d+\s*\|\s*\*\*`([A-Za-z][A-Za-z0-9]*)`\*\*", re.M)
+
+
+def _section(text: str, start: str, end: str) -> str:
+    return text[text.index(start):text.index(end)]
+
+
 def test_specification_document_lists_the_same_labels():
-    """ONT-001's fourth place: the prose catalogue in §8.2."""
+    """ONT-001's fourth place: the prose catalogue in §8.2. Both directions."""
     if not SPEC.exists():
         return  # spec not adjacent in this checkout; the other three still agree
-    text = SPEC.read_text()
-    section = text[text.index("### 8.2 Labels"):text.index("### 8.3 Relationships")]
-    for label in KNOWN_LABELS:
-        assert f"`{label}`" in section, (
-            f"{label} is in the code but not in §8.2 of the specification (ONT-001)"
-        )
+    section = _section(SPEC.read_text(), "### 8.2 Labels", "### 8.3 Relationships")
+
+    missing = sorted(l for l in KNOWN_LABELS if f"`{l}`" not in section)
+    assert not missing, (
+        f"{missing} are in the code but not in §8.2 of the specification (ONT-001)"
+    )
+
+    tabled = {name for name in _TABLE_ROW.findall(section)}
+    ghosts = sorted(tabled - set(KNOWN_LABELS))
+    assert not ghosts, (
+        f"§8.2 lists {len(ghosts)} label(s) the ontology does not have: {ghosts}.\n"
+        f"The ontology is {len(KNOWN_LABELS)} labels and it is closed (D-1). A "
+        f"staged-out label belongs in §8.7 with the condition that would bring "
+        f"it back, not in the active catalogue -- listing it here advertises "
+        f"capability that does not exist, which is the failure D-1 opens by "
+        f"naming."
+    )
+
+
+def test_the_label_catalogue_check_can_actually_fail():
+    """Guarding the guard: `_TABLE_ROW` matching nothing would pass forever.
+
+    That is precisely how 27 ghosts accumulated -- not through a broken regex,
+    but through a check that only ever looked one way. A pattern that finds no
+    rows would restore the same blindness by a different route.
+    """
+    if not SPEC.exists():
+        return
+    section = _section(SPEC.read_text(), "### 8.2 Labels", "### 8.3 Relationships")
+    tabled = set(_TABLE_ROW.findall(section))
+    assert tabled, "parsed no rows out of the §8.2 label table"
+    assert tabled == set(KNOWN_LABELS), (
+        "the §8.2 table and the ontology must be the same set, exactly"
+    )
+
+
+def test_the_staged_out_table_is_the_staged_out_set():
+    """§8.7 must name every staged-out label and no active one.
+
+    It drifted the other way from §8.2 and did more damage. It listed
+    `TestCycle`, `TestExecution`, `Defect`, `Alert`, `Metrics` and `Logs` as
+    excluded long after their own stated trigger -- *execution results are
+    ingested* -- had arrived and `execution_intake.py` had been written to land
+    them, and it listed `Endpoint`, an active label. §8.7 is the document
+    somebody reads before arguing for a label under D-1, so a staging plan that
+    is wrong about what is staged sends them to argue for something that exists.
+    """
+    if not SPEC.exists():
+        return
+    section = _section(SPEC.read_text(), "### 8.7 Deliberately excluded",
+                       "### 8.8 Committed by this section")
+    # The **Excluded column only**, not the prose. The paragraph under the table
+    # explains the drift by naming the six labels that were wrongly listed, and
+    # a section-wide scan read that explanation as the listing it describes.
+    named = set()
+    for line in section.splitlines():
+        if not line.startswith("|") or line.startswith("|---"):
+            continue
+        excluded_column = line.split("|")[1]
+        named |= set(re.findall(r"`([A-Z][A-Za-z0-9]*)`", excluded_column))
+
+    missing = sorted(set(STAGED_OUT) - named)
+    assert not missing, (
+        f"{missing} are staged out in labels.py and absent from §8.7. D-11 "
+        f"requires each to name the trigger that would bring it back."
+    )
+
+    active = sorted(named & set(KNOWN_LABELS))
+    assert not active, (
+        f"§8.7 lists {active} as excluded; they are active labels in the "
+        f"ontology. Reinstating a label means moving it OUT of this table."
+    )
 
 
 def test_specification_document_lists_the_same_relationships():
     if not SPEC.exists():
         return
-    text = SPEC.read_text()
-    section = text[text.index("### 8.3 Relationships"):text.index("### 8.4 Versioning")]
-    for spec in ALLOWED_RELATIONSHIPS:
-        assert f"`{spec.rel_type}`" in section, (
-            f"{spec.rel_type} is in the code but not in §8.3 (ONT-001)"
-        )
+    section = _section(SPEC.read_text(), "### 8.3 Relationships",
+                       "### 8.4 Versioning")
+    declared = {spec.rel_type for spec in ALLOWED_RELATIONSHIPS}
+
+    missing = sorted(r for r in declared if f"`{r}`" not in section)
+    assert not missing, f"{missing} are in the code but not in §8.3 (ONT-001)"
+
+    # Relationship types are SCREAMING_SNAKE and appear in prose as `NAME`, so
+    # unlike the label table there is no row structure to key on. Three or more
+    # characters avoids matching an acronym in ordinary prose.
+    mentioned = set(re.findall(r"`([A-Z][A-Z_]{2,})`", section))
+    ghosts = sorted(mentioned - declared)
+    assert not ghosts, (
+        f"§8.3 names {len(ghosts)} relationship type(s) that exist nowhere in "
+        f"`ALLOWED_RELATIONSHIPS`: {ghosts}. The catalogue is "
+        f"{len(declared)} types and the Cypher schema is generated from it, so "
+        f"a type named only here is one no planned edge can ever use."
+    )
 
 
 def test_statements_split_cleanly():
@@ -592,23 +701,61 @@ def test_the_marker_carries_no_properties_of_its_own():
         "a specialisation REPLACES its parent; this is carried alongside one")
 
 
-def test_relationships_with_no_writer_are_named_as_such():
+def test_every_catalogued_relationship_has_a_writer_and_a_reader():
     """D-1 wants a named writer AND a named reader for everything catalogued.
 
-    `LINKS_TO` (Jira issue links, which `intake_landing` would write) has
-    neither. It stays in the catalogue because it has a real intended writer —
-    but a gap nobody has written down is a gap somebody rediscovers, so this
-    asserts the comment is there.
+    **The list is empty, and this is what emptying it looked like.** Three
+    relationships had neither half. `ON_EVENT` and `RENDERS` went with `Event`,
+    `Route` and `Page` in the 2026-08-31 re-baseline — the gap closed by the
+    labels leaving rather than by a writer arriving.
 
-    `ON_EVENT` and `RENDERS` were the other two. They joined `Event`, `Route`
-    and `Page`, which the 2026-08-31 re-baseline staged out — so the gap closed
-    by the labels leaving rather than by a writer arriving.
+    `LINKS_TO` closed the other way. It is Jira's own issue links, and writing
+    it needed somewhere in the UIF to put a link, which the schema did not have
+    — so the gap was not laziness but an unresolved contract question, recorded
+    as such. Adding `links` to the schema, reading `fields.parent` and
+    `fields.issuelinks` from the response already being fetched, and landing the
+    edge gave it a writer; `read.requirement_hierarchy` gave it a reader. That
+    is also requirement decomposition, delivered without a new label.
 
-    When a writer appears, delete its name from here and from the comment.
+    This now asserts the property rather than the exception: nothing catalogued
+    may be named here as writerless.
     """
     source = Path("metis_mcp/ontology/labels.py").read_text()
-    assert "LINKS_TO" in source
-    assert "Catalogued, written by nothing" in source
+    assert "Catalogued, written by nothing" not in source, (
+        "a relationship is recorded as having no writer. Either give it one, or "
+        "stage it out — a catalogued edge nothing writes answers every query "
+        "about it with silence that reads as 'none'.")
+
+    # Both halves, named in the module that declares the edge.
+    assert "intake_landing.plan_intake" in source
+    assert "read.requirement_hierarchy" in source
+
+
+def test_the_links_to_writer_and_reader_actually_exist():
+    """Guarding the guard: naming a writer in a comment is not having one.
+
+    The previous version of this test asserted a COMMENT was present. That was
+    right while the gap was the point; asserting a comment after the gap closed
+    would let both halves be deleted with the prose left behind.
+    """
+    import inspect
+
+    from metis_mcp.model_sources import intake_landing
+    from metis_mcp.read import requirement_hierarchy
+
+    assert "LINKS_TO" in inspect.getsource(intake_landing.plan_intake), (
+        "intake_landing is named as the writer and plans no LINKS_TO edge")
+    assert callable(requirement_hierarchy)
+
+    from metis_mcp.read import HIERARCHY_CYPHER
+
+    assert "LINKS_TO" in HIERARCHY_CYPHER, (
+        "read.requirement_hierarchy is named as the reader and its query does "
+        "not traverse the edge")
+    # Both directions: "what is under this" and "what is this part of" are
+    # different questions, and answering only one leaves a reviewer looking at a
+    # story unable to see what it belongs to.
+    assert HIERARCHY_CYPHER.count("LINKS_TO") >= 2
 
 
 # ---------------------------------------------------------------------------
@@ -805,13 +952,16 @@ def test_every_rule_id_cited_in_code_is_defined_in_the_spec():
 
 # Read queries that touch a validity-carrying label and do NOT filter on it.
 #
-# Harmless TODAY and dangerous the moment it is not: nothing sets `valid_to` yet,
-# so every node is currently valid and an unfiltered read cannot return a
-# superseded fact. The instant an invalidation path exists, each of these starts
-# returning history as though it were current — and that failure looks exactly
-# like success, which is why it is listed rather than left to be noticed.
+# **The "dangerous the moment it is not" moment has arrived.** This comment used
+# to say the gap was harmless because nothing set `valid_to`, so every node was
+# current and an unfiltered read could not return a superseded fact. That is no
+# longer true: `landing.plan_supersession` closes a window whenever a claim's
+# text changes, and `landing.invalidate` -- written, tested and previously
+# called by nothing -- now has a caller on the main landing path.
 #
-# Emptying this list is the rest of the bi-temporal work.
+# So an unfiltered read over one of these labels returns history as though it
+# were current, and that failure looks exactly like success.
+#
 # Empty. Every read over a validity-carrying label now filters on it.
 #
 # Kept as a named, asserted-against set rather than deleted: the guard below
@@ -833,24 +983,39 @@ def test_every_read_over_a_validity_label_filters_on_validity_or_is_listed():
     Neo4j actually receives.
 
     `lifecycle_state` filtering is NOT a substitute — review state and validity
-    are independent axes, and an Approved fact can be superseded.
+    are independent axes, and an Approved fact can be superseded (D-15).
+
+    **Scope, stated because it is narrower than the rule.** This finds queries
+    that name a validity label *literally* (`:Requirement`). A query that selects
+    labels through a parameter — `any(l IN labels(n) WHERE l IN $labels)`, which
+    `landing.current_claims` uses — is invisible to it, because deciding what
+    `$labels` will hold at runtime is not something a scan can do. Those are
+    written deliberately and reviewed as such; the scan catches the ordinary
+    case, which is the one that drifts.
     """
     import re as _re
 
-    from metis_mcp.mbt import graph_loader
+    from metis_mcp.mbt import cli, graph_loader
+    from metis_mcp.model_sources import landing
     from metis_mcp.ontology.labels import VALIDITY_LABELS
 
     label_alt = "|".join(VALIDITY_LABELS)
     offences = []
-    for name in sorted(n for n in vars(graph_loader) if n.endswith("_CYPHER")):
-        body = getattr(graph_loader, name)
-        if not isinstance(body, str) or not _re.search(rf":({label_alt})\b", body):
-            continue
-        filters = "valid_to" in body
-        if filters and name in UNFILTERED_VALIDITY_READS:
-            offences.append(f"{name} now filters on validity — delete it from "
-                            f"UNFILTERED_VALIDITY_READS")
-        elif not filters and name not in UNFILTERED_VALIDITY_READS:
-            offences.append(f"{name} reads a validity-carrying label and does not "
-                            f"filter on `valid_to`, and is not listed as a known gap")
+    # Widened past `graph_loader` when supersession landed: the claim queries
+    # live in `landing` and `cli`, and a guard that watched one module while the
+    # writes moved to three is the shape of gap it exists to prevent.
+    for module in (graph_loader, landing, cli):
+        for name in sorted(n for n in vars(module) if n.endswith("_CYPHER")):
+            body = getattr(module, name)
+            if not isinstance(body, str) or not _re.search(rf":({label_alt})\b", body):
+                continue
+            where = f"{module.__name__}.{name}"
+            filters = "valid_to" in body
+            if filters and where in UNFILTERED_VALIDITY_READS:
+                offences.append(f"{where} now filters on validity — delete it "
+                                f"from UNFILTERED_VALIDITY_READS")
+            elif not filters and where not in UNFILTERED_VALIDITY_READS:
+                offences.append(f"{where} reads a validity-carrying label and "
+                                f"does not filter on `valid_to`, and is not "
+                                f"listed as a known gap")
     assert not offences, "\n  ".join([""] + offences)

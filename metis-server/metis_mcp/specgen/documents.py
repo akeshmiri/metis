@@ -28,9 +28,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from metis_mcp.mbt.model import QUARANTINE
-from metis_mcp.model_sources.landing import LandingPlan, PlannedEdge, PlannedNode
-from metis_mcp.ontology.validation import validate as validate_node
-from metis_mcp.ontology.validation import validate_relationship
+from metis_mcp.model_sources.landing import LandingPlan
 
 SPEC_DOCUMENT = "SpecDocument"
 ENTITY_DOCUMENT = "EntityDocument"
@@ -44,23 +42,7 @@ def _plan_document(*, label: str, document_id: str, title: str,
     plan = LandingPlan(episode_id=episode_id)
     rendered = rendered_at or datetime.now(timezone.utc).isoformat(timespec="seconds")
 
-    def add_node(node_label: str, props: dict) -> bool:
-        outcome = validate_node(node_label, props)
-        if not outcome.valid:
-            plan.errors.extend(outcome.errors)
-            return False
-        plan.nodes.append(PlannedNode(label=node_label, properties=props))
-        return True
-
-    def add_edge(from_label: str, from_id: str, rel: str,
-                 to_label: str, to_id: str) -> None:
-        outcome = validate_relationship(from_label, rel, to_label)
-        if not outcome.valid:
-            plan.errors.extend(outcome.errors)
-            return
-        plan.edges.append(PlannedEdge(from_label, from_id, rel, to_label, to_id))
-
-    ok = add_node(label, {
+    ok = plan.add_node(label, {
         "id": document_id,
         "source_episode_id": episode_id,
         "name": title,
@@ -78,10 +60,10 @@ def _plan_document(*, label: str, document_id: str, title: str,
     # miss as `unmatched` rather than failing, which is the honest outcome --
     # a document whose subject has not landed is a real state, and silently
     # dropping the edge would make it invisible.
-    add_edge(label, document_id, "DESCRIBES", describes_label, describes_id)
+    plan.add_edge(label, document_id, "DESCRIBES", describes_label, describes_id)
 
     for criterion_id in dict.fromkeys(cites):
-        add_edge(label, document_id, "CITES", "AcceptanceCriterion", criterion_id)
+        plan.add_edge(label, document_id, "CITES", "AcceptanceCriterion", criterion_id)
 
     return plan
 

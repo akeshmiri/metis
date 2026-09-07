@@ -19,11 +19,11 @@ wherever an absolute interpreter path is needed.
 uv run python -m pytest -q
 ```
 
-77 test files — **no Neo4j, no model calls, no config file.** The engine is
+103 test files — **no Neo4j, no model calls, no config file.** The engine is
 deliberately database-free: models, criteria, path generation, coverage and
 validation are all pure. If this does not pass, stop here.
 
-One caveat on that command: five of those files DO need Joern and a JDK, and
+One caveat on that command: three of those files DO need Joern and a JDK, and
 `conftest.py` fails rather than skips without them, deliberately — they are the
 only behavioural test the query packs have. Run `metis doctor` first. To exercise
 just the engine-free half, see the `--ignore` list in `CLAUDE.md`.
@@ -32,7 +32,7 @@ just the engine-free half, see the `--ignore` list in `CLAUDE.md`.
 uv run metis workflow list
 ```
 
-Five workflows, their ordered stages, and where each stops for a human.
+Ten workflows, their ordered stages, and where each stops for a human.
 
 ## The graph, when you need one
 
@@ -84,8 +84,9 @@ instance; it simply does not rely on being one.
 interpreter path and an absolute `cwd`. Both are required, and both are absolute
 on purpose: a client launches the server from its own working directory.
 
-The surface is **nineteen read-only tools**, five of them the authoring
-surface (X-6e). `list_workflows` is the cheapest check
+The surface is **fifty-five read-only tools**, five of them the authoring
+surface (X-6e) and ten the risk toolkit — of which only `risk_candidates`,
+`requirement_risk` and `release_risk` need a graph. `list_workflows` is the cheapest check
 that it is wired up: it reads the workflow registry and needs no graph.
 
 ## A first real run
@@ -101,7 +102,16 @@ uv run metis report --journey <journey> --surface api
 uv run metis knowledge check <knowledge.json>
 uv run metis knowledge compare <knowledge.json> --journey <j>
 
-# The reviewer's screens (loopback only; this server does not authenticate).
+# The reviewer's screens. Loopback by default. READING needs no credential;
+# DECIDING does — the server signs a reviewer in at /login and checks the token
+# against the digest store, exactly as the HTTP API does.
+#
+#   printf '%s\t%s\t%s\n' "$(python3 -c 'import hashlib,sys;print(hashlib.sha256(sys.argv[1].encode()).hexdigest())' "$TOKEN")" alice reviewer > tokens.tsv
+#   METIS_API_TOKENS=tokens.tsv uv run metis ui --journey <journey> --surface api
+#
+# The file holds DIGESTS, never tokens, so it is not itself a secret (PLT-005).
+# Without it the UI still serves everything and refuses every decision, and says
+# so at startup rather than on your first submit.
 uv run metis ui --journey <journey> --surface api
 ```
 

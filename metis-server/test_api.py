@@ -280,9 +280,15 @@ def test_a_confirmation_does_not_carry_to_a_changed_batch_over_http(client):
 
 
 def test_publication_still_sends_nothing(client):
-    """Dry-run is the only transport registered (T-21/C3). An API that confirmed
-    a publication and then performed one would be a bigger change than this
-    is."""
+    """The HTTP surface confirms a publication and performs none.
+
+    This said "dry-run is the only transport registered", which stopped being
+    true when `zephyr-scale` landed. What the test actually asserts is narrower
+    and still holds: **this API takes the confirmation and does not send** — a
+    live transport is selected on the CLI and additionally needs
+    `METIS_ALLOW_EXTERNAL_WRITES` on the installation, so an endpoint that
+    confirmed and then published would be a bigger change than this is.
+    """
     issued = client.post("/publications/b1/confirmation",
                          params={"fingerprint": "fp"}, headers=AUTHED).json()
     body = client.post("/publications/b1/confirm", headers=AUTHED, params={
@@ -532,16 +538,44 @@ def test_the_reason_survives_in_a_header(tmp_path, monkeypatch):
 def test_an_answer_that_is_legitimately_empty_is_still_200(tmp_path, monkeypatch):
     """The distinction 204 is carrying. "I looked and there is none" is an
     answer; "I cannot look" is the absence of one, and a caller that cannot tell
-    them apart will report an empty graph as an empty result."""
+    them apart will report an empty graph as an empty result.
+
+    Asserted on ONE endpoint under both conditions, because that is the only way
+    the two codes are actually contrasted. This test used to be a byte-identical
+    copy of `test_a_read_endpoint_returns_exactly_what_the_mcp_tool_returns` --
+    it hit `/workflows`, which is never empty and never 204, so the distinction
+    it names was never exercised and the test could not have failed.
+
+    The empty answer is stubbed rather than found: a legitimately-empty read
+    needs a graph that answers, and this suite deliberately has no Neo4j. What is
+    under test is `_answer`'s branch, and the stub is what makes both sides of it
+    reachable from here.
+    """
     import json
 
     from metis_mcp import server as tools
 
     client = _readonly_client(tmp_path, monkeypatch)
-    response = client.get("/workflows", headers=AUTHED)
 
-    assert response.status_code == 200
-    assert response.json() == json.loads(tools.list_workflows())
+    # "I looked and there is none" -- a real answer that happens to be empty.
+    monkeypatch.setattr(tools, "search_knowledge",
+                        lambda **kw: json.dumps({"results": [], "query": kw["query"]}))
+    found_nothing = client.get("/search?q=zzz-no-such-thing", headers=AUTHED)
+
+    assert found_nothing.status_code == 200, (
+        "an empty result is an answer; 204 would tell the caller the server "
+        "could not look")
+    assert found_nothing.json() == {"results": [], "query": "zzz-no-such-thing"}
+
+    # "I cannot look" -- the same endpoint, with nothing to look in.
+    monkeypatch.setattr(tools, "search_knowledge",
+                        lambda **kw: json.dumps(
+                            {"ok": False, "reason": "no graph is configured"}))
+    could_not_look = client.get("/search?q=zzz-no-such-thing", headers=AUTHED)
+
+    assert could_not_look.status_code == 204
+    assert could_not_look.content == b""
+    assert "graph" in could_not_look.headers.get("X-Metis-Reason", "").lower()
 
 
 def test_a_reason_with_typography_does_not_become_a_500(tmp_path, monkeypatch):

@@ -403,9 +403,13 @@ CONSUMED: tuple[ModelFact, ...] = (
         concerns=(REVIEW,)),
     ModelFact(
         "State", "condition", (PROSE,),
-        ("rendering.test_case.precondition_of", "rendering.payload._act_detail",
-         "rendering.generators.playwright._step"),
-        "what the page presents, which is what a UI tester actually asserts",
+        # `format_case` is the reader now: the state's own words are the case's
+        # `Given` clause. The two entries this replaces named
+        # `rendering.payload` and `rendering.generators`, both deleted with the
+        # code-generation surface — see the note under this tuple.
+        ("rendering.test_case.precondition_of", "rendering.test_case.format_case"),
+        "the case's Given clause — the state in its own words, which is what a "
+        "tester reads before doing anything else",
         concerns=(RESPONSE,)),
 )
 
@@ -460,6 +464,31 @@ NOT_CONSUMED: dict[tuple[str, str], str] = {
         "whether the outcome was constructed in code or only declared on an "
         "annotation. Read by `read.py`. Returns when a case should be graded by "
         "how its expectation was arrived at.",
+    # **Measured at extraction, consumed by risk and never by generation.**
+    # A test case is not written differently because its handler branches more;
+    # the technique is chosen from the guard, which `techniques.py` already
+    # reads. What these decide is how much testing the behaviour WARRANTS, which
+    # is a question `risk/product.py` answers and a renderer has no view on.
+    #
+    # Carried on the transition rather than looked up because the implementing
+    # method is not reachable from a model: `Transition -> Class` exists only for
+    # payload types. Returns to CONSUMED if a rendered case ever states how
+    # complex the code under it was.
+    ("Transition", "complexity"):
+        "McCabe complexity of the handler, measured by `jvm-structural` and "
+        "carried from the mapper. Read by `risk/product.py` to band "
+        "defect-proneness. 0 means NOT MEASURED, never simple.",
+    ("Transition", "size"):
+        "source lines of the handler, from the same measurement. Read beside "
+        "`complexity`; 0 means not measured.",
+    ("Transition", "repairs"):
+        "how often the handler's file was repaired in the window. Read by "
+        "`risk/product.py`; a test case is not written differently because the "
+        "code under it has been fixed before.",
+    ("Transition", "repairs_window"):
+        "the commit range `repairs` was counted over. Carried so the count is "
+        "never read without it — a fix count with no window is not a "
+        "measurement.",
     ("Transition", "guard_claim"):
         "how the guard was arrived at (`contract.LINK_*`). Nothing reads it back "
         "today. Returns when a rendered case distinguishes a guard recovered from "

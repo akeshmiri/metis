@@ -1,65 +1,94 @@
 # Métis Helm Chart
 
-Deploys Métis's own infrastructure: the MCP server (client-agnostic — Claude and
-GitHub Copilot both connect the same way, see `metis-multi-client-integration.md`),
-the ingestion worker (extraction against an already-populated source
-database, catalogue only), the guardrail-corpus CI/replay
-job (`CONST-057`/`058`), and Neo4j (Community for Phase 0, Enterprise once
-budgeted — see the master spec's risk register, §15).
+Deploys **one component**: the MCP server, over Streamable HTTP, plus Neo4j as a
+subchart dependency.
 
-**Deliberately not in this chart:** Postgres (the episode log lives in Neo4j —
-single-database decision) and Grafana (guardrail/DQ metrics are new panels on
-an already-running Grafana) — both would be
-redundant infrastructure, not missing infrastructure.
+The header here used to name an ingestion worker, a guardrail-corpus CI/replay
+job and a source-Postgres connection, and cite `CONST-051`–`CONST-058`. None of
+those exist: the ingestion worker and the guardrail corpus went with the v1
+engine, the database layer was staged out in the 2026-08-31 re-baseline, and the
+`CONST-*` family is v1 constitution rules the current specification does not
+carry. `components:` has always held exactly one entry.
+
+**Deliberately not here:** Postgres (the episode log lives in Neo4j — a single
+database) and Grafana (metrics are panels on an already-running one).
 
 ## Structure
 
-Follows a conventional orchestration chart layout: one chart, a
-`components:` map in `values.yaml`, shared Deployment/Service/CronJob
+One chart, a `components:` map in `values.yaml`, shared Deployment/Service
 templates driven from that map (`templates/_objects.tpl`, `component.yaml`)
-rather than one hand-written manifest per component.
+rather than a hand-written manifest per component.
 
 ## Prerequisites
 
-- Helm 3.x, a Kubernetes cluster with a `StorageClass` for Neo4j's PVC
-- Network connectivity from this cluster to the source Postgres instance
-- An Anthropic API key
-- A Zero Data Retention agreement confirmed before ingesting any
-  `Confidential`-tier repository. **This is an organisational prerequisite, not
-  an enforced one**: `zdr.confirmed` and the `repositories` classifications in
-  `files/metis-config.yaml` are read by nothing in this build, and the
-  `CONST-051`–`053` rules they cite are v1 constitution rules that the current
-  specification does not carry. Nothing blocks an unclassified repository.
+- Helm 3.x, and a cluster with a `StorageClass` for Neo4j's PVC
+- A Neo4j password, supplied at install and never committed
+
+No Anthropic key, and no source-database connectivity: Métis loads no model by
+default (semantic search is a Protocol with no bundled implementation), and it
+reads no database it does not own — `METIS_EXECUTE` is `off` by default and the
+clients are optional extras a default install does not have.
 
 ## Install
 
-The chart renders a complete deployment `config.json` Secret from the install
-values. The MCP server and ingestion worker read it through
-`METIS_CONFIG_PATH`; they do not consume `NEO4J_URI`, `NEO4J_PASSWORD`, or
-`METIS_NEO4J_*` runtime variables. Local MCP and Atlas usage are separate and
-read `~/.metis/config.json`.
-
 ```bash
-# Add the real Neo4j chart repo (dependency)
 helm repo add neo4j https://helm.neo4j.com/neo4j
 helm dependency update
 
-# Phase 0 / sandbox
 helm install metis . -f values.yaml -f values-sbx.yaml \
-  --set-string secrets.sourceDbPassword="$METIS_SOURCE_DB_PASSWORD" \
-  --set-string secrets.neo4jPassword="$DEPLOYMENT_NEO4J_PASSWORD" \
-  --set-string secrets.anthropicApiKey="$ANTHROPIC_API_KEY" \
-  --set-string secrets.oauthClientSecret="$OAUTH_CLIENT_SECRET"
-
-# Production (once Neo4j Enterprise licensing is budgeted, §15)
-helm install metis . -f values.yaml \
-  --set neo4j.edition=enterprise \
-  --set neo4j.acceptLicenseAgreement=yes \
-  --set-string secrets.sourceDbPassword="$METIS_SOURCE_DB_PASSWORD" \
-  --set-string secrets.neo4jPassword="$DEPLOYMENT_NEO4J_PASSWORD" \
-  --set-string secrets.anthropicApiKey="$ANTHROPIC_API_KEY" \
-  --set-string secrets.oauthClientSecret="$OAUTH_CLIENT_SECRET"
+  --set-string secrets.neo4jPassword="$DEPLOYMENT_NEO4J_PASSWORD"
 ```
+
+**One secret, because one is read.** `sourceDbPassword`, `anthropicApiKey` and
+`oauthClientSecret` were required at install and opened by nothing — a secret
+nothing reads is still a secret somebody has to rotate.
+
+The mounted `config.json` **names** the password variable rather than carrying
+the value (`password_env`, PLT-005). It used to hold the literal, and a
+Kubernetes secret volume mounts 0644 by default, which
+`graph_session._password_from_file` refuses outright — so the chart could not
+authenticate at all. The volume is mounted `0400` as well; that is defence in
+depth now rather than the fix.
+
+## What this chart could not do, and what changed
+
+It rendered cleanly and passed `helm lint` while being unable to start a working
+pod for **four independent reasons**, each sufficient on its own. Worth reading
+before trusting a chart that lints:
+
+| Defect | Effect |
+|---|---|
+| `MCP_TRANSPORT` set; `METIS_MCP_TRANSPORT` is what is read | the container ran `stdio` — waiting on a stdin nobody was attached to, while publishing a port nothing listened on |
+| `METIS_HTTP_HOST` never set | bound `127.0.0.1`, which inside a pod means the pod. The Service reached nothing |
+| liveness probe on `/healthz` | that endpoint is on the HTTP API. `metis-mcp-server` 404s it, so every pod failed its probe and restarted in a loop |
+| literal password in a 0644 mount | refused at startup, every time |
+
+Fourteen of the sixteen environment variables this chart set had no reader at
+all — the `OAUTH_*` family, the `METIS_SOURCE_DB_*` family (the database layer
+was staged out in the 2026-08-31 re-baseline), `ANTHROPIC_API_KEY`,
+`METIS_LOG_LEVEL`. A variable nothing reads looks exactly like a variable
+something reads, which is how `MCP_TRANSPORT` sat beside the name that works.
+
+`test_structure.py` now asserts the chart configures nothing without a reader,
+sets the switches that decide what a deployment may do, keeps a literal secret
+out of the committed config, and does not probe an endpoint this process lacks.
+CI renders the chart on every push.
+
+## What this does not do
+
+**The MCP surface does not authenticate.** It cannot approve or publish (N-8),
+and it will read out every requirement, criterion and specification in the graph
+to whoever reaches it. Binding `0.0.0.0` is what makes the Service work and the
+server prints a warning about it, correctly. What bounds it here is cluster
+networking and nothing else.
+
+For anything beyond a single trusted network, put the HTTP API's bearer-token
+surface (`METIS_API_TOKENS`, digests never literals) in front of it. That is a
+larger change than this chart.
+
+**A real deployment is untested.** Everything above is verified by `helm lint`,
+`helm template`, and by resolving the rendered config against the real
+`graph_session` — not by running it on a cluster.
 
 ## What's genuinely still open
 

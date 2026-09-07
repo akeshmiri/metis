@@ -43,6 +43,16 @@ def _use_when(description: str) -> str:
     match = re.search(r"\bUse when\b(.*?)(?:\.|$)", description, re.S)
     if match:
         clause = " ".join(match.group(1).split()).strip()
+        # A trailing exclusion is part of the trigger, not commentary. Stopping
+        # at the first period dropped "Not for batch-approving a queue" from
+        # review-assist -- which is precisely the case the router most needs, and
+        # exactly the kind of routing signal a table exists to carry.
+        # The first match consumed its own period, so the remainder opens on
+        # whitespace rather than on the separator.
+        exclusion = re.match(r"\s*(Not (?:for|when)\b.*?)(?:\.|$)",
+                             description[match.end():], re.S)
+        if exclusion:
+            clause += " — " + " ".join(exclusion.group(1).split()).strip()
         return (clause[:1].upper() + clause[1:]) if clause else description
     return " ".join(re.split(r"(?<=[.!?])\s+", description.strip(), maxsplit=1)[0].split())
 
@@ -209,6 +219,11 @@ def write_router(target=None) -> list:
             raise ValueError(
                 f"{path} carries no generated marker, so there is no boundary "
                 f"between its authored frontmatter and its generated body")
-        path.write_text(head + HEADER + "\n\n" + body)
+        # `body` already opens with HEADER (see `render_router`), so this wrote
+        # it twice -- permanently, since `partition` takes the first occurrence
+        # and each regeneration was idempotent on the duplicate.
+        # `test_the_checked_in_router_matches_the_workflow_registry` uses a
+        # substring check, which is exactly why nothing noticed.
+        path.write_text(head + body)
         written.append(path)
     return written

@@ -108,6 +108,18 @@ class GraphNotConfigured(Exception):
     """Raised when a graph operation is requested without a usable connection."""
 
 
+class GraphUnreachable(GraphNotConfigured):
+    """Configured, and the database did not answer.
+
+    A **subclass** so that every existing `except GraphNotConfigured` keeps
+    catching it, and a distinct type so the two can be told apart — because they
+    are different diagnoses with different repairs. "No graph is configured" sends
+    somebody to set an environment variable that is already set; the real repair
+    is to start the database. Reporting the first when the second is true is the
+    kind of confidently-wrong message this codebase treats as a defect.
+    """
+
+
 @dataclass(frozen=True)
 class GraphConfig:
     uri: str
@@ -255,6 +267,8 @@ def session(uri: str | None = None, user: str | None = None):
     config = resolve(uri, user)
     try:
         from neo4j import GraphDatabase
+        from neo4j.exceptions import AuthError as _AuthError
+        from neo4j.exceptions import ServiceUnavailable as _ServiceUnavailable
     except ImportError as e:  # pragma: no cover - environment-dependent
         raise GraphNotConfigured(
             "the neo4j driver is not installed; run: pip install neo4j"
@@ -295,8 +309,86 @@ def session(uri: str | None = None, user: str | None = None):
     try:
         with driver.session() as s:
             yield s
+    except _AuthError as e:
+        raise GraphUnreachable(
+            f"the graph at {config.redacted} refused those credentials "
+            f"(password from {config.password_source or 'the config file'})."
+        ) from e
+    except _ServiceUnavailable as e:
+        # Translated rather than left to propagate. Every caller already handles
+        # GraphNotConfigured; none handled this, so a database that was merely
+        # not running surfaced as a forty-line neo4j traceback out of an MCP
+        # tool, where the client shows an opaque error and the operator has no
+        # idea which of the two problems they have.
+        raise GraphUnreachable(
+            f"the graph at {config.redacted} is configured but did not answer. "
+            f"Start it (or check the URI) — this is not a configuration "
+            f"problem: the connection details were found."
+        ) from e
     finally:
         driver.close()
+
+
+def reachable(uri: str | None = None, user: str | None = None,
+              timeout: float = 3.0) -> tuple[bool, str]:
+    """Is there actually a database there? `(ok, what to say about it)`.
+
+    **`resolve()` answers a different question and was being read as this one.**
+    It resolves *configuration* — a URI, a user, and where the password came
+    from — and opens no socket. `metis doctor` called it and reported
+
+        [ok  ] graph   neo4j@bolt://localhost:7687
+
+    with nothing listening on 7687. The next command then failed with a driver
+    traceback. Doctor is the command every document tells a new user to run
+    first, and a green line for the dependency that most often is not there is
+    the worst place in the system for a false positive.
+
+    Never raises. A preflight check that can itself blow up is not a preflight
+    check, and the three failures a caller must be able to tell apart —
+    unconfigured, unreachable, wrong credential — are all returned as text here
+    rather than as exception types, because `Check` carries a string.
+
+    The timeout is short and explicit: an unreachable host should cost a
+    preflight three seconds, not the driver's default retry window.
+    """
+    try:
+        config = resolve(uri, user)
+    except GraphNotConfigured as e:
+        return False, str(e).splitlines()[0]
+
+    try:
+        from neo4j import GraphDatabase
+        from neo4j.exceptions import AuthError, ServiceUnavailable
+    except ImportError:                       # pragma: no cover - env-dependent
+        return False, "the neo4j driver is not installed; run: pip install neo4j"
+
+    driver = None
+    try:
+        driver = GraphDatabase.driver(
+            config.uri, auth=(config.user, config.password),
+            connection_timeout=timeout, connection_acquisition_timeout=timeout,
+            notifications_disabled_classifications=["UNRECOGNIZED"])
+        driver.verify_connectivity()
+        return True, (f"{config.redacted} (password from "
+                      f"{config.password_source})")
+    except AuthError:
+        # Named separately from unreachable: the host is there and the
+        # credential is wrong, which is a different repair.
+        return False, (f"{config.redacted} refused the credential from "
+                       f"{config.password_source}")
+    except ServiceUnavailable as e:
+        return False, f"{config.redacted} is unreachable ({_first_line(e)})"
+    except Exception as e:                    # pragma: no cover - driver-specific
+        return False, f"{config.redacted}: {_first_line(e)}"
+    finally:
+        if driver is not None:
+            driver.close()
+
+
+def _first_line(exc: Exception) -> str:
+    text = str(exc).strip().splitlines()
+    return text[0] if text else exc.__class__.__name__
 
 
 def count_written(result) -> int:

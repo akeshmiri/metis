@@ -2,7 +2,7 @@
 Drafting acceptance criteria from an extracted model (spec §4.5, S-19; R5).
 
 **The problem this exists for.** A real estate frequently has no acceptance
-criteria at all. The the pilot estate estate has 145 API transitions and 8 criteria that
+criteria at all. The pilot estate has 145 API transitions and 8 criteria that
 validate anything — and even those were written after the code. S-3 says a
 deployment running only code extraction gets coverage, not correctness, so
 without criteria the chain stops permanently at coverage.
@@ -227,3 +227,91 @@ def format_drafts(drafts: DraftSet) -> str:
               "  claim until a person edits or affirms it (S-19). Confirming a",
               "  draft unchanged documents the system; it does not validate it."]
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Landing the drafts
+# ---------------------------------------------------------------------------
+#
+# **`ac_draft` drafted criteria and nothing landed them.** `context.drafts` was
+# written by the stage, read by one check and by this module's own formatter,
+# and consumed by nothing else — so a run reported "13/13 implemented transitions
+# drafted" and the graph held zero `AcceptanceCriterion` nodes.
+#
+# That is half of why every real run ended at `reconcile -> no acceptance
+# criteria in scope`. The other half is that `_reconcile` reads `context.criteria`
+# and nothing in `model-build` ever set it. Both had to be true for the symptom
+# to look like a missing requirements source, which is what it was diagnosed as.
+#
+# It is also why `AcceptanceCriterion-[:VALIDATES]->Transition` had **zero**
+# instances — the fact every generated agent reports as the reason `trace` cannot
+# reach a requirement.
+
+
+def plan_drafts(drafts, model, *, surface: str, episode_id: str,
+                recorded: str = ""):
+    """Drafted criteria as the nodes and edges they would become. **Pure.**
+
+    **The edge is planned against the SPECIALISED label.** A `VALIDATES` edge
+    planned against `:Transition` passes the ontology check — `is_allowed` walks
+    the specialisation chain — and then merges nothing, because the node carries
+    `:ApiCall`. `land` reports that as `unmatched` and does not fail. That is the
+    single most expensive mistake recorded in this repository, and
+    `landing.transition_label_for` is the reason it cannot be repeated here.
+    """
+    from datetime import datetime, timezone
+
+    from metis_mcp.mbt.model import QUARANTINE
+    from metis_mcp.model_sources.landing import (
+        LandingPlan,
+        PlannedEdge,
+        PlannedNode,
+        ensure_namespaced,
+        graph_transition_id,
+        transition_label_for,
+    )
+    from metis_mcp.retrieval import search_text_for
+
+    when = recorded or datetime.now(timezone.utc).isoformat(timespec="seconds")
+    plan = LandingPlan(episode_id=episode_id)
+    label = transition_label_for(surface)
+    model_id = model.id
+
+    for draft in drafts:
+        text = f"Given {draft.given}, when {draft.when}, then {draft.then}"
+        plan.nodes.append(PlannedNode("AcceptanceCriterion", {
+            "id": ensure_namespaced(model_id, draft.id),
+            "source_episode_id": episode_id,
+            "name": draft.id,
+            "text": text,
+            "search_text": search_text_for(draft.id, text),
+            "revision": 1,
+            # S-4, and S-19 on top of it: a drafted criterion is `code_derived`,
+            # the weakest grade there is. It agrees with the code because it was
+            # written from it, which proves nothing — and saying so is the whole
+            # reason the provenance ladder exists.
+            "lifecycle_state": QUARANTINE,
+            "provenance": CODE_DERIVED,
+            "atomicity": draft.atomicity,
+            "valid_from": when,
+            "valid_to": "",
+        }))
+        # **Through `graph_transition_id`, whose docstring says why.**
+        #
+        #   "Every writer of a transition id must go through here. One that mints
+        #    its own plans an edge against a node that does not exist, which
+        #    `land` reports as unmatched rather than failing."
+        #
+        # This minted its own twice before getting there. Namespacing the
+        # source id produced `records-api::records-api::1cd54a2…`; bare-then-
+        # namespace fixed that and still failed, because landing does not keep
+        # the source model's id at all — it derives the node id from the natural
+        # key `(model, source, trigger, target)`, so `t01` becomes a digest. Both
+        # attempts landed 13 criteria and 0 edges, reported as `unmatched`.
+        plan.edges.append(PlannedEdge(
+            from_label="AcceptanceCriterion",
+            from_id=ensure_namespaced(model_id, draft.id),
+            rel_type="VALIDATES",
+            to_label=label,
+            to_id=graph_transition_id(model, draft.transition_id)))
+    return plan

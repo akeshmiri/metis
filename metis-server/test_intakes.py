@@ -525,3 +525,318 @@ def test_analyse_does_not_discard_the_service_it_was_given():
     assert 'args.service = ""' not in source, (
         "the service is being overwritten after it was parsed")
     assert "args.service" in source, "the service must still be threaded through"
+
+
+# --------------------------------------------------------------------------
+# Validating a UIF against its own schema.
+#
+# `metis-intake-processor/SKILL.md` told a reader "a UIF is validated against
+# `unified-intake-format.schema.json` — 830 lines, and the machine-readable half
+# of everything below", and nothing in the engine opened that file. The only
+# reader in the tree was `test_independence.py`, pulling the `source_system`
+# enum out to check the port was complete. A promise with no checker behind it
+# reads as a guarantee, which is the shape this project hunts for.
+# --------------------------------------------------------------------------
+
+# **Written against the schema, and it does NOT match the fixture the landing
+# tests use.** `test_intake_landing.py`'s `_uif()` carries `comments` and `links`
+# (the schema sets `additionalProperties: false`), omits `metadata.status`,
+# `scope.created_at` and `scope.last_updated_at` (all required), and spells
+# `primary_type` as `"Story"` where the enum is lowercase. Five failures.
+#
+# Neither side is obviously wrong and this file does not decide: the landing path
+# accepts documents the declared contract rejects, and until `validate_uif`
+# existed nothing could see that. Whichever is authoritative, the disagreement is
+# real and is now visible. The fixture here conforms to the SCHEMA, so these
+# tests exercise the validator rather than re-encoding the drift.
+_UIF = {
+    "uif_version": "1.0.0",
+    "facts": {}, "api_contracts": [], "error_handling": {},
+    "specifications": {}, "data_model": [], "open_questions": {},
+    "scope": {"primary_id": "PROJ-14", "primary_type": "story",
+              "source_system": "jira",
+              "created_at": "2026-08-20T09:00:00Z",
+              "last_updated_at": "2026-08-21T09:00:00Z",
+              "uif_generated_at": "2026-08-21T10:00:00Z"},
+    # `status` is a normalised object, not a tracker's own string -- the schema
+    # models what a status MEANS across six axes rather than carrying "Open".
+    "metadata": {"title": "Archive a record",
+                 "status": {"summary_status": "active",
+                            "approval_state": "under_review"},
+                 "description": "When a user archives a record, the system "
+                                "shall hide it from search."},
+}
+
+
+def _uif(**overrides):
+    doc = dict(_UIF)
+    doc.update(overrides)
+    return doc
+
+
+def test_the_schema_is_where_the_skills_write_against():
+    from metis_mcp.intakes import uif_schema_available, uif_schema_path
+
+    assert uif_schema_path().name == "unified-intake-format.schema.json"
+    available, why = uif_schema_available()
+    assert available, why
+
+
+def test_a_declared_source_system_outside_the_enum_is_an_error():
+    """The narrow mechanical question, and one the prose could never catch."""
+    from metis_mcp.intakes import validate_uif
+
+    scope = dict(_UIF["scope"], source_system="definitely-not-a-tracker")
+    errors = validate_uif(_uif(scope=scope))
+    assert errors, "an unknown source_system must not validate"
+    assert any("source_system" in e["path"] or "definitely-not-a-tracker"
+               in e["message"] for e in errors), errors
+
+
+def test_a_conforming_document_reports_no_errors():
+    """Without this the test above passes for a schema that rejects everything."""
+    from metis_mcp.intakes import validate_uif
+
+    assert validate_uif(_uif()) == []
+
+
+def test_errors_come_back_in_a_stable_order():
+    """An unstable list makes a diff between two runs unreadable."""
+    from metis_mcp.intakes import validate_uif
+
+    broken = {"uif_version": "1.0.0"}
+    assert validate_uif(broken) == validate_uif(broken)
+
+
+def test_a_deployment_that_cannot_read_the_schema_refuses_rather_than_passing():
+    """"No errors found" and "nothing looked" are different claims.
+
+    The schema ships in `plugins/`, not in this package, so an install with no
+    repository beside it has the code and not the contract. Conflating that with
+    a clean document is how the duplicate guard's `unknown` becomes `no_match`.
+    """
+    from unittest.mock import patch
+
+    from metis_mcp import intakes
+
+    with patch.object(intakes, "uif_schema_path",
+                      return_value=intakes.Path("/nonexistent/uif.schema.json")):
+        available, why = intakes.uif_schema_available()
+        assert not available
+        assert "plugins" in why, "the refusal must say what is missing"
+        try:
+            intakes.validate_uif(_uif())
+        except intakes.SchemaUnavailable:
+            pass
+        else:
+            raise AssertionError("an unreadable schema reported a clean document")
+
+
+def test_describe_reports_whether_the_contract_is_reachable():
+    from metis_mcp.intakes import describe
+
+    assert "uif-schema" in describe()
+
+
+def test_the_tool_refuses_a_missing_document_rather_than_guessing():
+    import json
+
+    from metis_mcp import server
+
+    payload = json.loads(server.validate_intake("/nonexistent/thing.json"))
+    assert payload["ok"] is False
+    assert "no such document" in payload["refused"]
+
+
+def test_the_tool_reports_valid_and_says_what_it_did_not_check(tmp_path):
+    import json
+
+    from metis_mcp import server
+
+    good = tmp_path / "good.uif.json"
+    good.write_text(json.dumps(_uif()))
+    payload = json.loads(server.validate_intake(str(good)))
+    assert payload["ok"] is True
+    assert payload["valid"] is True
+    assert payload["source_system"] == "jira"
+    # The half a schema cannot answer, named rather than left to be assumed.
+    assert "EARS" in payload["not_checked"]
+
+
+def test_valid_survives_pruning_when_it_is_false(tmp_path):
+    import json
+
+    from metis_mcp import server
+
+    bad = tmp_path / "bad.uif.json"
+    bad.write_text(json.dumps({"uif_version": "1.0.0"}))
+    payload = json.loads(server.validate_intake(str(bad)))
+    assert "valid" in payload, "the field disappeared when it mattered"
+    assert payload["valid"] is False
+    assert payload["errors"]
+
+
+def test_metis_own_producer_satisfies_the_schema_it_publishes():
+    """**The divergence this replaces, and why it is asserted the other way now.**
+
+    `tracker.to_uif` -- Métis's own producer -- wrote documents that failed the
+    schema Métis ships for external producers to write against, four ways:
+
+        metadata.status        the tracker's string where an object is required
+        scope.created_at       required, and produced by nothing
+        scope.last_updated_at  the same
+        scope.primary_type     `Story` where a lowercase enum is declared
+
+    Métis disagreeing with itself is a worse claim than a loose test fixture, and
+    it went unseen because nothing validated between `intake fetch` and `intake
+    land`: fetch wrote the documents, land read them, and neither opened the
+    contract between them. The intake workflow's `validate` stage surfaced it on
+    the demo corpus on its first run.
+
+    **The schema was made authoritative and the producer was changed to match.**
+    Every departure was a producer defect rather than a contract that was too
+    strict:
+
+      * the timestamps are IN the tracker responses; the reader simply never
+        asked for them
+      * `Story` versus `story` is a vocabulary difference, and normalising is
+        what lets one query span Jira, Confluence and Zephyr
+      * a workflow status is a classification in the schema and a quotation in
+        the tracker, and putting the quotation where the classification belongs
+        is what made the document invalid
+
+    Nothing is invented to satisfy it. An unmapped status omits `summary_status`
+    rather than guessing, an unmapped priority is omitted rather than defaulted
+    to `medium`, and the tracker's own wording is kept as an observed fact in
+    `facts.current_state` so normalising loses nothing.
+    """
+    from code_analysis import tracker
+    from metis_mcp.intakes import validate_uif
+
+    for system in ("jira", "zephyr"):
+        read = tracker.from_fixture(
+            Path(__file__).parent / "demo_project" / "trackers"
+            / f"{system}.tracker.json")
+        assert read.items, f"the {system} corpus is empty; this proves nothing"
+        for item in read.items:
+            errors = validate_uif(tracker.to_uif(item))
+            assert not errors, (
+                f"{system} {item.key} does not satisfy the UIF schema: "
+                f"{[(e['path'], e['message']) for e in errors]}")
+
+
+def test_normalising_never_invents_a_value():
+    """The half that keeps the conformance honest.
+
+    Satisfying a schema by filling required fields with plausible values is
+    worse than failing it, because the document then reads as observed. Every
+    normalisation here either maps or omits.
+    """
+    from code_analysis.tracker import (
+        normalise_item_type,
+        normalise_priority,
+        normalise_status,
+    )
+
+    # An unrecognised workflow state contributes no classification at all.
+    assert "summary_status" not in normalise_status("Awaiting Signoff")
+    assert normalise_status("", "") == {}
+    # ...and a recognised one does.
+    assert normalise_status("In Progress")["summary_status"] == "active"
+
+    # An unrecognised priority is absent, never `medium` -- a middle value
+    # claims somebody triaged this and decided it was ordinary.
+    assert normalise_priority("Screaming") == ""
+    assert normalise_priority("Blocker") == "critical"
+
+    # `primary_type` is REQUIRED, so it has a floor rather than an omission --
+    # `task` asserts "a unit of work" and nothing about what kind.
+    assert normalise_item_type("Some Custom Type") == "task"
+    assert normalise_item_type("Epic") == "epic"
+
+
+def test_the_tracker_wording_survives_normalisation():
+    """`In Progress` is what a reviewer recognises; `active` is what a query needs.
+
+    Both are kept, in the places the schema means them: the classification in
+    `metadata.status`, the quotation in `facts.current_state` with its source.
+    """
+    from code_analysis import tracker
+
+    item = tracker.from_fixture(
+        Path(__file__).parent / "demo_project" / "trackers"
+        / "jira.tracker.json").items[0]
+    document = tracker.to_uif(item)
+
+    assert document["metadata"]["status"]["summary_status"] == "active"
+    (fact,) = document["facts"]["current_state"]
+    assert fact["value"] == item.status == "In Progress"
+    assert fact["confidence"] == "observed"
+    assert fact["source_ref"]["source_id"] == item.key
+
+
+def test_the_landing_path_and_the_declared_schema_now_agree():
+    """**The divergence this replaces, and what closed it.**
+
+    `test_intake_landing.py` builds the document Métis's landing path treats as
+    a valid UIF, and it did not validate against the schema the intake skill
+    points producers at -- five ways: `comments` and `links` are not allowed
+    (`additionalProperties: false`), `metadata.status`, `scope.created_at` and
+    `scope.last_updated_at` are required and were absent, and
+    `primary_type: "Story"` is not in a lowercase enum.
+
+    Nothing could see it, because nothing opened the schema. The previous test
+    asserted the disagreement EXISTED rather than that it was fine, so it would
+    fail the day somebody closed it -- which is what happened: the schema was
+    made authoritative, `tracker.to_uif` was changed to satisfy it, and the
+    landing fixture was brought into line with the contract it is supposed to
+    exemplify.
+
+    This asserts the agreement instead. Two documents, one from each side:
+    """
+    from metis_mcp.intakes import validate_uif
+
+    # 1. The shape the LANDING path accepts, as `test_intake_landing` builds it.
+    landing_shaped = {
+        "uif_version": "1.0.0",
+        "facts": {}, "api_contracts": [], "error_handling": {},
+        "specifications": {}, "data_model": [], "open_questions": {},
+        "scope": {"primary_id": "PROJ-14", "primary_type": "story",
+                  "source_system": "jira",
+                  "created_at": "2026-07-14T09:12:00Z",
+                  "last_updated_at": "2026-08-02T16:40:00Z",
+                  "uif_generated_at": "2026-08-21T10:00:00Z"},
+        "metadata": {"title": "Archive a record",
+                     "description": "When a user archives a record, the system "
+                                    "shall hide it from search.",
+                     "status": {"summary_status": "active"}},
+    }
+    assert not validate_uif(landing_shaped), (
+        "the landing path accepts a document the published contract rejects — "
+        "which is the divergence this test was rewritten to record the end of")
+
+    # 2. The shape the PRODUCER emits, checked in full by
+    #    `test_metis_own_producer_satisfies_the_schema_it_publishes` above.
+    #    Named here so the two halves of the contract sit together.
+    from code_analysis import tracker
+
+    item = tracker.from_fixture(
+        Path(__file__).parent / "demo_project" / "trackers"
+        / "jira.tracker.json").items[0]
+    assert not validate_uif(tracker.to_uif(item))
+
+
+def test_the_agreement_check_can_actually_fail():
+    """Guarding the guard.
+
+    A `validate_uif` that returned an empty list for everything would make both
+    assertions above pass forever and prove nothing — which is the failure mode
+    the schema's own `SchemaUnavailable` exists to prevent, one level up.
+    """
+    from metis_mcp.intakes import validate_uif
+
+    errors = validate_uif({"uif_version": "1.0.0", "scope": {},
+                           "metadata": {}, "comments": ["not allowed"]})
+    assert errors, "the validator accepts a document that is plainly invalid"
+    messages = " ".join(e["message"] for e in errors)
+    assert "Additional properties" in messages or "required" in messages

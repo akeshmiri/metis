@@ -82,6 +82,17 @@ def currently_valid(*aliases: str) -> str:
     return " AND ".join(f"({a}.valid_to = '')" for a in aliases)
 
 
+def valid_at(alias: str, parameter: str = "$at") -> str:
+    """The same read, as of an instant. `valid_from <= at < valid_to`.
+
+    The half-open interval is deliberate: a fact invalidated at T was true up to
+    T and not at T, so an as-at query at exactly T must not return it. Closing
+    both ends would make a fact briefly true and superseded at once.
+    """
+    return (f"({alias}.valid_from <= {parameter}) "
+            f"AND ({alias}.valid_to = '' OR {alias}.valid_to > {parameter})")
+
+
 STATES_CYPHER = """
 MATCH (s:State)
 WHERE $journey IN s.functional_areas AND s.b_surface = $surface
@@ -111,10 +122,20 @@ MATCH (t:Transition|ApiCall|UiAction)-[:DERIVED_FROM]->(:DeclaredOutcome)
       -[:GUARDED_BY]->(c:Check)
 WHERE $journey IN t.functional_areas AND t.b_surface = $surface
 RETURN t.id             AS transition,
+       c.id             AS check_id,
        c.expression     AS expression,
        c.order          AS order,
        c.dimension_class AS dimension_class,
-       c.anchor         AS anchor
+       // **`c.anchor` does not exist, and this selected it for as long as
+       // the query has.** `_anchor_props` writes three flat properties, because
+       // a Neo4j property cannot hold a map and a reviewer filters on file. So
+       // every `GuardCheck.anchor` came back empty, T-9a's traceability claim
+       // silently failed, and -- worse -- GD-8 gates equivalence-class credit
+       // on an IDENTICAL anchor, so unrelated checks all reading "" would be
+       // credited as one behaviour.
+       c.anchor_file    AS anchor_file,
+       c.anchor_line    AS anchor_line,
+       c.anchor_commit  AS anchor_commit
 ORDER BY t.id, c.order, c.expression
 """
 
@@ -230,6 +251,36 @@ RETURN t.id AS transition_id, ac.id AS criterion_id
 ORDER BY t.id, ac.id
 """
 
+# The same D-4 route, walked from the other end: a test case back to the stated
+# requirement it serves. **There is no edge from `TestCase` to `Requirement`**,
+# and the hop through `AcceptanceCriterion` is what makes the chain auditable
+# rather than asserted -- so a missing `VALIDATES` edge breaks the walk, which is
+# the honest answer and not an empty result.
+#
+# Moved here from `graph_writer.py`. That module is a write path, and this query
+# only ever read; the label disjunction was also spelled out by hand there, which
+# is the failure mode CLAUDE.md names -- a new `Transition` specialisation would
+# have silently stopped matching. It comes from `label_expression` now.
+#
+# Moving it also ran it into a check it had been escaping: `test_ontology.py`
+# scans THIS module for reads over a validity-carrying label, and this query
+# filtered on neither `ac` nor `r`. It could therefore trace a case home to a
+# SUPERSEDED criterion and report the chain complete -- a false justification,
+# which is worse than the break it would otherwise report. Both are filtered now,
+# and because they are `OPTIONAL MATCH`es a superseded criterion yields null and
+# surfaces as the break it is.
+TRACE_CASE_CYPHER = f"""
+MATCH (tc:TestCase {{id: $case_id}})<-[:PRODUCES]-(p:Scenario)
+      -[c:COVERS {{is_validated: true}}]->(t:{label_expression("Transition")})
+OPTIONAL MATCH (ac:AcceptanceCriterion)-[:VALIDATES]->(t)
+WHERE {currently_valid("ac")}
+OPTIONAL MATCH (r:Requirement)-[:HAS_AC]->(ac)
+WHERE {currently_valid("r")}
+OPTIONAL MATCH (ji:JiraItem)-[:REPRESENTS]->(r)
+RETURN tc.id AS test_case, p.id AS path, t.id AS transition,
+       ac.id AS acceptance_criterion, r.id AS requirement, ji.jira_key AS jira_key
+"""
+
 
 def load_component(session, journey: str, surface: str = "api") -> ComponentRef | None:
     """The `Component` a `<journey>-<surface>` coverage figure refers to (P-16).
@@ -250,13 +301,141 @@ def load_component(session, journey: str, surface: str = "api") -> ComponentRef 
     )
 
 
-def load_validating_criteria(session, journey: str,
-                             surface: str = "api") -> dict[str, list[str]]:
-    """`{transition_id: [criterion_id, ...]}` -- who validates what."""
+# The as-at variants, derived by SUBSTITUTING the validity clause rather than by
+# copying the body -- the same discipline `REQUIREMENT_AS_AT_CYPHER` uses, and
+# for the same reason: a change to what these return must not apply to only one
+# of the two readings.
+#
+# **What an as-of coverage figure means, precisely.** Only the four
+# `VALIDITY_LABELS` carry a window, and `State` / `Transition` are not among
+# them -- an element that changes is the same node modified (I-17), not a new
+# claim. So this reads the model as it is NOW against the criteria as they stood
+# THEN, which is the only honest combination available: Métis does not keep a
+# model's history, and pretending otherwise would be the more confident answer
+# rather than the true one. `coverage_report` says so in its `as_of` note.
+VALIDATING_CRITERIA_AS_AT_CYPHER = VALIDATING_CRITERIA_CYPHER.replace(
+    currently_valid("ac"), valid_at("ac"))
+
+
+# The commit the model was last landed at, from the Episode its elements point
+# at. **Not a Component**: that node carries a `version` and means "what was
+# generated and published", which landing has no business inventing. This is the
+# other half P-16 asks for and the half landing genuinely knows.
+EXTRACTED_COMMIT_CYPHER = f"""
+MATCH (n) WHERE ($journey IN n.functional_areas)
+  AND (n:{label_expression("Transition")})
+MATCH (e:Episode {{id: n.source_episode_id}})
+WHERE e.commit IS NOT NULL AND e.commit <> ''
+RETURN e.commit AS commit, e.t_recorded AS recorded
+ORDER BY e.t_recorded DESC
+LIMIT 1
+"""
+
+
+def load_extracted_commit(session, journey: str) -> tuple[str, str]:
+    """`(commit, when)` the journey was last landed at, or `("", "")`."""
+    row = session.run(EXTRACTED_COMMIT_CYPHER, journey=journey).single()
+    if row is None:
+        return "", ""
+    return row["commit"] or "", row["recorded"] or ""
+
+
+def load_validating_criteria(session, journey: str, surface: str = "api",
+                             at: str = "") -> dict[str, list[str]]:
+    """`{transition_id: [criterion_id, ...]}` -- who validates what.
+
+    `at` reads the criteria as they stood at an instant instead of now.
+    """
+    cypher = VALIDATING_CRITERIA_AS_AT_CYPHER if at else VALIDATING_CRITERIA_CYPHER
     out: dict[str, list[str]] = {}
-    for row in session.run(VALIDATING_CRITERIA_CYPHER, journey=journey, surface=surface):
+    for row in session.run(cypher, journey=journey, surface=surface, at=at):
         out.setdefault(row["transition_id"], []).append(row["criterion_id"])
     return out
+
+
+def load_trace(session, case_id: str) -> list[dict]:
+    """Every D-4 hop from one `TestCase` back towards a stated requirement.
+
+    One row per (path, transition) pair, with `acceptance_criterion`,
+    `requirement` and `jira_key` left `None` wherever the chain stops. **The
+    `None` is the finding**: the walk goes TestCase -> Scenario -> Transition ->
+    AcceptanceCriterion -> Requirement -> JiraItem, and a break at any hop means
+    the behaviour is covered by a case that traces to nothing anybody asked for.
+    Collapsing that into an empty list would report "no trace" and "no case",
+    which are different answers.
+    """
+    return [dict(row) for row in session.run(TRACE_CASE_CYPHER, case_id=case_id)]
+
+
+# The `VALIDATES` edges, as the confirmed matches `reconcile` means (X-18). An
+# edge exists only because a human confirmed the match, so it IS the confirmation.
+#
+# Moved here from `cli.py`, where it was the second copy of a question this module
+# already answers, and where it carried both defects the trace query carried: a
+# hand-written label disjunction, and no validity filter on the criterion. The
+# second one matters -- reconciling against a SUPERSEDED criterion reports a
+# transition as specified by something no longer in force.
+CONFIRMED_MATCHES_CYPHER = f"""
+MATCH (a:AcceptanceCriterion)-[v:VALIDATES]->(t:{label_expression("Transition")})
+WHERE $journey IN t.functional_areas AND {currently_valid("a")}
+RETURN a.id AS ac_id, t.id AS transition_id,
+       coalesce(v.confirmed_by, '') AS confirmed_by,
+       coalesce(a.provenance, 'code_derived') AS provenance
+"""
+
+
+CONFIRMED_MATCHES_AS_AT_CYPHER = CONFIRMED_MATCHES_CYPHER.replace(
+    currently_valid("a"), valid_at("a"))
+
+
+def load_confirmed_matches(session, journey: str, at: str = "") -> list:
+    """`ConfirmedMatch` per confirmed `VALIDATES` edge in this journey.
+
+    `at` reads the criteria as they stood at an instant instead of now.
+    """
+    from metis_mcp.reconciliation.matching import ConfirmedMatch
+
+    cypher = CONFIRMED_MATCHES_AS_AT_CYPHER if at else CONFIRMED_MATCHES_CYPHER
+    return [ConfirmedMatch(ac_id=r["ac_id"], transition_id=r["transition_id"],
+                           confirmed_by=r["confirmed_by"] or "unknown",
+                           provenance=r["provenance"])
+            for r in session.run(cypher, journey=journey, at=at)]
+
+
+#: The most recent observed outcome per test case. Ordered by `observed_at` so
+#: a re-run supersedes the run before it rather than both being returned; the id
+#: is content-derived from case + time + outcome, so both rows genuinely exist.
+EXECUTION_OUTCOMES_CYPHER = """
+MATCH (x:TestExecution)-[:OF_CASE]->(c:TestCase)
+RETURN c.id AS case_id, x.outcome AS outcome, x.observed_at AS observed_at
+ORDER BY x.observed_at ASC
+"""
+
+
+def load_execution_outcomes(session) -> dict[str, str]:
+    """`{test_case_id: outcome}` from what was actually run.
+
+    **The reader these nodes did not have.** `execution_intake` lands
+    `TestExecution` against a `TestCase` and nothing has ever read one back, so
+    the facts were written and unreachable — a writer with no reader (D-1),
+    which is the arrangement this codebase refuses everywhere else.
+
+    Reading them does **not** move the coverage ledger, and must not: C-10 holds
+    exactly because coverage answers *is this tested* and an outcome answers
+    *did it pass*. What consumes this is `risk.detection`, which uses it for a
+    third question neither of those asks -- would a break here be noticed --
+    and keeps the answer out of both.
+
+    Last write wins per case. An earlier failure followed by a later pass is a
+    fixed defect, and returning both would make a caller pick, which is where
+    the two would start disagreeing.
+    """
+    outcomes: dict[str, str] = {}
+    for row in session.run(EXECUTION_OUTCOMES_CYPHER):
+        case = row["case_id"]
+        if case:
+            outcomes[case] = row["outcome"]
+    return outcomes
 
 
 def load_triggers(session, journey: str) -> dict[str, list[str]]:
@@ -296,6 +475,22 @@ class LoadReport:
     found: bool = True
 
 
+def _anchor_of(row: dict) -> str:
+    """`file:line@commit` from the three flat properties, or `""`.
+
+    Assembled here rather than in Cypher so an absent part yields an empty
+    anchor rather than the string `":0@"` — which would compare equal across
+    unrelated checks and hand GD-8's equivalence credit to behaviour that never
+    earned it.
+    """
+    file = row.get("anchor_file") or ""
+    line = row.get("anchor_line") or 0
+    commit = row.get("anchor_commit") or ""
+    if not file:
+        return ""
+    return f"{file}:{line}@{commit}" if commit else f"{file}:{line}"
+
+
 def rows_to_model(model_id: str, state_rows: list[dict], transition_rows: list[dict],
                   invokes_rows: list[dict] | None = None,
                   check_rows: list[dict] | None = None) -> LoadReport:
@@ -325,10 +520,11 @@ def rows_to_model(model_id: str, state_rows: list[dict], transition_rows: list[d
         if not (row.get("expression") or "").strip():
             continue          # a Check with no expression states nothing
         checks_by_transition.setdefault(row["transition"], []).append(GuardCheck(
+            id=row.get("check_id") or "",
             expression=row["expression"],
             order=int(row.get("order") or 0),
             dimension_class=row.get("dimension_class") or "",
-            anchor=row.get("anchor") or ""))
+            anchor=_anchor_of(row)))
     for group in checks_by_transition.values():
         group.sort(key=lambda c: (c.order, c.expression))
 
@@ -795,17 +991,6 @@ def search_knowledge(session, query: str, limit: int = 20) -> list[dict]:
 # ---------------------------------------------------------------------------
 # The intent spine — what feature derivation reads (§4.1)
 # ---------------------------------------------------------------------------
-
-def valid_at(alias: str, parameter: str = "$at") -> str:
-    """The same read, as of an instant. `valid_from <= at < valid_to`.
-
-    The half-open interval is deliberate: a fact invalidated at T was true up to
-    T and not at T, so an as-at query at exactly T must not return it. Closing
-    both ends would make a fact briefly true and superseded at once.
-    """
-    return (f"({alias}.valid_from <= {parameter}) "
-            f"AND ({alias}.valid_to = '' OR {alias}.valid_to > {parameter})")
-
 
 # The same read, as of an instant. Derived from the query above by substituting
 # the clause rather than by copying the body, so a change to what a requirement

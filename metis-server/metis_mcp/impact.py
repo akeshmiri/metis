@@ -1,5 +1,8 @@
 """
-What a change touches (v1's `metis_impact_analysis`, rebuilt against the v2 graph).
+What a change touches — v1's impact-analysis tool, rebuilt against the v2
+graph. (The old symbol is described rather than named: this docstring is
+published into `metis-change-impact/knowledge/`, and a skill naming a tool that
+does not exist is what `test_skills.py` exists to catch.)
 
 **The data was already here and nothing read it.** `raw_landing._anchor_props`
 writes `anchor_file` / `anchor_line` / `anchor_commit` as three flat properties,
@@ -93,16 +96,17 @@ def impact(changed_files: list[str]) -> dict:
                 "reason": "no changed_files given — pass what `git diff "
                           "--name-only` printed"}
 
+    from metis_mcp.mbt.graph_session import GraphNotConfigured
+
     try:
         rows = _rows(IMPACT_CYPHER, suffixes=supplied)
-    except Exception as e:                       # graph not configured, etc.
-        from metis_mcp.mbt.graph_session import GraphNotConfigured
-        if isinstance(e, GraphNotConfigured):
-            return {"ok": False,
-                    "reason": "no graph is configured — set METIS_NEO4J_URI / "
-                              "METIS_NEO4J_USER and provide "
-                              "METIS_NEO4J_PASSWORD in the environment"}
-        raise
+    except GraphNotConfigured as e:
+        # The exception's own message, not a restatement of one of the cases it
+        # covers. A hardcoded "no graph is configured" here reported an
+        # unreachable database, a malformed config file and an unset
+        # `password_env` as the same problem, and sent all three to the repair
+        # for none of them.
+        return {"ok": False, "reason": str(e)}
 
     transitions: dict[str, dict] = {}
     evidence: list[dict] = []

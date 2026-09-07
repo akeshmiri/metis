@@ -1,6 +1,25 @@
 ---
 name: metis-knowledge-capture
 description: Turn a stated requirement in ordinary language into atomic acceptance criteria, write them to a reviewable knowledge file, and report what the model already has, what contradicts it, and what is new. Use when someone tells Métis a rule the system should follow and wants it formalised and reconciled. It never writes the graph — landing goes through the gated CLI.
+workflow: knowledge-capture
+allowed-tools:
+  - list_workflows
+  - route_request
+  - run_status
+  - ask
+  - get_model
+  - get_requirement
+  - get_spec
+  - search_knowledge
+  - coverage
+  - impact
+  - model_sources
+  - list_entities
+  - get_entity
+  - check_ears
+  - ac_quality
+knowledge-from:
+  - model_sources.ac_mining
 ---
 
 # Métis knowledge-capture
@@ -168,6 +187,27 @@ it reports every defect in the file at once.
 `steps/01-research.md`, `steps/02-formalize.md`, `steps/03-run.md`, in that
 order. Read `../shared/knowledge/anti-hallucination-protocol.md` once; its gates
 apply here.
+
+
+The reasoning behind the engine this skill drives is in
+`knowledge/index.md` — generated from the module docstrings that are its
+source of truth, so it cannot drift from the code it explains. Read a
+fragment when you need the why, not before.
+## The condition inventory
+
+**A positive criterion is not a complete one.** Mining draws exactly one
+complement — the negative branch — and stops, which leaves seven other classes
+of condition neither present nor visibly absent. Before reporting a requirement
+as captured, walk the eight classes in
+`../shared/knowledge/requirement-condition-coverage.md` and record a decision for
+each: a criterion, or `not-applicable` **with a reason**.
+
+The reason matters more than the row. A requirement with no documented limit
+still owes a `boundary` decision; what it must not do is disappear silently,
+because an unasked question and an answered one look identical in the output.
+
+Two of the eight — `dependency-failure` and `non-goal` — have no machinery behind
+them here. Record them as undrawn rather than as covered.
 
 ## What this skill must not do
 

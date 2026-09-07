@@ -477,3 +477,101 @@ def test_an_absent_index_is_reported_and_not_silently_downgraded():
     from metis_mcp.mbt.graph_loader import SearchIndexMissing
 
     assert issubclass(SearchIndexMissing, RuntimeError)
+
+
+# ---------------------------------------------------------------------------
+# Reading as of an instant
+# ---------------------------------------------------------------------------
+#
+# The cheaper alternative `PROPOSAL-release-baseline.md` names before adding a
+# `Release` label: if a readiness figure can be asked for at an instant, naming
+# instants inside Métis may never be needed.
+
+
+def test_the_as_at_queries_are_derived_by_substitution_not_by_copying():
+    """A second copy of a query body agrees with the first until somebody edits
+    one of them. `REQUIREMENT_AS_AT_CYPHER` established the pattern; these
+    follow it."""
+    from metis_mcp.mbt.graph_loader import (
+        CONFIRMED_MATCHES_AS_AT_CYPHER,
+        CONFIRMED_MATCHES_CYPHER,
+        VALIDATING_CRITERIA_AS_AT_CYPHER,
+        VALIDATING_CRITERIA_CYPHER,
+    )
+
+    for present, as_at in ((VALIDATING_CRITERIA_CYPHER, VALIDATING_CRITERIA_AS_AT_CYPHER),
+                           (CONFIRMED_MATCHES_CYPHER, CONFIRMED_MATCHES_AS_AT_CYPHER)):
+        assert "$at" in as_at, "the as-at variant does not take the instant"
+        assert "$at" not in present, "the present-tense query should not"
+        # Same body, one clause apart — not a rewritten query.
+        assert as_at.count("RETURN") == present.count("RETURN")
+        assert as_at != present
+
+
+def test_the_interval_is_half_open_so_a_fact_is_not_true_at_its_own_end():
+    """`valid_from <= at < valid_to`. A fact invalidated at T was true up to T
+    and not at T; closing both ends would make it briefly true and superseded at
+    once."""
+    from metis_mcp.mbt.graph_loader import valid_at
+
+    clause = valid_at("n")
+    assert "n.valid_from <= $at" in clause
+    assert "n.valid_to > $at" in clause
+    # Still open-ended for a fact that has not been superseded.
+    assert "n.valid_to = ''" in clause
+
+
+def test_an_absent_instant_reads_the_present_tense():
+    """`at=""` must not silently become an as-at read against an empty string,
+    which would compare every window against `''` and return nothing."""
+    from metis_mcp.mbt import graph_loader
+
+    seen = {}
+
+    class _Session:
+        def run(self, cypher, **params):
+            seen["cypher"] = cypher
+            return []
+
+    graph_loader.load_validating_criteria(_Session(), "j", "api", at="")
+    assert "$at" not in seen["cypher"]
+
+    graph_loader.load_validating_criteria(_Session(), "j", "api", at="2026-01-01T00:00:00Z")
+    assert "$at" in seen["cypher"]
+
+
+# ---------------------------------------------------------------------------
+# P-16: the commit landing knows
+# ---------------------------------------------------------------------------
+
+
+def test_the_extracted_commit_query_reads_the_episode_not_a_component():
+    """**A `Component` requires a `version`, and landing has none.**
+
+    P-16 asks a coverage figure to state the version and commit it refers to,
+    and a report could say neither until `persist` ran. The version genuinely
+    does not exist before a generation — inventing one would put a fiction where
+    P-16 wants a fact. The COMMIT does exist: landing knows it, and reporting it
+    as unrecorded was an omission rather than an absence.
+    """
+    from metis_mcp.mbt.graph_loader import EXTRACTED_COMMIT_CYPHER
+
+    assert "Episode" in EXTRACTED_COMMIT_CYPHER
+    assert "Component" not in EXTRACTED_COMMIT_CYPHER
+    # Empty and absent are both excluded: "" is not a commit.
+    assert "e.commit <> ''" in EXTRACTED_COMMIT_CYPHER
+    # Newest first, so a re-landed journey reports the commit it is at now.
+    assert "ORDER BY e.t_recorded DESC" in EXTRACTED_COMMIT_CYPHER
+
+
+def test_no_commit_is_reported_as_empty_rather_than_invented():
+    from metis_mcp.mbt.graph_loader import load_extracted_commit
+
+    class _Empty:
+        def run(self, *a, **k):
+            class _R:
+                def single(self_inner):
+                    return None
+            return _R()
+
+    assert load_extracted_commit(_Empty(), "j") == ("", "")

@@ -464,3 +464,256 @@ def test_the_config_file_supplies_the_spec_when_the_environment_does_not(monkeyp
     monkeypatch.setattr("metis_mcp.mbt.graph_session._load_config",
                         lambda: ({"embedding": {"provider": "pkg.mod:P"}}, None))
     assert configured_provider_spec() == "pkg.mod:P"
+
+
+# --------------------------------------------------------------------------
+# The caveat has to be true of the corpus it is attached to
+# --------------------------------------------------------------------------
+
+def test_the_academy_caveat_does_not_name_the_wrong_system(monkeypatch):
+    """**A caveat that names the wrong system is a wrong statement.**
+
+    The rule line hardcoded "somebody wrote about Métis" and was attached to
+    every academy answer, so each of the six Athena lessons came back captioned
+    as writing about Métis. Same bug as the routing note, one string over.
+
+    The name is dropped rather than computed: the sentence's point is
+    *authored, not recovered*, which holds for any corpus, and using the
+    QUESTION's corpus to caption the LESSON would only be a new way to be
+    wrong.
+    """
+    fake = _FakeSession(roots=("metis", "athena"),
+                        lessons=("lesson:01-what-athena-is",))
+    monkeypatch.setattr("metis_mcp.mbt.graph_session.session", lambda: fake)
+    monkeypatch.setattr(A, "_academy_hits", lambda s, q: [
+        {"id": "lesson:01-what-athena-is", "name": "What Athena is",
+         "body": "Athena collects quality metrics.", "matched_passage": ""}])
+    monkeypatch.setattr("metis_mcp.mbt.graph_loader.related_by_topic",
+                        lambda s, i: {"topics": ["athena-overview"], "related": []})
+
+    answer = A._ask_academy("what is Athena and what does it collect")
+
+    assert answer["answered_by"] == "academy"
+    assert answer["answer"]["lesson"] == "lesson:01-what-athena-is"
+    rule = answer["rule"]
+    assert "Métis" not in rule and "Metis" not in rule, (
+        f"the caveat names a system it cannot know is the right one: {rule!r}")
+    assert "authored" in rule and "not a fact extracted" in rule, (
+        f"dropping the name must not drop the point of the caveat: {rule!r}")
+
+
+def test_the_no_graph_message_does_not_name_the_wrong_system(monkeypatch):
+    """The same hardcoded name on the path where the graph is unreachable."""
+    from metis_mcp.mbt.graph_session import GraphNotConfigured
+
+    def unreachable():
+        raise GraphNotConfigured("no bolt URI configured")
+
+    monkeypatch.setattr("metis_mcp.mbt.graph_session.session", unreachable)
+
+    answer = A._ask_academy("what is Athena and what does it collect")
+
+    assert answer["ok"] is False
+    reason = answer["reason"]
+    assert "Métis" not in reason and "Metis" not in reason, (
+        f"the unreachable-graph message names a system too: {reason!r}")
+    assert "academy" in reason and "no bolt URI configured" in reason, (
+        "the message must still say what is unreachable and why")
+
+
+# --------------------------------------------------------------------------
+# call_recipe: the scope it claims, and the half a test asserts on
+# --------------------------------------------------------------------------
+
+@pytest.fixture
+def recipe_graph(monkeypatch):
+    """One journey's worth of rows, recording what the query was asked for."""
+    seen: dict = {"queries": []}
+
+    def rows(cypher: str, **params):
+        seen["queries"].append((cypher, params))
+        if "properties(e) AS endpoint" in cypher:
+            return [{
+                "endpoint": {"id": "ep:1", "http_method": "GET",
+                             "path": "/version/{id}"},
+                "inputs": "[]",
+                # The two sides arrive separately or they cannot be told apart.
+                "request_bodies": [],
+                "response_bodies": ["cls:VersionDto"],
+                "statuses": ["200"],
+                "security": [],
+            }]
+        if "m.exception_type AS cause" in cypher:
+            return [{"status": "400", "cause": "IllegalArgumentException"}]
+        return []
+
+    monkeypatch.setattr(A, "_rows", rows)
+    return seen
+
+
+def test_call_recipe_scopes_to_the_journey_it_was_asked_for(recipe_graph):
+    """**The claim has to be backed by the query.** `journey` reached the
+    signature and the returned label and nothing in between, so asking for
+    athena-core returned all 91 endpoints across seven modules -- git's
+    `/commit` included -- each stamped `"journey": "athena-core"`. Correctly
+    scoped, athena-core is 20.
+    """
+    out = A.call_recipe("athena-core")
+    assert out["journey"] == "athena-core"
+
+    endpoint_q = [(c, p) for c, p in recipe_graph["queries"]
+                  if "properties(e) AS endpoint" in c]
+    assert endpoint_q, "no endpoint query ran"
+    cypher, params = endpoint_q[0]
+    assert "functional_areas" in cypher, (
+        "the journey never reaches the query; the label on the way out is a "
+        "claim the rows do not support")
+    assert params.get("journey") == "athena-core"
+
+
+def test_the_rejections_are_scoped_too(recipe_graph):
+    """Five ExceptionMapping nodes in the whole graph appeared on all 91
+    recipes, git's mappings included."""
+    A.call_recipe("athena-core")
+    mapping_q = [(c, p) for c, p in recipe_graph["queries"]
+                 if "m.exception_type AS cause" in c]
+    assert mapping_q, "no mapping query ran"
+    cypher, params = mapping_q[0]
+    assert "functional_areas" in cypher, "rejections are not scoped to the journey"
+    assert params.get("journey") == "athena-core"
+    # **Direction, asserted explicitly.** The transition points at the mapping.
+    # Written the other way the query is still scoped, still parameterised, and
+    # matches nothing.
+    assert "(t:" in cypher.split("-[:DERIVED_FROM]->")[0], (
+        f"the transition must be the source of DERIVED_FROM:\n{cypher}")
+
+
+def test_a_scoped_rejection_still_reaches_the_recipe(recipe_graph):
+    """**Scoping must narrow the rejections, not delete them.**
+
+    Asserting the query text alone passed against a query whose endpoints were
+    reversed, so it matched nothing and every recipe silently lost its
+    rejections -- the bug being fixed, reintroduced by its own fix. This fails
+    on an empty result.
+    """
+    rec = A.call_recipe("athena-core")["recipes"][0]
+    assert ("400", "IllegalArgumentException") in [
+        tuple(r) for r in rec.get("rejections") or []], (
+        f"the scoped mapping never reached the recipe: {rec.get('rejections')!r}")
+    assert "400 when IllegalArgumentException" in rec["curl"]
+
+
+def test_a_response_type_is_asserted_on_not_sent_as_a_body(recipe_graph):
+    """**The ontology distinguishes these and the recipe did not.**
+
+        REQUIRES -> "A payload type whose field constraints a case must
+                     satisfy or violate"      (the request)
+        EXPECTS  -> "The response body a case should assert"
+
+    `OPTIONAL MATCH (t)-[:EXPECTS|REQUIRES]->(b)` collected both into one
+    `bodies` list rendered as `-d`, so every GET carried its own response
+    schema as a request payload -- and the assertion half of the test was not
+    merely lost, it had been moved into the request half.
+    """
+    rec = A.call_recipe("athena-core")["recipes"][0]
+
+    assert rec["method"] == "GET"
+    assert rec["body"] is None, (
+        f"a GET with no REQUIRES must carry no request body, got {rec['body']!r}")
+    assert " -d " not in rec["curl"] and "-d '" not in rec["curl"], (
+        f"the curl sends a body it has no request type for:\n{rec['curl']}")
+    assert rec.get("asserts") == ["cls:VersionDto"], (
+        "the response type is what a case asserts on; it has to survive "
+        f"somewhere, got {rec.get('asserts')!r}")
+
+
+def test_auth_facts_scopes_to_the_journey_it_was_asked_for(monkeypatch):
+    """The same unused parameter, three queries over.
+
+    `auth_facts("athena-core")` reported `endpoints: 91` -- the whole graph,
+    seven modules -- beside `"journey": "athena-core"`. Declared schemes and
+    required headers were gathered just as widely, so a header required only by
+    the tms module was reported as required for core.
+    """
+    seen = []
+
+    def rows(cypher: str, **params):
+        seen.append((cypher, params))
+        return []
+
+    monkeypatch.setattr(A, "_rows", rows)
+    out = A.auth_facts("athena-core")
+    assert out["journey"] == "athena-core"
+
+    assert seen, "no query ran"
+    for cypher, params in seen:
+        assert "functional_areas" in cypher, (
+            f"unscoped query in auth_facts:\n{cypher}")
+        assert params.get("journey") == "athena-core", (
+            f"journey not passed to:\n{cypher}")
+
+
+def test_a_failed_route_offers_the_academy_without_displacing_its_own_refusal(
+        graph, monkeypatch):
+    """**The bug, and the wrong fix for it, both pinned.**
+
+    `"can I approve my own work"` hits `journey_walkthrough` on *how do*, gets no
+    journey, and comes back `no transitions for journey ''` — useless, for a
+    question the academy answers outright (N-10). The pre-route guard cannot
+    catch it because the sentence never names this system.
+
+    Returning the lesson INSTEAD was tried and is worse: `"explain the flow"`
+    then answers with a lesson rather than with the refusal that tells the caller
+    to pass a journey, which is the more useful of the two. So the tool's own
+    failure survives and the suggestion rides alongside it.
+    """
+    monkeypatch.setattr(A, "_academy_suggestion",
+                        lambda q: {"lesson": "lesson:05-the-two-gates",
+                                   "title": "The two gates", "note": "x"})
+    # The real shape of the bug: the route runs with no journey and finds
+    # nothing, which is what `journey_walkthrough('')` does against a live graph.
+    monkeypatch.setattr(A, "journey_walkthrough",
+                        lambda j: {"ok": False,
+                                   "reason": f"no transitions for journey {j!r}"})
+    out = A.ask("can I approve my own work")
+
+    # The refusal is still the answer, and it still says what it wanted.
+    assert out["answered_by"] == "journey_walkthrough"
+    assert out["ok"] is False
+    assert "no transitions" in out["answer"]["reason"]
+    # And the academy is offered, with a caveat that describes THIS path.
+    assert out["academy_may_cover"]["lesson"] == "lesson:05-the-two-gates"
+    assert "journey_walkthrough" in out["academy_may_cover"]["note"]
+    assert "not an answer" in out["academy_may_cover"]["note"]
+
+
+def test_a_route_that_succeeds_is_not_given_an_academy_suggestion(graph, monkeypatch):
+    """A working answer must not be decorated with an unrelated lesson."""
+    called = []
+    monkeypatch.setattr(A, "_academy_suggestion",
+                        lambda q: called.append(q) or {"lesson": "x", "title": "x",
+                                                       "note": "x"})
+    out = A.ask("how does this journey move", journey="mfa")
+    assert out["ok"] is True
+    assert "academy_may_cover" not in out
+    assert called == []
+
+
+def test_a_route_given_a_journey_that_fails_gets_no_suggestion(graph, monkeypatch):
+    """Scoped to the *missing journey*, not to failure in general.
+
+    A caller who passed `journey="nope"` and got nothing back has a real
+    product-side answer — that journey is not in the graph — and burying it under
+    a lesson would be the same displacement the test above forbids.
+    """
+    called = []
+    monkeypatch.setattr(A, "_academy_suggestion",
+                        lambda q: called.append(q) or {"lesson": "x", "title": "x",
+                                                       "note": "x"})
+    monkeypatch.setattr(A, "journey_walkthrough",
+                        lambda j: {"ok": False,
+                                   "reason": f"no transitions for journey {j!r}"})
+    out = A.ask("how does this journey move", journey="no-such-journey")
+    assert out["ok"] is False
+    assert "academy_may_cover" not in out
+    assert called == []

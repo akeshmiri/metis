@@ -382,9 +382,13 @@ def test_everything_lands_at_quarantine():
 def test_an_inferred_complement_carries_its_marking_into_the_graph():
     """The label has to survive the file, or the honesty ends at the filesystem."""
     plan = plan_documentation(_admin_file(), "ep-1")
+    # By `name`, which stays the author's id. The node `id` is now
+    # `AC-004@<digest of its text>` so that re-wording a criterion produces a new
+    # node rather than overwriting an approved one (D-8, D-15).
     inferred = next(n for n in plan.nodes
                     if n.label == "AcceptanceCriterion"
-                    and n.properties["id"] == "AC-004")
+                    and n.properties["name"] == "AC-004")
+    assert inferred.properties["id"].startswith("AC-004@")
     assert inferred.properties["derived"] == INFERRED_COMPLEMENT
     assert inferred.properties["complement_of"] == "AC-001"
     assert inferred.properties["provenance"] == CODE_DERIVED
@@ -402,7 +406,17 @@ def test_validates_is_minted_only_for_the_transition_the_criterion_produced():
     plan = plan_documentation(knowledge, "ep-1", criterion_transitions=mapping)
     validates = [e for e in plan.edges if e.rel_type == "VALIDATES"]
     assert len(validates) == 1, "only the criterion that produced it"
-    assert validates[0].from_id == "AC-001"
+
+    # **Derived, not spelled.** The edge must reach the node the plan actually
+    # created; hardcoding the author id here would have passed while the writer
+    # minted `AC-001@...`, which is an edge that validates against the ontology
+    # and then matches nothing -- the silent success this codebase has shipped
+    # twice already.
+    criterion = next(n for n in plan.nodes
+                     if n.label == "AcceptanceCriterion"
+                     and n.properties["name"] == "AC-001")
+    assert validates[0].from_id == criterion.properties["id"]
+    assert validates[0].from_id.startswith("AC-001@")
 
 
 def test_validates_targets_the_label_and_id_landing_actually_writes():

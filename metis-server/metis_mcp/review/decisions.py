@@ -386,6 +386,170 @@ def _apply_one(model: Model, item: ReviewItem, target: str) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# The other three decisions (§9.1 points 3, 4 and 5)
+# ---------------------------------------------------------------------------
+#
+# **These had a screen and no way to record an answer.** `evidence.py` builds
+# `resolve_divergence_screen`, `confirm_match_screen` and `decide_drift_screen`,
+# each refusing to render without its evidence (N-4); `roles.py` declares a
+# capability for each. What did not exist was anywhere to put the outcome, so
+# `metis divergence` reported and nothing accepted a resolution, matching
+# proposed and nothing accepted a confirmation, and drift classified and nothing
+# accepted a decision.
+#
+# They live here rather than in the UI for N-1's reason, which the approval path
+# already demonstrates: `review_ui` calls `apply` rather than mutating the model
+# itself, precisely so no surface has its own weaker definition of what a
+# decision does. A second implementation behind the web handler is how two
+# surfaces drift into disagreeing.
+#
+# Each returns the same `ApplyResult` the approval path does, so a caller
+# handles one shape, and each **refuses rather than guesses** on unknown input.
+
+ACCEPT_CODE = "accept_code"
+ACCEPT_AC = "accept_ac"
+DIVERGENCE_CHOICES = (ACCEPT_CODE, ACCEPT_AC)
+
+
+def _now() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _stamp(actor: str, fingerprint: str) -> dict:
+    return {"decided_by": actor, "decided_at": _now(),
+            "evidence_fingerprint": fingerprint}
+
+
+def _record(state, kind: str, element_id: str, outcome: str, rationale: str,
+            actor: str, fingerprint: str) -> AuditRecord:
+    """One `AuditRecord`, shaped as the approval path shapes them.
+
+    `from_state`/`to_state` carry the decision itself rather than a lifecycle:
+    these three decisions do not move an element between lifecycle states, and
+    leaving the fields empty would make the record unreadable beside the
+    approvals it sits with in one audit list.
+    """
+    return AuditRecord(
+        model_id=getattr(state, "model_id", ""),
+        fingerprint=fingerprint,
+        reviewer=actor,
+        decided_at=_now(),
+        kind=kind,
+        element_id=element_id,
+        decision=outcome,
+        from_state="proposed",
+        to_state=outcome,
+        rationale=rationale,
+    )
+
+
+def resolve_divergence(state, element_id: str, choice: str, rationale: str,
+                       actor: str = "", fingerprint: str = "") -> ApplyResult:
+    """Record which side of a divergence a human accepted (S-11).
+
+    **A rationale is required**, and that is not politeness. S-10 says neither
+    side wins automatically: one of "the code is wrong" and "the requirement is
+    stale" is right, and no rule Métis could apply decides which. A resolution
+    with no reason recorded is that precedence rule, written down after the fact
+    and attributed to a person who never gave one.
+    """
+    from metis_mcp.review.state import DivergenceResolution
+
+    result = ApplyResult()
+    if choice not in DIVERGENCE_CHOICES:
+        result.blocked_reason = (
+            f"unknown resolution {choice!r}; expected one of "
+            f"{', '.join(DIVERGENCE_CHOICES)}. Neither side wins automatically "
+            f"(S-10), so there is no default to fall back on.")
+        return result
+    if not rationale.strip():
+        result.blocked_reason = (
+            "a divergence resolution needs a reason (S-11). Recording only the "
+            "outcome makes the choice indistinguishable from a precedence rule "
+            "S-10 forbids.")
+        return result
+
+    state.divergences[element_id] = DivergenceResolution(
+        choice=choice, rationale=rationale.strip(), **_stamp(actor, fingerprint))
+    result.applied.append(_record(state, "divergence", element_id, choice,
+                                  rationale.strip(), actor, fingerprint))
+    return result
+
+
+def confirm_match(state, ac_id: str, transition_id: str, confirmed: bool,
+                  rationale: str = "", actor: str = "",
+                  fingerprint: str = "") -> ApplyResult:
+    """Confirm or reject a proposed AC-to-transition match (X-18).
+
+    **A rejection is stored, not deleted.** An unconfirmed proposal and one a
+    human considered and refused are different states, and collapsing them means
+    the same rejected candidate returns looking new on every subsequent run --
+    which trains a reviewer to stop reading them.
+    """
+    from metis_mcp.review.state import MatchConfirmation
+
+    result = ApplyResult()
+    if not ac_id or not transition_id:
+        result.blocked_reason = "a match needs both an acceptance criterion and a transition"
+        return result
+
+    key = f"{ac_id}->{transition_id}"
+    state.matches[key] = MatchConfirmation(
+        ac_id=ac_id, transition_id=transition_id, confirmed=bool(confirmed),
+        rationale=rationale.strip(), **_stamp(actor, fingerprint))
+    result.applied.append(_record(
+        state, "match", key, "confirmed" if confirmed else "rejected",
+        rationale.strip(), actor, fingerprint))
+    return result
+
+
+def decide_drift(state, case_id: str, resolution: str, rationale: str = "",
+                 actor: str = "", fingerprint: str = "") -> ApplyResult:
+    """Record what to do about one drifted published case (T-14).
+
+    `resolution` is validated against drift's own action vocabulary, so this
+    cannot record a verb the publisher does not implement -- a decision nothing
+    can carry out is worse than no decision, because it reads as settled.
+
+    **T-16: `obsolete` deprecates and never deletes.** That is enforced by the
+    action set rather than restated here: there is no delete action to choose.
+    """
+    from metis_mcp.publishing.drift import (
+        NO_ACTION,
+        PROPOSE_CREATE,
+        PROPOSE_DEPRECATE,
+        PROPOSE_NOTHING,
+        PROPOSE_UPDATE,
+    )
+    from metis_mcp.review.state import DriftDecision
+
+    # The publisher's own vocabulary, imported by name rather than read out of
+    # its private default map: what a reviewer may CHOOSE and what drift
+    # proposes by default are different questions, and coupling them would mean
+    # a change to one silently changed the other.
+    permitted = (NO_ACTION, PROPOSE_CREATE, PROPOSE_UPDATE,
+                 PROPOSE_DEPRECATE, PROPOSE_NOTHING)
+    result = ApplyResult()
+    if resolution not in permitted:
+        result.blocked_reason = (
+            f"unknown drift resolution {resolution!r}; expected one of "
+            f"{', '.join(permitted)}")
+        return result
+    if not case_id:
+        result.blocked_reason = "a drift decision needs the case it is about"
+        return result
+
+    state.drift[case_id] = DriftDecision(
+        case_id=case_id, resolution=resolution, rationale=rationale.strip(),
+        **_stamp(actor, fingerprint))
+    result.applied.append(_record(state, "drift", case_id, resolution,
+                                  rationale.strip(), actor, fingerprint))
+    return result
+
+
 def format_audit(records: list[AuditRecord]) -> str:
     if not records:
         return "No decisions applied."

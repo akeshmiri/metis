@@ -157,7 +157,33 @@ def test_the_academy_exists_and_declares_itself_authored():
     stands behind."""
     readme = (ACADEMY_DIR / "README.md").read_text()
     assert "Authored, not generated" in readme
-    assert "not built" in readme, "the unlanded state must be stated"
+
+
+def test_the_academy_readme_describes_the_landing_that_exists():
+    """It used to assert the README said `not built`, and that was correct while
+    the lessons were files and nothing more.
+
+    It stopped being correct when `Lesson` was added under D-2 with a writer
+    (`model_sources/lessons.py`), a reader (`search_knowledge`, `ask`) and a CLI
+    verb, and `rebuild_graph.sh` began landing them at stage 4b. The test then
+    held a *stale* README in place: the only way to keep it green was to keep
+    telling readers a capability did not exist. So the assertion is inverted
+    rather than deleted -- what has to be stated is what is true now.
+    """
+    from metis_mcp.ontology.labels import KNOWN_LABELS
+
+    assert "Lesson" in KNOWN_LABELS, (
+        "the academy no longer lands; this test and the README both need "
+        "returning to the unlanded wording")
+
+    readme = (ACADEMY_DIR / "README.md").read_text()
+    assert "not built" not in readme, (
+        "the academy lands — `metis lessons` writes :Lesson nodes and "
+        "rebuild_graph.sh runs it by default")
+    assert "metis lessons" in readme, "the verb that lands them must be named"
+    assert "BELONGS_TO" in readme, (
+        "Topic linkage is what makes 'what else covers this' a traversal; a "
+        "reader needs to know it exists")
 
 
 def test_the_deferred_join_lesson_teaches_outcomes_that_exist():

@@ -1,11 +1,22 @@
 # Sandbox overrides.
 # Apply with: helm install metis . -f values.yaml -f values-sbx.yaml
+#
+# **`ingestion-worker` and `guardrail-corpus-runner` were configured here and do
+# not exist.** Both went with the v1 engine; `components:` has always held one
+# entry. Overriding a component that is not declared is silent — Helm merges the
+# map and nothing complains — so this file spent its life configuring nothing
+# while reading as the sandbox's tuning.
+#
+# The list-versus-map warning it carried is still true and still worth knowing:
+# Helm merges VALUES MAPS across -f files and REPLACES LISTS wholesale, so an
+# `env:` override must restate the whole list rather than the one entry that
+# differs.
 
 default:
   replicas: 1
 
 neo4j:
-  edition: "community"   # Phase 0 pilot scope — single instance, no HA, zero licensing cost
+  edition: "community"   # pilot scope — single instance, no HA, zero licensing cost
   resources:
     requests:
       memory: 2Gi
@@ -13,22 +24,3 @@ neo4j:
     limits:
       memory: 4Gi
       cpu: 1000m
-
-components:
-  ingestion-worker:
-    # Real bug found deploying this to a real cluster: Helm merges VALUES
-    # MAPS across -f files, but REPLACES LISTS wholesale -- this used to
-    # declare only the one changed entry (DEFAULT_POLL_INTERVAL_SECONDS),
-    # which silently dropped CONNECTOR_MANIFEST_DIR and METIS_CONFIG_PATH (defined
-    # in the base values.yaml's list for this same component) instead of
-    # overriding just that one value. The full list must be restated here,
-    # not just the delta.
-    env:
-      - name: CONNECTOR_MANIFEST_DIR
-        value: "/etc/metis/connectors"
-      - name: METIS_CONFIG_PATH
-        value: "/etc/metis/config/config.json"
-      - name: DEFAULT_POLL_INTERVAL_SECONDS
-        value: "900"   # gentler polling for a sandbox-scale pilot
-  guardrail-corpus-runner:
-    schedule: "0 3 * * *"   # daily in sandbox for faster feedback during Phase 0

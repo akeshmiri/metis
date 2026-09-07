@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "metis": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "--directory", "metis-server", "python", "-m", "metis_mcp.server"]
+    }
+  }
+}

@@ -109,6 +109,50 @@ class JourneySpec:
         return any(p == m or p.startswith(m.rstrip("/") + "/") for m in self.modules)
 
 
+@dataclass(frozen=True)
+class RequirementsSource:
+    """Where a project's stated requirements come from (§3.2 stage 1).
+
+    **Configuration, not code.** Which tracker, which project, and which query
+    are decisions a deployment makes and changes without a release; hardcoding a
+    JQL string or a space key would put one team's scope in everyone's engine.
+
+    `token_env` NAMES an environment variable and never holds a secret, the same
+    shape `graph.neo4j.password_env` uses (PLT-005): a secret in a profile is a
+    secret in a repository.
+
+    `query` is deliberately free-form per system -- `{"jql": ...}` for Jira,
+    `{"space": ..., "parent": ...}` for Confluence -- because a shared shape
+    would either be the intersection (useless) or the union (a lie about what
+    each accepts). `intake fetch` validates the keys it is given.
+
+    **`fixture_dir` is how this is developed and tested.** A captured tracker
+    response is what the suite exercises; the live read is opt-in and goes
+    through a transport the caller opens, so no HTTP library is a dependency.
+    A profile naming a fixture directory and no base URL is a complete, working
+    configuration -- which is what makes the batch path testable without anyone
+    having a Jira.
+    """
+
+    system: str = ""
+    base_url: str = ""
+    token_env: str = ""
+    query: dict = field(default_factory=dict)
+    fixture_dir: str = ""
+    # Item keys to read when the query names none. The path that exists today:
+    # `intake fetch --key` is repeatable, and this is that list, configured.
+    keys: tuple = ()
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.system and (self.keys or self.query or self.fixture_dir))
+
+    @property
+    def reads_live(self) -> bool:
+        """True when this would reach a tracker rather than a captured response."""
+        return bool(self.base_url and not self.fixture_dir)
+
+
 @dataclass
 class ProjectProfile:
     version: str = PROFILE_VERSION
@@ -130,6 +174,10 @@ class ProjectProfile:
     # framework uses. `@ProjectSecured` means nothing to Métis until a profile says
     # which role it plays; before this it was simply invisible.
     annotations: dict = field(default_factory=dict)
+    # Optional. A profile with no `requirements` block extracts behaviour and
+    # states no requirements source, which is a complete configuration for a
+    # project that keeps its requirements somewhere Métis does not read.
+    requirements: RequirementsSource = field(default_factory=RequirementsSource)
 
     def journey(self, journey: str = "", surface: str = "") -> JourneySpec:
         """One journey, or a refusal naming what is declared."""
@@ -159,6 +207,40 @@ class ProjectProfile:
             if spec.owns(path):
                 return spec.journey
         return ""
+
+
+# The tracker ids `code_analysis.tracker` already knows. Declared here so a
+# profile naming an unsupported system fails when it is READ, rather than at the
+# point a batch run tries to fetch from it.
+_REQUIREMENT_SYSTEMS = ("jira", "confluence", "scale")
+
+
+def _requirements(entry: dict | None, path: str = "") -> RequirementsSource:
+    if not entry:
+        return RequirementsSource()
+    system = str(entry.get("system", "")).strip()
+    if system and system not in _REQUIREMENT_SYSTEMS:
+        raise ProfileInvalid(
+            f"{path or '<profile>'}: requirements.system {system!r} is not one "
+            f"of {', '.join(_REQUIREMENT_SYSTEMS)}. `scale` is Zephyr Scale — "
+            f"the value the ZephyrItem anchor is already keyed on")
+    token_env = str(entry.get("token_env", "")).strip()
+    # A secret where the NAME of a variable belongs is the mistake PLT-005
+    # exists to prevent, and it is easy to make: both are strings, and only one
+    # of them is safe to commit.
+    if token_env and not token_env.isupper():
+        raise ProfileInvalid(
+            f"{path or '<profile>'}: requirements.token_env should NAME an "
+            f"environment variable (`METIS_JIRA_TOKEN`), never hold a token "
+            f"(PLT-005). Got {token_env!r}")
+    return RequirementsSource(
+        system=system,
+        base_url=str(entry.get("base_url", "")).strip(),
+        token_env=token_env,
+        query=dict(entry.get("query") or {}),
+        fixture_dir=str(entry.get("fixture_dir", "")).strip(),
+        keys=tuple(entry.get("keys") or ()),
+    )
 
 
 def _journey(entry: dict) -> JourneySpec:
@@ -211,7 +293,8 @@ def load(data: dict, path: str = "") -> ProjectProfile:
         framework=data["framework"], journeys=journeys, path=path,
         repo=data.get("repo", ""),
         annotations=_annotations.load(data.get("annotations"),
-                                      where=path or "profile"))
+                                      where=path or "profile"),
+        requirements=_requirements(data.get("requirements"), path))
 
 
 def profile_path(project: str) -> Path:

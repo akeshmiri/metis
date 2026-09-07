@@ -45,12 +45,12 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from metis_mcp.identity.keys import claim_id
+
 from metis_mcp.ears_checker import check_ears_conformance
 from metis_mcp.identity.keys import business_entity_key
 from metis_mcp.mbt.model import QUARANTINE
-from metis_mcp.model_sources.landing import LandingPlan, PlannedEdge, PlannedNode
-from metis_mcp.ontology.validation import validate as validate_node
-from metis_mcp.ontology.validation import validate_relationship
+from metis_mcp.model_sources.landing import LandingPlan
 from metis_mcp.retrieval import search_text_for
 
 UIF_VERSION_PREFIX = "1."
@@ -104,6 +104,44 @@ class Conformance:
         return "; ".join(parts) or "conformant"
 
 
+# Where a document may carry criteria it has already labelled as such.
+#
+# **`specifications` is the only one a valid UIF can use, and it was the one
+# place this did not look.** The advisory checked `acceptance_criteria` at the
+# top level and under `metadata`; the schema puts them under `specifications`
+# and sets `additionalProperties: false`, so both checked locations are shapes a
+# conforming document cannot have. The advisory therefore fired only for
+# documents the schema forbids and never for the ones it defines -- and this
+# module's own docstring names `specifications.acceptance_criteria`, as does
+# `describe`, so the file disagreed with itself.
+#
+# The other two stay. They cost nothing, and `land_intake` accepts a document
+# that has never been validated, so a malformed one carrying criteria in the
+# wrong place should still be reported rather than pass in silence.
+_CLAIM_PATHS = (
+    ("specifications", "acceptance_criteria"),
+    ("acceptance_criteria",),
+    ("metadata", "acceptance_criteria"),
+)
+
+
+def _claimed_criteria(document: dict) -> list:
+    """Criteria the document asserts about itself, from wherever it put them.
+
+    Every location is searched and the results concatenated rather than
+    first-match: a document carrying criteria in two places is claiming both,
+    and reporting the smaller count would understate what is being declined.
+    """
+    found: list = []
+    for path in _CLAIM_PATHS:
+        node = document
+        for key in path:
+            node = (node or {}).get(key) if isinstance(node, dict) else None
+        if isinstance(node, list):
+            found += node
+    return found
+
+
 def conformance(document: dict) -> Conformance:
     """Check a UIF document the whole way through before anything is planned.
 
@@ -151,8 +189,7 @@ def conformance(document: dict) -> Conformance:
             "`ears_pattern` has no empty form and guessing one is what "
             "ac_mining refuses to do")
 
-    claimed = (document.get("acceptance_criteria")
-               or (document.get("metadata") or {}).get("acceptance_criteria"))
+    claimed = _claimed_criteria(document)
     if claimed:
         advisories.append(
             f"{len(claimed)} claimed acceptance criteria are present and will "
@@ -260,24 +297,8 @@ def plan_intake(document: dict, *, job_id: str = "manual",
 
     plan = LandingPlan(episode_id=episode_id)
 
-    def add_node(node_label: str, props: dict) -> bool:
-        outcome = validate_node(node_label, props)
-        if not outcome.valid:
-            plan.errors.extend(outcome.errors)
-            return False
-        plan.nodes.append(PlannedNode(label=node_label, properties=props))
-        return True
-
-    def add_edge(from_label: str, from_id: str, rel: str,
-                 to_label: str, to_id: str) -> None:
-        outcome = validate_relationship(from_label, rel, to_label)
-        if not outcome.valid:
-            plan.errors.extend(outcome.errors)
-            return
-        plan.edges.append(PlannedEdge(from_label, from_id, rel, to_label, to_id))
-
     # ---- the ingestion record. Exempt from source_episode_id (BASELINE_EXEMPT).
-    add_node("Episode", {
+    plan.add_node("Episode", {
         "id": episode_id,
         "name": f"{scope.get('source_system')}: {scope.get('primary_id')}",
         "t_recorded": recorded,
@@ -303,14 +324,84 @@ def plan_intake(document: dict, *, job_id: str = "manual",
     if label == "JiraItem":
         # Its second required property, and the only anchor that has one.
         anchor_props["issue_type"] = scope.get("primary_type") or "unknown"
-    anchor_ok = add_node(label, anchor_props)
+    anchor_ok = plan.add_node(label, anchor_props)
+
+    # ---- what the tracker says this item is linked to
+    #
+    # **`LINKS_TO` had no writer.** It was catalogued, D-1 asks for a writer AND
+    # a reader, and it had neither -- so a query for "what does this issue link
+    # to" returned nothing and could not tell that from "it links to nothing".
+    # This is the writer; `read.requirement_hierarchy` is the reader.
+    #
+    # It is also the missing half of requirement hierarchy: an epic and its
+    # stories are two `JiraItem`s with this edge, each `REPRESENTS`ing a
+    # `Requirement`, so decomposition is a traversal rather than a new label.
+    #
+    # **Provenance, not traceability** -- the relationship the ontology records
+    # is the one the TRACKER asserts. Métis does not infer it from wording and
+    # does not read it as "this requirement implements that one".
+    #
+    # The target anchor is planned as a node too, deliberately: an epic linked
+    # from a story may not have been fetched, and an edge whose endpoint is
+    # absent merges nothing and reports as `unmatched`. Planning a bare anchor
+    # means the hierarchy survives a partial fetch, and the epic's own text
+    # arrives whenever somebody lands it.
+    if anchor_ok and label == "JiraItem":
+        for link in document.get("links") or ():
+            target = str(link.get("target_id") or "").strip()
+            if not target:
+                continue
+            target_system = str(link.get("target_system") or
+                                scope.get("source_system") or "")
+            if ANCHORS.get(target_system, (None,))[0] != label:
+                # A link that leaves this tracker has no anchor label to point
+                # at. Skipped and counted rather than pointed somewhere wrong.
+                plan.skipped.append(
+                    (f"link {link.get('relation','?')} -> {target}",
+                     f"target system {target_system!r} has no anchor of the "
+                     f"same kind; a cross-tracker link is not expressible"))
+                continue
+            target_id = f"{target_system}:{target}"
+            if target_id != anchor_id and plan.add_node(label, {
+                    "id": target_id, "source_episode_id": episode_id,
+                    "name": target, id_property: target,
+                    # Unknown until that item is itself fetched. `unknown` is the
+                    # honest value and the property is required.
+                    "issue_type": "unknown"}):
+                # The KIND of link, which had nowhere to live until
+                # `PlannedEdge` grew a properties field. Without it every link
+                # landed identical and `requirement_hierarchy` reported
+                # `"type": "unknown"` for all of them -- so an epic's children
+                # could not be told from what blocks it.
+                #
+                # Recorded exactly as the tracker said it (provenance, not
+                # inference): `parent` means Jira asserts a parent link, not
+                # that one requirement implements another.
+                plan.add_edge(label, anchor_id, "LINKS_TO", label, target_id,
+                         properties={"relation": str(
+                             link.get("relation") or "unknown")})
 
     # ---- the requirement, only when the text is EARS-conformant
     text = _requirement_text(document)
     ears = check_ears_conformance(text) if text else None
     if ears is not None and ears.pattern:
-        requirement_id = f"req-{hashlib.sha256(anchor_id.encode()).hexdigest()[:12]}"
-        if add_node("Requirement", {
+        # **Two halves: what this is about, and what it says.**
+        #
+        # The anchor gives the LOGICAL key -- `jira:PROJ-14` is the same
+        # requirement whatever its wording -- and the text gives the revision.
+        # This used to be the whole id, so an edited ticket resolved to the same
+        # node, `text` was rewritten in place, and an Approved requirement
+        # silently acquired new wording while keeping its approval.
+        #
+        # With the digest in the id, an edit is a NEW node: it lands at
+        # Quarantine because it is new (S-4), the previous revision keeps the
+        # decision a human made (I-19), and `plan_supersession` closes its
+        # validity window. The anchor's `REPRESENTS` edge points at both, so
+        # "every version of PROJ-14" is a traversal and "the current one" is
+        # that filtered on `valid_to = ''`.
+        logical_key = f"req-{hashlib.sha256(anchor_id.encode()).hexdigest()[:12]}"
+        requirement_id = claim_id(logical_key, text)
+        if plan.add_node("Requirement", {
             "id": requirement_id,
             "source_episode_id": episode_id,
             "name": requirement_id,
@@ -325,12 +416,12 @@ def plan_intake(document: dict, *, job_id: str = "manual",
             # sets `valid_to`; nothing is deleted (see landing.VALIDITY_FACTS).
             "valid_from": recorded, "valid_to": "",
         }) and anchor_ok:
-            add_edge(label, anchor_id, "REPRESENTS", "Requirement", requirement_id)
+            plan.add_edge(label, anchor_id, "REPRESENTS", "Requirement", requirement_id)
     elif text:
         # The honest outcome, not a silent skip. A Jira title is free prose, and
         # inventing an EARS pattern for it would produce a well-formed statement
         # nobody wrote.
-        _add_finding(plan, add_node, add_edge, episode_id, NOT_EARS, "advisory",
+        _add_finding(plan, episode_id, NOT_EARS, "advisory",
                      f"intake text is not EARS-conformant: {text[:200]}",
                      label, anchor_id,
                      "formalise it through knowledge-capture, where a person "
@@ -344,7 +435,7 @@ def plan_intake(document: dict, *, job_id: str = "manual",
             # D-13: a glossary entry whose name is its own only explanation
             # answers nothing. Better absent than empty.
             continue
-        add_node("BusinessEntity", {
+        plan.add_node("BusinessEntity", {
             # The shared natural key (I-2), not a second minting rule. Intake and
             # the glossary describe the same noun and neither is wrong about it;
             # two rules meant `api spec` landed twice with no canonical form.
@@ -364,19 +455,19 @@ def plan_intake(document: dict, *, job_id: str = "manual",
     for kind in ("ambiguities", "conflicts", "missing_requirements"):
         for item in questions.get(kind) or []:
             detail = item if isinstance(item, str) else json.dumps(item, sort_keys=True)
-            _add_finding(plan, add_node, add_edge, episode_id, OPEN_QUESTION,
+            _add_finding(plan, episode_id, OPEN_QUESTION,
                          "advisory", f"{kind}: {detail[:300]}", label, anchor_id,
                          "the source flagged this; it needs a person")
 
     return plan
 
 
-def _add_finding(plan, add_node, add_edge, episode_id: str, finding_type: str,
+def _add_finding(plan, episode_id: str, finding_type: str,
                  severity: str, detail: str, about_label: str, about_id: str,
                  remedy: str) -> None:
     finding_id = "finding:" + hashlib.sha256(
         f"{finding_type}|{about_id}|{detail}".encode()).hexdigest()[:16]
-    if add_node("Finding", {
+    if plan.add_node("Finding", {
         "id": finding_id,
         "source_episode_id": episode_id,
         "name": finding_type,
@@ -387,7 +478,7 @@ def _add_finding(plan, add_node, add_edge, episode_id: str, finding_type: str,
         "resolution": "open",
         "lifecycle_state": QUARANTINE,
     }):
-        add_edge("Finding", finding_id, "ABOUT", about_label, about_id)
+        plan.add_edge("Finding", finding_id, "ABOUT", about_label, about_id)
 
 
 def describe(plan: LandingPlan, document: dict) -> str:
@@ -404,7 +495,11 @@ def describe(plan: LandingPlan, document: dict) -> str:
     for label in sorted(by_label):
         lines.append(f"  {label + ':':<18} {by_label[label]}")
 
-    claimed = len((document.get("specifications") or {}).get("acceptance_criteria") or [])
+    # The same lookup `conformance` uses, and it must stay the same one: these
+    # are the two places a person is told what was declined, and when they read
+    # the document differently the same UIF reports two criteria at one door and
+    # none at the other.
+    claimed = len(_claimed_criteria(document))
     if claimed:
         lines.append("")
         lines.append(

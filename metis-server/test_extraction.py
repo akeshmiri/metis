@@ -599,6 +599,50 @@ def test_a_private_method_that_carries_behaviour_is_kept(demo_structural):
     assert "requireSummarisable" in _names(demo_structural)
 
 
+def test_every_kept_method_carries_a_complexity_and_a_size(demo_structural):
+    """PRISMA's technical-risk factors need a measurement, not a guess.
+
+    Emitted for every method the pack keeps, so an absent value means the method
+    was dropped as noise rather than that it was simple — a distinction
+    `risk/product.py` relies on when it bands them.
+    """
+    kept = demo_structural["methods"]
+
+    assert kept, "no methods emitted at all"
+    assert all("complexity" in m and "size" in m for m in kept)
+    assert all(m["complexity"] >= 1 for m in kept), (
+        "straight-line code is 1; 0 would be a measurement that never happened "
+        "wearing the shape of one that did")
+
+
+def test_the_complexity_metric_has_a_real_spread(demo_structural):
+    """**The condition `RetentionPolicy` exists for.** Nothing else in this
+    service branches more than three times, so before it was added the extracted
+    figure was flat — and a flat metric is one this test could not tell from a
+    broken one. `retentionDays` nests conditions and short-circuits; `isRetained`
+    is a single return.
+    """
+    by_name = {(m["type_name"], m["name"]): m for m in demo_structural["methods"]}
+
+    branchy = by_name[("RetentionPolicy", "retentionDays")]
+    flat = by_name[("RetentionPolicy", "isRetained")]
+
+    assert flat["complexity"] == 1, "a single return is McCabe 1"
+    assert branchy["complexity"] >= 10, (
+        f"expected the deliberately branchy method to score high, got "
+        f"{branchy['complexity']} — if the counting rule changed, say so here")
+    assert branchy["size"] > flat["size"]
+
+
+def test_a_dropped_accessor_carries_no_complexity_figure(demo_structural):
+    """Absent means "not emitted", never "simple". A getter dropped as noise must
+    not appear with a figure that reads as a measurement."""
+    names = {m["name"] for m in demo_structural["methods"]}
+
+    assert "getTitle" not in names, (
+        "an inert accessor is dropped before anything downstream reads it")
+
+
 def test_the_fields_an_accessor_exposed_are_untouched(demo_structural):
     """`@Schema`, `@NotBlank` and `@Size` sit on the field, not on its getter, and
     they are test-design inputs. Dropping `getTitle` must not drop `title` —
@@ -825,6 +869,53 @@ def _both_models(demo_api):
     spec = get("openapi").produce(path=str(CONTRACT), journey="records",
                                   surface="api").model
     return code, spec
+
+
+def test_every_transition_carries_its_handlers_measured_complexity(demo_api):
+    """**Measured during code processing, not joined afterwards.**
+
+    Once a model exists the implementing method is unreachable: a `Transition`
+    reaches a `Class` only through `REQUIRES`/`EXPECTS`, which are its payload
+    types, and `Endpoint -> Class` does not exist. So the figure has to travel
+    with the endpoint from the moment the pack measures it, or it needs a
+    reviewed ontology edge to get home.
+
+    Asserted over EVERY transition, including the rejection ones — those are the
+    other branch of the same handler and are built in a second place, which left
+    one transition per rejecting endpoint reading "not measured" beside siblings
+    that were.
+    """
+    from metis_mcp.model_sources import get
+
+    model = get("code").produce(path=str(demo_api.behaviour),
+                                endpoints=str(demo_api.structural),
+                                journey="records", surface="api").model
+
+    unmeasured = [t.id for t in model.transitions.values() if not t.complexity]
+
+    assert model.transitions, "no transitions, so this asserts nothing"
+    assert not unmeasured, (
+        f"{len(unmeasured)} transition(s) reached the model with no handler "
+        f"measurement: {unmeasured[:3]}")
+    assert all(t.complexity >= 1 for t in model.transitions.values()), (
+        "straight-line code is 1; 0 means the join did not happen")
+
+
+def test_a_model_with_no_code_behind_it_reports_absence_not_simplicity(demo_api):
+    """The OpenAPI intake has no method to measure. `0` must read as "not
+    measured" and never as "simple", or a contract-only endpoint outranks every
+    handler in the service for safety."""
+    from metis_mcp.model_sources import get
+    from metis_mcp.risk import product
+
+    spec = get("openapi").produce(path=str(CONTRACT), journey="records",
+                                  surface="api").model
+    tid = next(iter(spec.transitions))
+
+    profile = product.technical_profile(spec, tid)
+
+    assert "code_complexity" in profile["not_measured"]
+    assert "code_complexity" not in profile["factors"]
 
 
 def test_the_two_intakes_reach_the_same_node_for_the_same_behaviour(demo_api):

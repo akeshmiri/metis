@@ -46,11 +46,15 @@ docs/                            the spec, the guide, the academy, and history
 │                                stages.py and the CLI parser. `metis guide
 │                                --check` fails on a diff, so it cannot drift
 └── academy/                     AUTHORED reasoning — labelled as such because
-                                 it is not checkable the way the guide is
+                                 it is not checkable the way the guide is.
+                                 Two tracks: an OPERATOR track (12-17) for a BA,
+                                 PO, QA lead or reviewer, assuming no
+                                 programming; and the concepts/contributor
+                                 track (01-11) for somebody extending Métis
 
 metis-server/                    the engine. Python, no framework.
 ├── metis_mcp/
-│   ├── ontology/                THE ontology: 37 labels + the relationship
+│   ├── ontology/                THE ontology: 44 labels + the relationship
 │   │                            catalogue. The Cypher schema is GENERATED from
 │   │                            labels.py, so the two cannot drift.
 │   ├── mbt/                     model-based testing: criteria, path generation,
@@ -64,7 +68,20 @@ metis-server/                    the engine. Python, no framework.
 │   │                            (the academy, landed as :Lesson). Every source
 │   │                            produces candidates at Quarantine; none writes
 │   │                            Approved.
-│   ├── workflow/                the five workflows, their stages and gates.
+│   ├── design/                  test design: the gather-or-ask ledger, the
+│   │                            deterministic section registry, the row
+│   │                            builders and the merge-preserving document.
+│   │                            Pure — the graph is read by server.py and
+│   │                            handed in, so the whole family runs with no
+│   │                            Neo4j
+│   ├── risk/                    the risk toolkit: exposure, EMV, PERT, the RBS
+│   │                            taxonomy, the register's coherence rules. A
+│   │                            risk Métis derived from a model and one a
+│   │                            person asserted are never merged
+│   ├── analysis/                pre-import analysis: four readings of a stated
+│   │                            claim, the gap taxonomy, and the readiness
+│   │                            verdict that runs BEFORE anything is landed
+│   ├── workflow/                the ten workflows, their stages and gates.
 │   │                            The one place that knows the order.
 │   ├── reconciliation/          AC ↔ transition matching, and the two gap
 │   │                            reports that are never merged into one number
@@ -80,19 +97,31 @@ metis-server/                    the engine. Python, no framework.
 │   │                            no model is bundled and none is loaded by default
 │   ├── api/                     the HTTP surface: bearer auth against a digest
 │   │                            store, and a G2 confirmation bound to one run
-│   └── server.py                the MCP surface: nineteen read-only tools,
+│   └── server.py                the MCP surface: fifty-five read-only tools,
 │                                plus a gated write half (METIS_MCP_WRITE)
+├── document_table.py            (in metis_mcp/) the editable-generated-table
+│                                machinery three documents share: cells, scoped
+│                                section reads, and the merge that preserves a
+│                                human column and a hand-added row
 ├── code_analysis/               Joern query packs → normalised contract →
 │                                synthesis. No engine type reaches the graph.
 ├── schema/                      GENERATED Cypher (Community only — C1)
-└── test_*.py                    77 test files, 1,770 tests, no Neo4j required.
-                                 Joern is needed for five of them (see CLAUDE.md)
+└── test_*.py                    103 test files (the TEST total is derivable —
+                                 `pytest --collect-only -q` — and is deliberately
+                                 not stated: it is the one count
+                                 test_documentation_sync cannot guard, and it
+                                 drifted). The engine-free half needs no Neo4j;
+                                 Joern is needed for three files, and one CI job
+                                 runs a real graph
 
 .mcp.json                        registers the MCP server for this repo — stdio,
-                                 nineteen read-only tools, no absolute paths
-plugins/metis/                   the five skills, and the generated agent files
+                                 fifty-five read-only tools, no absolute paths
+plugins/metis/                   the thirty-nine skills (ten, plus seventeen
+                                 specialists), and the generated agent files
 plugins/metis-mcp/               MCP server registration, for a marketplace install
-metis-chart/                     Helm chart (one component: the MCP server)
+metis-chart/                     Helm chart (one component: the MCP server).
+                                 Renders in CI; `test_structure.py` refuses a
+                                 variable no module reads. Untested on a cluster
 connectors/                      connector manifests + their schema.
                                  Designed; nothing reads them yet (see its README)
 ```

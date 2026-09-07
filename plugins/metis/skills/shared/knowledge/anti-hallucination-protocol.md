@@ -1,15 +1,16 @@
 # Métis anti-hallucination protocol — RPI + Stage Confirmation
 
-**Reconstruction notice:** this file does not exist elsewhere in the current
-copy of this project — `metis-server/.agents/` was entirely absent when this
-session picked up the work (a gap of the same kind CLAUDE.md already
-documents for `pyproject.toml`: something that didn't survive the move to
-this machine, not a stalled task). This is a best-effort reconstruction,
-grounded directly in `docs/metis-application-spec.md` §9.2's real text (RPI
-adopted from Atlas by name, Stage Confirmation Protocol adopted the same
-way), not invented from scratch. Every skill under `.agents/skills/`
-references this file once, per Atlas's own convention: "do not duplicate
-this prose into individual step files; link to it instead."
+**Ported from Atlas** (`.agents/skills/shared/knowledge/anti-hallucination-protocol.md`),
+and grounded in `docs/metis-application-spec.md` §9.2, which adopts RPI and the
+Stage Confirmation Protocol by name.
+
+This file used to open with a note calling itself a best-effort reconstruction
+of something that "does not exist elsewhere". That was wrong on both counts: the
+source is intact, and this file had drifted from it — three concrete gates were
+missing, and they are the measurable ones. They are restored below and marked.
+The note also said "every skill under `.agents/skills/` references this file",
+which describes the source project's tree, not this one. Each Métis skill cites
+this file once, from its `## Steps` section.
 
 ## RPI: Research / Plan / Implementation
 
@@ -20,6 +21,11 @@ content or proposes a decision:
    stage is bounded to — for a review-assist pass, that's the single
    `node_id`/anchor under review, not the whole quarantine queue. Drifting
    onto unrelated entities mid-review is scope creep, not a bonus.
+
+   **The default out-of-scope set:** generic authentication, rate-limiting,
+   concurrency and audit-logging. Do not add them unless the source
+   explicitly requires them. They are plausible for almost any system,
+   which is exactly what makes them the cheapest thing to hallucinate.
 2. **Forbidden Substitutions** (throughout Research and Plan). Never fill a
    gap with a guessed value, a carried-over assumption from a previous
    session, or a silently reconciled conflict. If two sources disagree,
@@ -29,14 +35,23 @@ content or proposes a decision:
    fact used in a recommendation is tagged `VERIFIED` (grounded in a real
    tool response, `source_episode_id` traceable), `INFERRED` (a reasonable
    read of real data, but not itself directly stated), or `UNVERIFIED`
-   (couldn't be checked against real data in this session). Never proceed
-   past a required output that depends on an `UNVERIFIED` item without
-   surfacing that dependency explicitly to the human.
+   (couldn't be checked against real data in this session). **Never mark
+   something `VERIFIED` without a concrete source reference** — a tool
+   response, a `source_episode_id`, or a file and line. A confidence tag
+   with nothing behind it is worse than no tag, because it reads as
+   evidence. Never proceed past a required output that depends on an
+   `UNVERIFIED` item without surfacing that dependency explicitly to the
+   human.
 4. **Drift Check** (end of Implementation, before the Stage Confirmation
-   gate below). Re-derive the scope lock from step 1. If the
-   recommendation being presented doesn't actually serve that locked
-   scope, discard it and redo the stage rather than presenting drifted
-   output.
+   gate below). Re-derive the scope lock from step 1, and **count**: how
+   many produced items — criteria, scenarios, findings, fields — directly
+   serve the locked scope, against how many serve generic or out-of-scope
+   concerns.
+
+   **Below half, it is drift.** Discard and re-derive rather than passing
+   drifted output downstream, and log what was removed and why. The
+   threshold is the point: "doesn't actually serve the locked scope" is a
+   judgement nobody can fail, and a gate nobody can fail is not a gate.
 
 ## Stage Confirmation Protocol
 

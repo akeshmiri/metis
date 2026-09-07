@@ -28,6 +28,11 @@ CREATE INDEX rel_d_e_r_i_v_e_d__f_r_o_m_t_valid IF NOT EXISTS FOR ()-[x:DERIVED_
 CREATE INDEX rel_g_e_n_e_r_a_t_e_d__f_r_o_m_t_valid IF NOT EXISTS FOR ()-[x:GENERATED_FROM]-() ON (x.t_valid);
 CREATE INDEX rel_c_o_v_e_r_s_t_valid IF NOT EXISTS FOR ()-[x:COVERS]-() ON (x.t_valid);
 CREATE INDEX rel_p_r_o_d_u_c_e_s_t_valid IF NOT EXISTS FOR ()-[x:PRODUCES]-() ON (x.t_valid);
+CREATE INDEX rel_o_f__c_a_s_e_t_valid IF NOT EXISTS FOR ()-[x:OF_CASE]-() ON (x.t_valid);
+CREATE INDEX rel_o_b_s_e_r_v_e_d__i_n_t_valid IF NOT EXISTS FOR ()-[x:OBSERVED_IN]-() ON (x.t_valid);
+CREATE INDEX rel_c_o_n_c_e_r_n_s_t_valid IF NOT EXISTS FOR ()-[x:CONCERNS]-() ON (x.t_valid);
+CREATE INDEX rel_t_o_u_c_h_e_s_t_valid IF NOT EXISTS FOR ()-[x:TOUCHES]-() ON (x.t_valid);
+CREATE INDEX rel_f_i_x_e_s_t_valid IF NOT EXISTS FOR ()-[x:FIXES]-() ON (x.t_valid);
 CREATE INDEX rel_b_e_l_o_n_g_s__t_o_t_valid IF NOT EXISTS FOR ()-[x:BELONGS_TO]-() ON (x.t_valid);
 CREATE INDEX rel_r_e_f_e_r_e_n_c_e_s_t_valid IF NOT EXISTS FOR ()-[x:REFERENCES]-() ON (x.t_valid);
 CREATE INDEX rel_a_b_o_u_t_t_valid IF NOT EXISTS FOR ()-[x:ABOUT]-() ON (x.t_valid);
@@ -75,6 +80,13 @@ CREATE INDEX rel_c_o_n_s_t_r_a_i_n_e_d__b_y_t_valid IF NOT EXISTS FOR ()-[x:CONS
 //   (Scenario)-[:GENERATED_FROM]->(Component)  — The exact version this path covers
 //   (Scenario)-[:COVERS]->(Transition)  {sequence, is_validated}  — Ordered traversal — makes coverage computable
 //   (Scenario)-[:PRODUCES]->(TestCase)  — The rendered artefact
+//   (TestExecution)-[:OF_CASE]->(TestCase)  — The case this run executed
+//   (TestCycle)-[:CONTAINS]->(TestExecution)  — Runs observed together
+//   (Defect)-[:OBSERVED_IN]->(TestExecution)  — The run this fault was seen in
+//   (Defect)-[:CONCERNS]->(Requirement)  — What the fault is about, where that is established
+//   (Defect)-[:CONCERNS]->(AcceptanceCriterion)  — The criterion this fault is about, where the report is specific enough to name one
+//   (Commit)-[:TOUCHES]->(Class)  — A type this change altered. The file's class, not a method: a finer join needs a diff parse and buys nothing a risk band can use
+//   (Commit)-[:FIXES]->(JiraItem)  — The tracker item this change's subject names. The edge is to the ITEM because the item is the report — Métis never creates a Defect from a commit message
 //   (Lesson)-[:BELONGS_TO]->(Topic)  — The subject it covers, shared with every other document that covers it
 //   (Topic)-[:BELONGS_TO]->(Topic)  — The broader subject this one sits under
 //   (BusinessEntity)-[:BELONGS_TO]->(BusinessArea)  — Which domain this noun lives in

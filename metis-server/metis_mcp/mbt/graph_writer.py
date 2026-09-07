@@ -30,46 +30,35 @@ from dataclasses import dataclass, field
 
 from metis_mcp.mbt.graph_session import count_written
 from metis_mcp.model_sources.landing import (
+    PlanBuilder,
+    PlannedEdge,
+    PlannedNode,
     component_label_for,
     ensure_namespaced,
     transition_label_for,
 )
 from metis_mcp.mbt.model import Model
 from metis_mcp.mbt.path_generation import GenerationResult
-from metis_mcp.ontology import label_expression, validate, validate_relationship
+from metis_mcp.ontology import label_expression
 from metis_mcp.rendering.test_case import TestCase
 
 GENERATOR_VERSION = "mbt/1"
 
 
-@dataclass(frozen=True)
-class PlannedNode:
-    label: str
-    properties: dict
-
-
-@dataclass(frozen=True)
-class PlannedEdge:
-    from_label: str
-    from_id: str
-    rel_type: str
-    to_label: str
-    to_id: str
-    properties: dict = field(default_factory=dict)
-
-
+# **Re-exported, not redeclared.** These were a second pair of dataclasses with
+# the same names and nearly the same shape as `landing`'s -- nearly, because this
+# copy had no `also`, so the two diverged on which facts a plan could express
+# while both flowed to a MERGE. One definition, imported here so that
+# `from graph_writer import PlannedNode` keeps working.
 @dataclass
-class PersistPlan:
+class PersistPlan(PlanBuilder):
+    """What `persist` will write. `PlanBuilder` supplies `add_node`/`add_edge`,
+    validated identically to every landing plan -- this module used to carry its
+    own copies of both."""
+
     nodes: list[PlannedNode] = field(default_factory=list)
     edges: list[PlannedEdge] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
-
-    @property
-    def is_legal(self) -> bool:
-        return not self.errors
-
-    def by_label(self, label: str) -> list[PlannedNode]:
-        return [n for n in self.nodes if n.label == label]
 
 
 def _hash(*parts: str) -> str:
@@ -107,21 +96,6 @@ def plan_persist(model: Model, result: GenerationResult, cases: list[TestCase],
     mv_id = component_id(model.id, commit_sha or source_fingerprint)
     journey, _, surface = model.id.rpartition("-")
 
-    def add_node(label: str, props: dict) -> None:
-        outcome = validate(label, props)
-        if not outcome.valid:
-            plan.errors.extend(outcome.errors)
-            return
-        plan.nodes.append(PlannedNode(label=label, properties=props))
-
-    def add_edge(from_label: str, from_id: str, rel: str, to_label: str,
-                 to_id: str, props: dict | None = None) -> None:
-        outcome = validate_relationship(from_label, rel, to_label)
-        if not outcome.valid:
-            plan.errors.extend(outcome.errors)
-            return
-        plan.edges.append(PlannedEdge(from_label, from_id, rel, to_label, to_id, props or {}))
-
     # `Run` was staged out: `plan_persist` and `finding_writer` wrote it and no
     # query ever matched it, so it had a writer and no reader (D-1). F-3's
     # reproducibility half rides on `Component` (version, commit) and on
@@ -131,7 +105,7 @@ def plan_persist(model: Model, result: GenerationResult, cases: list[TestCase],
     # The specialisation where the surface is known (`RestServer` / `WebServer`),
     # the generic parent where it is not.
     component_label = component_label_for(surface or "api")
-    add_node(component_label, {
+    plan.add_node(component_label, {
         "id": mv_id, "source_episode_id": episode_id,
         "name": f"{model.id} v{version}",
         # The stable half of the identity. The node itself is one component AT
@@ -151,7 +125,7 @@ def plan_persist(model: Model, result: GenerationResult, cases: list[TestCase],
     for sid in model.state_ids():
         page = getattr(model.states[sid], "page", "")
         if page:
-            add_edge(component_label, mv_id, "HAS_PAGE", "Page", f"{model.id}::page::{page}")
+            plan.add_edge(component_label, mv_id, "HAS_PAGE", "Page", f"{model.id}::page::{page}")
 
     # Spec D-6: elements are shared across versions where unchanged, so a version
     # references them rather than duplicating them.
@@ -171,32 +145,32 @@ def plan_persist(model: Model, result: GenerationResult, cases: list[TestCase],
     # because `persist` now reads its counts from the database.
     transition_label = transition_label_for(surface or "api")
     for sid in model.state_ids():
-        add_edge(component_label, mv_id, "CONTAINS", "State",
+        plan.add_edge(component_label, mv_id, "CONTAINS", "State",
                  ensure_namespaced(model.id, sid))
     for tid in model.transition_ids():
-        add_edge(component_label, mv_id, "CONTAINS", transition_label,
+        plan.add_edge(component_label, mv_id, "CONTAINS", transition_label,
                  ensure_namespaced(model.id, tid))
 
     cases_by_target = {c.target_key: c for c in cases}
 
     for path in result.paths:
         pid = path_id(mv_id, path.validated_transition_id, path.setup_transition_ids)
-        add_node("Scenario", {
+        plan.add_node("Scenario", {
             "id": pid, "source_episode_id": episode_id,
             "name": f"{path.target_key}", "criterion": path.criterion,
             "generator_version": GENERATOR_VERSION,
             "setup_length": path.setup_length,
             "target_key": path.target_key,
         })
-        add_edge("Scenario", pid, "GENERATED_FROM", component_label, mv_id)
+        plan.add_edge("Scenario", pid, "GENERATED_FROM", component_label, mv_id)
 
         # Setup steps carry sequence 1..n and is_validated false; the single
         # assertion carries sequence 0 and is_validated true (spec P-5, P-5a).
         for index, tid in enumerate(path.setup_transition_ids, start=1):
-            add_edge("Scenario", pid, "COVERS", transition_label,
+            plan.add_edge("Scenario", pid, "COVERS", transition_label,
                      ensure_namespaced(model.id, tid),
                      {"sequence": index, "is_validated": False})
-        add_edge("Scenario", pid, "COVERS", transition_label,
+        plan.add_edge("Scenario", pid, "COVERS", transition_label,
                  ensure_namespaced(model.id, path.validated_transition_id),
                  {"sequence": 0, "is_validated": True})
 
@@ -220,7 +194,7 @@ def plan_persist(model: Model, result: GenerationResult, cases: list[TestCase],
                 "expected_result": case.act_step.expected_result,
                 "is_assertion": True,
             })
-            add_node("TestCase", {
+            plan.add_node("TestCase", {
                 "id": case.id, "source_episode_id": episode_id, "name": case.name,
                 "content_hash": _hash(case.name, case.objective,
                                       case.act_step.description,
@@ -238,7 +212,7 @@ def plan_persist(model: Model, result: GenerationResult, cases: list[TestCase],
                       "kind": d.kind} for d in case.data_requirements],
                     sort_keys=True),
             })
-            add_edge("Scenario", pid, "PRODUCES", "TestCase", case.id)
+            plan.add_edge("Scenario", pid, "PRODUCES", "TestCase", case.id)
 
     return plan
 
@@ -360,12 +334,8 @@ RETURN [i IN in_a WHERE NOT i IN in_b] AS removed,
        [i IN in_b WHERE NOT i IN in_a] AS added
 """
 
-TRACE_CASE_CYPHER = """
-MATCH (tc:TestCase {id: $case_id})<-[:PRODUCES]-(p:Scenario)
-      -[c:COVERS {is_validated: true}]->(t:Transition|ApiCall|UiAction)
-OPTIONAL MATCH (ac:AcceptanceCriterion)-[:VALIDATES]->(t)
-OPTIONAL MATCH (r:Requirement)-[:HAS_AC]->(ac)
-OPTIONAL MATCH (ji:JiraItem)-[:REPRESENTS]->(r)
-RETURN tc.id AS test_case, p.id AS path, t.id AS transition,
-       ac.id AS acceptance_criterion, r.id AS requirement, ji.jira_key AS jira_key
-"""
+# `TRACE_CASE_CYPHER` used to stand here. It is a READ, and this module is a
+# write path (`test_mcp_server.WRITE_PATHS`), so a tool that traced a test case
+# could not import it without dragging the writer onto the MCP surface. It now
+# lives in `graph_loader.py` beside `VALIDATING_CRITERIA_CYPHER`, the other half
+# of the same D-4 route.

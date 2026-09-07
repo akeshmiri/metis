@@ -34,8 +34,7 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime, timezone
 
-from metis_mcp.model_sources.landing import LandingPlan, PlannedEdge, PlannedNode
-from metis_mcp.ontology import validate, validate_relationship
+from metis_mcp.model_sources.landing import LandingPlan
 
 # Everything in this layer is evidence about one repository, so ids are namespaced
 # by it: two services may both declare `RecordDto`, and fusing them would say one
@@ -262,26 +261,12 @@ def plan_raw_landing(report, journey: str, repo: str = "",
     episode_id = "ep-raw-" + _ident(repo, commit, journey)
     plan = LandingPlan(episode_id=episode_id)
 
-    def add_node(label: str, props: dict) -> None:
-        outcome = validate(label, props)
-        if not outcome.valid:
-            plan.errors.extend(outcome.errors)
-            return
-        plan.nodes.append(PlannedNode(label=label, properties=props))
-
-    def add_edge(from_label, from_id, rel, to_label, to_id) -> None:
-        outcome = validate_relationship(from_label, rel, to_label)
-        if not outcome.valid:
-            plan.errors.extend(outcome.errors)
-            return
-        plan.edges.append(PlannedEdge(from_label, from_id, rel, to_label, to_id))
-
     def base(node_id: str, name: str) -> dict:
         return {"id": node_id, "source_episode_id": episode_id, "name": name}
 
     # The Episode is exempt from `source_episode_id` -- it IS the provenance
     # record and cannot point at one (D-8, BASELINE_EXEMPT).
-    add_node("Episode", {
+    plan.add_node("Episode", {
         "id": episode_id,
         "name": f"raw-intake: {repo}",
         "t_recorded": recorded,
@@ -292,13 +277,13 @@ def plan_raw_landing(report, journey: str, repo: str = "",
                        f"{getattr(report, 'pack_version', '?')}",
     })
 
-    declared, by_simple = _plan_types(plan, add_node, add_edge, base, report, repo,
+    declared, by_simple = _plan_types(plan, base, report, repo,
                                       include_call_graph, compact)
-    _plan_endpoints(plan, add_node, add_edge, base, report, repo,
+    _plan_endpoints(plan, base, report, repo,
                     include_call_graph, declared, by_simple)
-    _plan_behaviour(plan, add_node, add_edge, base, behaviour, repo,
+    _plan_behaviour(plan, base, behaviour, repo,
                     endpoints_by_handler(report, repo))
-    _plan_ui(plan, add_node, add_edge, base, ui_facts, repo, journey)
+    _plan_ui(plan, base, ui_facts, repo, journey)
 
     return plan
 
@@ -379,6 +364,41 @@ def _security_node(fact) -> dict:
     )
 
 
+def _method_metrics(owner: str, methods) -> dict:
+    """A type's method metrics, aggregated onto the type.
+
+    **Aggregated because `Method` is not a label.** The ontology has `Class` and
+    `Endpoint` and no node for a method, so a per-method figure has nowhere of
+    its own to live -- the same reason a field is a property of its type (X-6d).
+    Aggregating is the honest alternative to inventing a label nothing else
+    would read.
+
+    Three figures, and the third is why there are three. `max` is the method a
+    reader should open, `total` is how much there is in the type altogether, and
+    `count` is what makes the other two interpretable -- a total of 40 across two
+    methods and across twenty are different types, and without the count they
+    are the same number.
+
+    An empty dict when the pack reported nothing, never zeros: zero complexity is
+    not a thing a method can have (straight-line is 1), so a zero here would be a
+    measurement that never happened wearing the shape of one that did.
+    """
+    mine = [m for m in methods
+            if (getattr(m, "type_name", "") or "").rsplit(".", 1)[-1]
+            == owner.rsplit(".", 1)[-1]]
+    scored = [m for m in mine if getattr(m, "complexity", 0)]
+    if not scored:
+        return {}
+    complexities = [m.complexity for m in scored]
+    sizes = [getattr(m, "size", 0) for m in scored]
+    return {
+        "m_complexity_max": max(complexities),
+        "m_complexity_total": sum(complexities),
+        "m_size_total": sum(sizes),
+        "m_method_count": len(scored),
+    }
+
+
 def _field_properties(members) -> dict:
     """A type's fields, flattened onto the type (X-6d).
 
@@ -416,7 +436,7 @@ def _field_properties(members) -> dict:
     return out
 
 
-def _plan_types(plan, add_node, add_edge, base, report, repo,
+def _plan_types(plan, base, report, repo,
                 include_call_graph, compact: bool = True) -> tuple[set[str], dict[str, str]]:
     """`Class` and its `Field`s — and `Class` is deliberately also the schema.
 
@@ -518,7 +538,7 @@ def _plan_types(plan, add_node, add_edge, base, report, repo,
         if cid in seen:
             continue
         seen.add(cid)
-        add_node(class_label_for(owner_is_enum), {
+        plan.add_node(class_label_for(owner_is_enum), {
             **base(cid, type_name), "package": owner,
             # What a person wrote about this type in `@Schema`. Zero Class nodes
             # carried one before the `schema` role existed, while 71 such
@@ -526,6 +546,7 @@ def _plan_types(plan, add_node, add_edge, base, report, repo,
             **_present(description=getattr(first, "owner_description", "")),
             "fields": sorted(getattr(m, "name", "") for m in owned),
             **_field_properties(owned),
+            **_method_metrics(owner, getattr(report, "methods", ()) or ()),
         })
 
         for member in owned:
@@ -547,7 +568,7 @@ def _plan_types(plan, add_node, add_edge, base, report, repo,
                 # first is worse than leaving it unattached.
                 nested = by_simple.get(element, "") if element else ""
             if nested and nested in declared_types and nested != owner:
-                add_edge(class_label_for(owner_is_enum), cid, "OF_TYPE",
+                plan.add_edge(class_label_for(owner_is_enum), cid, "OF_TYPE",
                          class_label_for(nested in enum_types),
                          class_id(repo, nested))
 
@@ -600,7 +621,7 @@ def _index_by_simple(fq_names: set[str]) -> dict[str, str]:
     return {simple: next(iter(fqs)) for simple, fqs in grouped.items() if len(fqs) == 1}
 
 
-def _plan_endpoints(plan, add_node, add_edge, base, report, repo,
+def _plan_endpoints(plan, base, report, repo,
                     include_call_graph, declared: set[str] | None = None,
                     by_simple: dict[str, str] | None = None):
     """Endpoints, their inputs, and the types those resolve to.
@@ -619,7 +640,7 @@ def _plan_endpoints(plan, add_node, add_edge, base, report, repo,
     def link_types(from_label, from_id, rel, expression) -> int:
         resolved = resolve_class(repo, expression, declared, by_simple)
         for cid in resolved:
-            add_edge(from_label, from_id, rel, "Class", cid)
+            plan.add_edge(from_label, from_id, rel, "Class", cid)
         # Every token that named nothing declared here: JDK types, and the JDK
         # half of a generic like `List<Dto>`.
         return max(len(type_names_in(expression)) - len(resolved), 0)
@@ -627,7 +648,7 @@ def _plan_endpoints(plan, add_node, add_edge, base, report, repo,
     for endpoint in getattr(report, "endpoints", ()) or ():
         eid = endpoint_id(repo, endpoint.http_method, endpoint.path,
                           service_of(getattr(endpoint, "anchor", None)))
-        add_node("Endpoint", {
+        plan.add_node("Endpoint", {
             **base(eid, f"{endpoint.http_method} {endpoint.path}"),
             "http_method": endpoint.http_method,
             "path": endpoint.path,
@@ -655,11 +676,11 @@ def _plan_endpoints(plan, add_node, add_edge, base, report, repo,
                 continue
             sid = security_id(repo, eid, scheme,
                               getattr(security, "expression", ""))
-            add_node("SecurityScheme", {
+            plan.add_node("SecurityScheme", {
                 **base(sid, scheme),
                 **_security_node(security),
             })
-            add_edge("Endpoint", eid, "SECURED_BY", "SecurityScheme", sid)
+            plan.add_edge("Endpoint", eid, "SECURED_BY", "SecurityScheme", sid)
 
         # **`Parameter` nodes were here.** Each carried name, location,
         # required, type_name and constraints — the same five values the
@@ -699,7 +720,7 @@ def _plan_endpoints(plan, add_node, add_edge, base, report, repo,
 
     for mapping in getattr(report, "exception_mappings", ()) or ():
         mid = mapping_id(repo, mapping.exception_type, mapping.advice_type)
-        add_node("ExceptionMapping", {
+        plan.add_node("ExceptionMapping", {
             **base(mid, f"{mapping.exception_type} → {mapping.status}"),
             "exception_type": mapping.exception_type,
             "status": mapping.status,
@@ -708,7 +729,7 @@ def _plan_endpoints(plan, add_node, add_edge, base, report, repo,
         })
 
 
-def _plan_behaviour(plan, add_node, add_edge, base, behaviour, repo,
+def _plan_behaviour(plan, base, behaviour, repo,
                     by_handler: dict[str, str] | None = None):
     """`Check` and `DeclaredOutcome` — the guard's and the outcome's own evidence."""
     if behaviour is None:
@@ -722,7 +743,7 @@ def _plan_behaviour(plan, add_node, add_edge, base, behaviour, repo,
     for check in getattr(behaviour, "checks", ()) or ():
         cid = check_id(repo, check.id, check.expression)
         checks[check.id] = cid
-        add_node("Check", {
+        plan.add_node("Check", {
             **base(cid, check.expression),
             "expression": check.expression,
             "order": check.order,
@@ -732,7 +753,7 @@ def _plan_behaviour(plan, add_node, add_edge, base, behaviour, repo,
 
     for outcome in getattr(behaviour, "outcomes", ()) or ():
         oid = outcome_id_for(repo, outcome)
-        add_node("DeclaredOutcome", {
+        plan.add_node("DeclaredOutcome", {
             **base(oid, outcome.signature),
             "signature": outcome.signature,
             "status": outcome.status,
@@ -746,13 +767,13 @@ def _plan_behaviour(plan, add_node, add_edge, base, behaviour, repo,
         })
         eid = by_handler.get(outcome.endpoint_id)
         if eid:
-            add_edge("Endpoint", eid, "DECLARES", "DeclaredOutcome", oid)
+            plan.add_edge("Endpoint", eid, "DECLARES", "DeclaredOutcome", oid)
         else:
             unjoined += 1
 
         for raw_check in getattr(outcome, "guarding_check_ids", ()) or ():
             if raw_check in checks:
-                add_edge("DeclaredOutcome", oid, "GUARDED_BY", "Check", checks[raw_check])
+                plan.add_edge("DeclaredOutcome", oid, "GUARDED_BY", "Check", checks[raw_check])
                 referenced.add(raw_check)
 
     # **A guard whose outcome could not be recovered is still a real condition in
@@ -769,7 +790,7 @@ def _plan_behaviour(plan, add_node, add_edge, base, behaviour, repo,
             continue
         eid = by_handler.get(getattr(check, "endpoint_id", ""))
         if eid:
-            add_edge("Endpoint", eid, "CONSTRAINED_BY", "Check", checks[check.id])
+            plan.add_edge("Endpoint", eid, "CONSTRAINED_BY", "Check", checks[check.id])
         else:
             stranded += 1
 
@@ -789,7 +810,7 @@ def _plan_behaviour(plan, add_node, add_edge, base, behaviour, repo,
             "they land unattached rather than being dropped or guessed at"))
 
 
-def _plan_ui(plan, add_node, add_edge, base, ui_facts, repo, journey):
+def _plan_ui(plan, base, ui_facts, repo, journey):
     """`Route` — where a UI query starts.
 
     Deliberately a source and never a target: a route IS the entry point, and
@@ -804,7 +825,7 @@ def _plan_ui(plan, add_node, add_edge, base, ui_facts, repo, journey):
             continue
         rid = route_id(repo, path)
         screen = route.get("screen", "") if isinstance(route, dict) else ""
-        add_node("Route", {
+        plan.add_node("Route", {
             **base(rid, path),
             "path": path,
             "screen": screen,

@@ -27,8 +27,9 @@ zdr:
   # record of a policy decision, which is what it is; do not read it as a
   # control that is running.
   #
-  # The procurement checklist it referred to is historical:
-  # docs/historical/design-notes-v1/metis-const-053-confirmation-record.md
+  # The procurement checklist it referred to is historical. `docs/historical/`
+  # has since been DELETED along with the rest of the v1 material, so the path
+  # this used to name resolves to nothing: `git show 61814dc` is where it lives.
   confirmed: false
   confirmed_date: null
   confirmed_by: null
@@ -101,11 +102,17 @@ connectors:
 # in that env var, never in this file) and every :User node it authorizes
 # against to already exist in Neo4j with a real owner_team.
 #
-# public_url: the real externally-reachable Streamable HTTP URL
-# (docs/historical/design-notes-v1/metis-multi-client-integration.md's REPLACE-metis-host placeholders
-# resolve from here) -- consumed by metis_mcp/copilot_integration.py to
-# generate .github/agents/spec-aware.agent.md. Unset here deliberately: no
-# real hostname/OAuth2 provider has been chosen yet (that doc's own §4).
+# public_url: the real externally-reachable Streamable HTTP URL. Unset
+# deliberately: no real hostname or OAuth2 provider has been chosen.
+#
+# THREE names this paragraph used to cite are gone, and are described rather
+# than linked so the next reader does not go looking:
+#   * the v1 multi-client integration note lived under `docs/historical/`,
+#     which has been deleted -- `git show 61814dc`;
+#   * `metis_mcp/copilot_integration.py` went with the v1 engine;
+#   * `.github/agents/spec-aware.agent.md` with it. That directory has
+#     since been deleted entirely — agents ship with the plugin. It was
+#     written by `metis_mcp/agent_generator.py` from the skills' frontmatter.
 server:
   transport: stdio
   # public_url: "https://REPLACE-metis-host.example.com/mcp"

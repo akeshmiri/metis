@@ -40,6 +40,8 @@ import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+
+from metis_mcp.identity.keys import claim_id
 from pathlib import Path
 
 from metis_mcp.identity.keys import business_entity_key
@@ -312,32 +314,15 @@ def plan_intent(document: IntentFile, episode_id: str = "", job_id: str = "manua
     the code, or a person -- not something an author restates by hand. See
     `feature.derive`.
     """
-    from metis_mcp.model_sources.landing import LandingPlan, PlannedEdge, PlannedNode
-    from metis_mcp.ontology.validation import validate as validate_node
-    from metis_mcp.ontology.validation import validate_relationship
+    from metis_mcp.model_sources.landing import LandingPlan
 
     owns_episode = not episode_id
     episode_id = episode_id or episode_id_for(document)
     recorded = t_recorded or datetime.now(timezone.utc).isoformat(timespec="seconds")
     plan = LandingPlan(episode_id=episode_id)
 
-    def add_node(label: str, props: dict) -> bool:
-        outcome = validate_node(label, props)
-        if not outcome.valid:
-            plan.errors.extend(outcome.errors)
-            return False
-        plan.nodes.append(PlannedNode(label=label, properties=props))
-        return True
-
-    def add_edge(from_label: str, from_id: str, rel: str, to_label: str, to_id: str) -> None:
-        outcome = validate_relationship(from_label, rel, to_label)
-        if not outcome.valid:
-            plan.errors.extend(outcome.errors)
-            return
-        plan.edges.append(PlannedEdge(from_label, from_id, rel, to_label, to_id))
-
     if owns_episode:
-        add_node("Episode", {
+        plan.add_node("Episode", {
             "id": episode_id,
             "name": f"intent: {len(document.intents)} need(s), "
                     f"{len(document.specifications)} specification(s)",
@@ -347,9 +332,16 @@ def plan_intent(document: IntentFile, episode_id: str = "", job_id: str = "manua
             "proposed_by": proposed_by or "unknown",
         })
 
+    # Author ids are LOGICAL keys; the node id carries the statement's digest so
+    # a re-worded need is a new claim rather than an overwrite (D-8, D-15).
+    # Minted up front because the edges below cross-reference these ids, and an
+    # edge built from the bare author id would validate and then match nothing.
+    intent_ids = {i.id: claim_id(i.id, i.statement) for i in document.intents}
+    spec_ids = {s.id: claim_id(s.id, s.statement) for s in document.specifications}
+
     for intent in document.intents:
-        add_node("Intent", {
-            "id": intent.id, "source_episode_id": episode_id,
+        plan.add_node("Intent", {
+            "id": intent_ids[intent.id], "source_episode_id": episode_id,
             "name": intent.id, "statement": intent.statement,
             "search_text": search_text_for(intent.id, intent.statement),
             "lifecycle_state": QUARANTINE,
@@ -360,8 +352,8 @@ def plan_intent(document: IntentFile, episode_id: str = "", job_id: str = "manua
         })
 
     for spec in document.specifications:
-        if not add_node("Specification", {
-            "id": spec.id, "source_episode_id": episode_id,
+        if not plan.add_node("Specification", {
+            "id": spec_ids[spec.id], "source_episode_id": episode_id,
             "name": spec.id, "statement": spec.statement,
             "search_text": search_text_for(spec.id, spec.statement),
             "provenance": spec.provenance,
@@ -379,9 +371,18 @@ def plan_intent(document: IntentFile, episode_id: str = "", job_id: str = "manua
             "valid_from": recorded, "valid_to": "",
         }):
             continue
-        add_edge("Intent", spec.intent_id, "SPECIFIED_BY", "Specification", spec.id)
+        # `intent_ids.get(...)` with the raw id as the fallback: an intent named
+        # by a specification but not declared in this document is a dangling
+        # reference the validator already reports, and substituting a minted id
+        # for a node that was never planned would hide it behind an edge that
+        # merely fails to match.
+        plan.add_edge("Intent", intent_ids.get(spec.intent_id, spec.intent_id),
+                 "SPECIFIED_BY", "Specification", spec_ids[spec.id])
         if spec.requirement_id:
-            add_edge("Specification", spec.id, "SPECIFIES",
+            # **Not minted.** A requirement id here points at a claim landed by
+            # another source, whose current revision this document cannot know.
+            # `land` resolves it against the graph -- see `resolve_claim_edges`.
+            plan.add_edge("Specification", spec_ids[spec.id], "SPECIFIES",
                      "Requirement", spec.requirement_id)
 
     return plan

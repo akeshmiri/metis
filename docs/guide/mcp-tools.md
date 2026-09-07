@@ -6,13 +6,28 @@
 
 `METIS_MCP_WRITE` is `off` in the environment this was generated in. At `off` — the default — the write modules are never imported, so the read-only surface is not a policy but a fact about what exists (N-8, revised).
 
-19 tools registered:
+55 tools registered:
 
+- `ac_quality`
+- `analysis_aspects`
+- `analysis_report`
+- `artefact_confirm`
 - `ask`
 - `auth_facts`
 - `call_recipe`
+- `change_review`
+- `check_ears`
+- `check_intent`
 - `coverage`
+- `coverage_report`
+- `decision_queue`
+- `describe_execution`
+- `describe_library`
 - `describe_policy`
+- `design_inputs`
+- `design_report`
+- `design_sections`
+- `flow_scaffold`
 - `get_entity`
 - `get_model`
 - `get_requirement`
@@ -21,11 +36,94 @@
 - `journey_walkthrough`
 - `list_entities`
 - `list_workflows`
+- `model_sources`
 - `payload_shape`
+- `product_risk`
+- `release_risk`
+- `requirement_risk`
+- `residual_risk`
+- `risk_candidates`
+- `risk_categories`
+- `risk_coverage`
+- `risk_emv`
+- `risk_exposure`
+- `risk_inputs`
+- `risk_pert`
+- `risk_priority`
+- `risk_register_check`
+- `risk_report`
 - `route_request`
 - `run_status`
 - `search_knowledge`
+- `sql_confirm`
+- `sql_review`
+- `test_cases`
+- `test_design`
+- `trace`
+- `validate_intake`
 - `validate_model`
 - `why_read_only`
 
 Enabling writes adds landing and the gates, each costing an identity, the evidence fingerprint, and a literal confirmation word. The CLI remains the fullest surface.
+
+## Prompts and resources
+
+39 prompts and 222 resources, discovered from `plugins/metis/skills/` and `docs/` rather than declared here.
+
+A skill is a **prompt**: the procedure, its order, its gates, its refusals. Its steps, knowledge and references are **resources**, so progressive disclosure survives — `SKILL.md` is paid for when the prompt is invoked, and a step costs nothing until it is fetched.
+
+| Kind | Count |
+|---|---|
+| `academy` | 25 |
+| `guide` | 7 |
+| `knowledge` | 68 |
+| `references` | 6 |
+| `skill` | 39 |
+| `spec` | 1 |
+| `steps` | 76 |
+
+### The prompts
+
+One per skill, discovered from `plugins/metis/skills/`. There is no `@mcp.prompt` in `server.py` on purpose: thirteen decorators would be a second copy of the skill tree. This list is generated, so it cannot drift from it.
+
+- `metis-behavior-modeling`
+- `metis-business-analyst`
+- `metis-change-impact`
+- `metis-coverage-report`
+- `metis-intake-processor`
+- `metis-knowledge-capture`
+- `metis-model-build`
+- `metis-review-assist`
+- `metis-risk-manager`
+- `metis-spec-writeback`
+- `metis-test-design`
+- `metis-test-generate`
+- `metis-business-analyst-intent`
+- `metis-business-analyst-scope`
+- `metis-release-readiness`
+- `metis-model-build-code`
+- `metis-risk-manager-categorisation`
+- `metis-risk-manager-framing`
+- `metis-risk-manager-governance`
+- `metis-risk-manager-identification`
+- `metis-risk-manager-monitoring`
+- `metis-risk-manager-opportunity-response`
+- `metis-risk-manager-product-risk`
+- `metis-risk-manager-qualitative`
+- `metis-risk-manager-quantitative`
+- `metis-risk-manager-register`
+- `metis-risk-manager-release-risk`
+- `metis-risk-manager-requirement-risk`
+- `metis-risk-manager-response-planning`
+- `metis-risk-manager-threat-response`
+- `metis-test-design-contract`
+- `metis-test-design-data`
+- `metis-test-design-journey`
+- `metis-test-design-levels`
+- `metis-test-design-performance`
+- `metis-test-design-security`
+- `metis-test-design-technique`
+- `metis-test-generate-api`
+- `metis-test-generate-ui`
+
+Resources are not listed: 222 of them is the tree, not an inventory. Addressed as `metis://` — `metis://skill/<name>`, `metis://skill/<name>/steps/<step>`, `metis://guide/<page>`, `metis://academy/<lesson>`, `metis://spec`.

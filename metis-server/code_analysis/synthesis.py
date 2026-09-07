@@ -592,6 +592,13 @@ def synthesise(behaviour: ExtractionReport, endpoints: list[dict],
             response_body=response_body_for(
                 outcome.status, (endpoint or {}).get("response_body", "")),
             media_types=tuple((endpoint or {}).get("produces", ())),
+            # Carried from the endpoint, which carried it from its handler.
+            # Absent upstream means 0, which `product.technical_profile` reads
+            # as "not measured" rather than as "simple".
+            complexity=int((endpoint or {}).get("complexity", 0) or 0),
+            size=int((endpoint or {}).get("size", 0) or 0),
+            repairs=int((endpoint or {}).get("repairs", 0) or 0),
+            repairs_window=str((endpoint or {}).get("repairs_window", "") or ""),
             evidence=_evidence_for(
                 repo, endpoint, outcome,
                 checks=[checks[cid] for cid in (outcome.guarding_check_ids or ())
@@ -615,6 +622,15 @@ def synthesise(behaviour: ExtractionReport, endpoints: list[dict],
             inputs=rejection.inputs, security=rejection.security,
             data_requirements=rejection.constraints,
             outcome_source=DECLARED, guard_claim=rejection.claim,
+            # The same handler as the success path — a rejection is the other
+            # branch of one method, so it carries that method's measurement.
+            # Omitting it here left one transition per rejecting endpoint
+            # reading as "not measured" beside siblings that were.
+            complexity=int((rejection.endpoint or {}).get("complexity", 0) or 0),
+            size=int((rejection.endpoint or {}).get("size", 0) or 0),
+            repairs=int((rejection.endpoint or {}).get("repairs", 0) or 0),
+            repairs_window=str(
+                (rejection.endpoint or {}).get("repairs_window", "") or ""),
             evidence=_evidence_for(repo, rejection.endpoint,
                                    rejection=rejection, declared=known_types,
                                    by_simple=types_by_simple),

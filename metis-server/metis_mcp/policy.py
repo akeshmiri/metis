@@ -60,7 +60,13 @@ from dataclasses import dataclass, field
 # plus default_state_path from `review.state`.
 
 WRITE_ENV = "METIS_MCP_WRITE"
-IDENTITY_ENV = "METIS_MCP_IDENTITY"      # "name:role"
+IDENTITY_ENV = "METIS_MCP_IDENTITY"      # "name:role" -- asserted, NOT verified
+# The bearer token this server presents, held in the environment for the same
+# reason `METIS_NEO4J_PASSWORD` is (PLT-005): a secret in argv is in the shell
+# history, the process listing, and any log that captures a command line. It is
+# checked against `METIS_API_TOKENS`, which names the digest STORE and is not
+# itself a secret.
+TOKEN_ENV = "METIS_MCP_TOKEN"
 
 OFF, AUTHOR, FULL = "off", "author", "full"
 MODES = (OFF, AUTHOR, FULL)
@@ -112,15 +118,75 @@ class Grant:
     recorded: list = field(default_factory=list)
 
 
-def resolve_identity(actor: str = "", role: str = "") -> "Identity":
-    """Who is acting. Explicit arguments beat `METIS_MCP_IDENTITY`.
+def authenticated_identity():
+    """The identity behind `METIS_MCP_TOKEN`, or `None` if none is configured.
+
+    **Reuses the HTTP surface's credential store rather than adding a second
+    one.** `api/auth.py` already stores SHA-256 digests, compares them in
+    constant time, and refuses a malformed store instead of skipping the line;
+    its own docstring warns that a second authentication system would be a
+    second thing to keep correct.
+
+    `None` means this deployment configured no credential, not that the caller
+    failed a check -- a failed check raises.
+    """
+    token = os.environ.get(TOKEN_ENV, "").strip()
+    if not token:
+        return None
+    from metis_mcp.api.auth import SCHEME, authenticate
+
+    return authenticate(f"{SCHEME} {token}")
+
+
+def resolve_identity(actor: str = "", role: str = "",
+                     verified: "Identity | None" = None) -> "Identity":
+    """Who is acting -- verified where a credential exists, asserted otherwise.
 
     There is no anonymous default. O-4c makes identity non-deferrable because an
     audit trail cannot be reconstructed retrospectively: a system that starts
     without one can never acquire a truthful history of the period before it was
     added.
+
+    **A credential wins, and a disagreeing argument is refused rather than
+    ignored.** `actor` and `role` were asserted by the caller and trusted, which
+    `describe_policy` has always admitted is "honest for a localhost tool and
+    unacceptable for anything reachable by others" -- and an agent that can name
+    itself can name somebody else, which lands in G1 and G2 and in every audit
+    record they produce. Where `METIS_MCP_TOKEN` is set, the identity comes from
+    the credential; passing a different `actor` is an impersonation attempt and
+    is answered as one, not silently overridden.
+
+    At `full` a credential is REQUIRED. Deciding costs an identity, the evidence
+    it was shown, and a literal word (N-10); an unverified name makes the first
+    of those three a formality.
     """
     from metis_mcp.review.roles import ROLES, Identity, NotPermitted
+
+    # An `Identity` passed in has already been authenticated by the surface that
+    # holds the credential -- the HTTP app checks its bearer header and then asks
+    # this module to authorise. Without this parameter it handed the name across
+    # as a plain string, which is indistinguishable here from one an agent
+    # asserted, so the two surfaces could not be told apart.
+    if verified is None:
+        verified = authenticated_identity()
+    if verified is not None:
+        if actor and actor != verified.name:
+            raise NotPermitted(
+                f"this run is authenticated as {verified.name!r} and `actor` "
+                f"says {actor!r}. The credential decides who is acting; an "
+                f"argument does not override it (N-13, O-4c).")
+        if role and role != verified.role:
+            raise NotPermitted(
+                f"{verified.name!r} is a {verified.role} in the credential "
+                f"store and `role` says {role!r}. Roles come from the store, "
+                f"not from the caller (N-1).")
+        return verified
+
+    if may_decide():
+        raise NotPermitted(
+            f"deciding needs a verified identity: set {TOKEN_ENV} to a token in "
+            f"the store named by METIS_API_TOKENS. An asserted name is enough "
+            f"to author at Quarantine and is not enough to pass a gate (N-10).")
 
     if not actor:
         configured = os.environ.get(IDENTITY_ENV, "").strip()
@@ -129,15 +195,17 @@ def resolve_identity(actor: str = "", role: str = "") -> "Identity":
             actor, role = name.strip(), role or configured_role.strip()
     if not actor:
         raise NotPermitted(
-            f"this action needs an identity. Pass `actor` and `role`, or set "
-            f"{IDENTITY_ENV}=name:role. Roles: {', '.join(ROLES)} (N-13, O-4c).")
+            f"this action needs an identity. Pass `actor` and `role`, set "
+            f"{IDENTITY_ENV}=name:role, or authenticate with {TOKEN_ENV}. "
+            f"Roles: {', '.join(ROLES)} (N-13, O-4c).")
     if not role:
         raise NotPermitted(
             f"{actor!r} has no role. Pass `role`, one of: {', '.join(ROLES)}.")
     return Identity(name=actor, role=role)
 
 
-def authorise(capability: str, actor: str = "", role: str = "") -> Grant:
+def authorise(capability: str, actor: str = "", role: str = "",
+              verified: "Identity | None" = None) -> Grant:
     """Refuse unless the mode allows it AND the role carries the capability.
 
     Both checks, in that order, because they fail for different reasons and the
@@ -160,7 +228,7 @@ def authorise(capability: str, actor: str = "", role: str = "") -> Grant:
             f"is permitted; deciding is not. Set {WRITE_ENV}={FULL!r}, or take "
             f"the decision through the review UI or `review apply`.")
 
-    identity = resolve_identity(actor, role)
+    identity = resolve_identity(actor, role, verified=verified)
     require(identity, capability)          # raises NotPermitted, naming who may
     return Grant(identity=identity, capability=capability, mode=current)
 
@@ -247,13 +315,28 @@ def describe() -> dict:
         "gates": {
             "G1": f"approval needs the literal {APPROVE_LITERAL!r}, an identity, "
                   f"and the evidence fingerprint it was decided against",
-            "G2": "publication needs the literal 'publish' in the same call; "
-                  "the only transport registered is dry-run (C3)",
+            # Was "the only transport registered is dry-run (C3)", which stopped
+            # being true when `zephyr-scale` landed -- and this string is what
+            # `describe_policy` reports, so the surface whose job is to say what
+            # is permitted was understating what it permits.
+            "G2": "publication needs the literal 'publish' in the same call. "
+                  "A live transport also needs METIS_ALLOW_EXTERNAL_WRITES=yes "
+                  "on the installation, which the run cannot set for itself",
         },
         "n10": "the identity that proposed an element may not approve it",
-        "identity_is_asserted_not_authenticated": (
-            "`actor` and `role` are taken from the caller and trusted, exactly "
-            "as the review UI trusts its identity header. Honest for a "
-            "localhost tool; unacceptable for anything reachable by others."),
+        # Reports what IS, not what was designed. This key used to say the
+        # identity was always asserted; since W1 that depends on the deployment,
+        # and a policy description that is stale about authentication is worse
+        # than one that is missing.
+        "identity": (
+            f"verified — resolved from the credential in {TOKEN_ENV}, checked "
+            f"against the digest store named by METIS_API_TOKENS. An `actor` "
+            f"argument that disagrees is refused, not preferred."
+            if os.environ.get(TOKEN_ENV, "").strip() else
+            f"asserted — `actor` and `role` are taken from the caller and "
+            f"trusted, exactly as the review UI trusts its identity header. "
+            f"Honest for a localhost tool; unacceptable for anything reachable "
+            f"by others. Set {TOKEN_ENV} to verify it. Deciding ({FULL} mode) "
+            f"requires that and will refuse an asserted name."),
         "audit": "every write is recorded with surface='mcp' (N-1)",
     }

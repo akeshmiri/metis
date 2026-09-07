@@ -115,7 +115,9 @@ class CodeExtractedSource(ModelSource):
 
     def produce(self, path: str | Path = "", author: str = "",
                 endpoints: str | Path = "", journey: str = "",
-                surface: str = "api", service: str = "", **kwargs) -> SourceResult:
+                surface: str = "api", service: str = "",
+                repo: str = "", since: str = "", until: str = "HEAD",
+                **kwargs) -> SourceResult:
         """`path` is the behaviour pack's report; `endpoints` the structural one.
 
         `service` scopes a multi-module report to one deployable. **Omitting it
@@ -152,6 +154,32 @@ class CodeExtractedSource(ModelSource):
                           if endpoints else [])
         if isinstance(endpoint_facts, dict):
             structural = _report_from_dict(endpoint_facts)
+            # **The handler's measurement, joined while both halves are in hand.**
+            # `jvm-structural` reports complexity per method and the endpoint
+            # names its `handler_method_id`; this is the last point at which the
+            # two are in one document. After synthesis a `Transition` reaches a
+            # `Class` only through its PAYLOAD types, so the implementing method
+            # is no longer reachable and the figure would need a reviewed
+            # ontology edge to get home.
+            #
+            # Joined here rather than in `mapper`, which builds its own endpoint
+            # dicts that this path does not use — the raw facts below are what
+            # the synthesiser joins on.
+            measured = {m.get("id"): m for m in endpoint_facts.get("methods", ())
+                        if m.get("complexity")}
+            # Repair history, when a window was named. Joined on the handler's
+            # own file for the same reason complexity is joined on the handler:
+            # the anchor is here, and after synthesis nothing reaches it.
+            repairs, window = _repairs_by_file(repo, since, until)
+            for fact in endpoint_facts.get("endpoints", ()):
+                handler = measured.get(fact.get("handler_method_id"))
+                if handler:
+                    fact["complexity"] = handler["complexity"]
+                    fact["size"] = handler.get("size", 0)
+                if window and handler:
+                    path = str(handler.get("anchor", "")).split(":", 1)[0]
+                    fact["repairs"] = repairs.get(path, 0)
+                    fact["repairs_window"] = window
             endpoint_facts = endpoint_facts.get("endpoints", [])
 
         services = _services_in(behaviour)
@@ -270,6 +298,26 @@ def _scope_to_service(report, service: str):
         endpoints=[e for e in report.endpoints
                    if _service_of(_anchor_file(e)) == service],
     )
+
+
+
+def _repairs_by_file(repo: str, since: str, until: str) -> tuple[dict, str]:
+    """`({path: repairs}, window)` — empty when no window was asked for.
+
+    **No window means no read**, and the empty string is what tells a consumer
+    the difference between "counted, and it was zero" and "nobody counted". A
+    fix count with no range is not a measurement.
+    """
+    if not (repo and since):
+        return {}, ""
+    from code_analysis import history
+
+    found = history.read(repo, since=since, until=until or "HEAD")
+    if found.unavailable:
+        # Reported by the caller that asked for it, never raised here: a shallow
+        # clone is a fact about the checkout, not a reason to lose the model.
+        return {}, ""
+    return found.fixes_by_file(), f"{found.since}..{found.until}"
 
 
 def _report_from_dict(data: dict) -> "ExtractionReport":

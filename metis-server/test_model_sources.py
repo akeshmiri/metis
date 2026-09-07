@@ -20,13 +20,9 @@ from metis_mcp.model_sources import (
     plan_landing,
     registered,
 )
-from mbt_fixtures import login_model_source
+from mbt_fixtures import authored_source as _authored, login_model_source
 
 
-def _authored(tmpdir: str):
-    path = Path(tmpdir) / "login-api.json"
-    path.write_text(json.dumps(login_model_source(), indent=2))
-    return get("authored").produce(path=str(path), author="alice")
 
 
 # --------------------------------------------------------------------------

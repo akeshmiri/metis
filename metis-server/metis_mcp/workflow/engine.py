@@ -85,6 +85,21 @@ class Context:
     # which is why the file is the durable artefact and not this context.
     knowledge: Any = None
     delta: Any = None
+    # risk-review: the assessment payload, and the answers a person supplied at
+    # the gate. Rebuilt by `gather` on resume, which is why that stage is not
+    # durable — it reads and writes nothing outside the process.
+    risk: Any = None
+    risk_answers: dict = field(default_factory=dict)
+    # change-approval: the risk candidates a review produced, `derived_from:
+    # model` and carrying no probability. Held so a later stage or a caller can
+    # seed a register from them; the review itself decides nothing about risk.
+    risk_candidates: list = field(default_factory=list)
+    # coverage-report: the risk-weighted pivot, so a caller can read it without
+    # recomputing the ledger a second time.
+    risk_coverage: Any = None
+    # intake / knowledge-capture: the Requirement ids this run landed, so the
+    # risk stage assesses what was just written rather than the whole graph.
+    landed_requirements: list = field(default_factory=list)
 
     def fingerprint(self) -> str:
         """What the current stage is about to run against.

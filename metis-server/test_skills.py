@@ -24,8 +24,23 @@ PLUGIN = Path(__file__).resolve().parent.parent / "plugins" / "metis"
 SKILLS = PLUGIN / "skills"
 ROUTER = PLUGIN / "agents" / "metis.agent.md"
 
-# Commands a SKILL.md may tell the model to run, as `... cli <verb>`.
-_CLI_CALL = re.compile(r"metis_mcp\.mbt\.cli\s+([a-z-]+)(?:\s+([a-z-]+))?")
+# Commands a SKILL.md may tell the model to run.
+#
+# **Both spellings, and the second one is the whole point.** This matched only
+# `python -m metis_mcp.mbt.cli <verb>` and *no skill has ever used that form* --
+# every one of them writes `metis <verb>`, which is what the console script is.
+# So the check iterated over an empty set and passed for as long as it existed,
+# while `metis data` sat in metis-intake-processor naming a verb the CLI has
+# never registered. A test that cannot fail is not a test; the vacuity guard
+# below is what stops it silently becoming one again.
+#
+# Matching bare `metis <word>` anywhere -- prose included -- is deliberate and
+# is safe here for a reason worth writing down: the product is spelled `Métis`
+# in prose and `metis` only ever names the console script. Anchoring to a
+# backtick instead was measured and finds 5 of the 44 real calls, because the
+# skills put their commands in fenced blocks rather than inline spans.
+_CLI_CALL = re.compile(
+    r"(?:metis_mcp\.mbt\.cli|\bmetis)\s+([a-z][a-z-]*)(?:\s+([a-z][a-z-]*))?")
 
 
 def _cli_verbs() -> set[str]:
@@ -61,18 +76,38 @@ def test_there_are_skills_at_all():
     assert skill_files(), "the plugin advertises skills; there must be some"
 
 
+def _named_commands() -> list[tuple[str, str]]:
+    """Every `(skill, verb)` a SKILL.md or one of its steps tells anyone to run."""
+    found: list[tuple[str, str]] = []
+    for path in skill_files():
+        for text in [path.read_text()] + [p.read_text() for p in
+                                          sorted(path.parent.glob("steps/*.md"))]:
+            for verb, _sub in _CLI_CALL.findall(text):
+                found.append((path.parent.name, verb))
+    return found
+
+
+def test_the_command_scan_is_not_vacuous():
+    """The guard on the guard.
+
+    `test_every_command_a_skill_names_is_a_real_cli_verb` cannot fail if it
+    finds nothing to check, which is exactly how it passed while naming a dead
+    verb. Asserting the scan matched something means the next time the spelling
+    of a command changes, this fails loudly instead of quietly checking nothing.
+    """
+    assert _named_commands(), (
+        "no skill names any `metis <verb>` command -- either the skills stopped "
+        "naming commands, or _CLI_CALL no longer matches how they spell them. "
+        "The second is the failure this test exists for.")
+
+
 def test_every_command_a_skill_names_is_a_real_cli_verb():
     """The check that would have caught six dead skills on the day they died."""
     verbs = _cli_verbs()
     assert verbs, "could not read the CLI's own subcommand list"
 
-    unknown: list[tuple[str, str]] = []
-    for path in skill_files():
-        for text in [path.read_text()] + [p.read_text() for p in
-                                          sorted(path.parent.glob("steps/*.md"))]:
-            for verb, _sub in _CLI_CALL.findall(text):
-                if verb not in verbs:
-                    unknown.append((path.parent.name, verb))
+    unknown = [(skill, verb) for skill, verb in _named_commands()
+               if verb not in verbs]
     assert not unknown, (
         "skills name CLI verbs that do not exist: "
         + ", ".join(f"{s}:{v}" for s, v in sorted(set(unknown))))
@@ -189,10 +224,25 @@ def test_the_shared_knowledge_that_survives_is_the_knowledge_skills_cite():
     Métis does not render a test-design document from a template; it renders
     test cases from an approved model (`rendering/test_case.py`).
     """
-    knowledge = SKILLS / "shared" / "knowledge"
-    for expected in ("anti-hallucination-protocol.md",
-                     "test-techniques-reference.md"):
-        assert (knowledge / expected).exists(), f"{expected} did not survive the port"
+    survivors = (
+        SKILLS / "shared" / "knowledge" / "anti-hallucination-protocol.md",
+        # Moved out of `shared/knowledge/` and it has now moved once more.
+        # `docs/academy/10-where-a-thing-belongs.md` asks two questions and this
+        # file answers both against where it sits: ISO/IEC/IEEE 29119-4 "would
+        # still be true if Métis were deleted", so it is `references/` rather
+        # than `knowledge/` -- a surface the rule defined and the tree had no
+        # instance of until this file.
+        #
+        # **It was skill-local, and the premise of that changed.** The promotion
+        # rule counts consumers: one citer means the file belongs to that skill,
+        # two or more mean `shared/`. `metis-test-design-technique` is the
+        # second citer -- choosing between techniques is exactly what it does --
+        # so the file moved to `shared/references/` rather than being copied,
+        # which is the outcome the rule exists to prevent.
+        SKILLS / "shared" / "references" / "test-techniques-reference.md",
+    )
+    for expected in survivors:
+        assert expected.exists(), f"{expected.name} did not survive the port"
 
 
 def test_every_shared_knowledge_file_is_cited_by_a_skill():
@@ -201,10 +251,27 @@ def test_every_shared_knowledge_file_is_cited_by_a_skill():
     A reference file nothing points at is not a reference, and its own stale
     cross-references rot unnoticed.
     """
-    knowledge = SKILLS / "shared" / "knowledge"
     skill_text = "\n".join(
         p.read_text() for p in SKILLS.rglob("*.md") if "shared" not in p.parts)
-    for path in knowledge.glob("*.md"):
+
+    # **Every kind of shared asset, not just the prose.** This globbed
+    # `knowledge/*.md` alone, so it guarded a third of the directory: the
+    # 830-line UIF schema and the 124-line design-sync gate — together about
+    # half the skill tree by volume — were cited by no skill at all, and held
+    # alive only by tests. An orphan a test keeps is still an orphan.
+    shared = SKILLS / "shared"
+    assets = sorted(
+        list((shared / "knowledge").glob("*.md"))
+        + list((shared / "schemas").glob("*.json"))
+        + list((shared / "scripts").glob("*.py"))
+        # `references/` too, wherever it appears. The rule defines the surface
+        # and until now nothing in the tree used it, so an orphan there would
+        # have been invisible to exactly the guard written to catch orphans.
+        + [p for p in SKILLS.rglob("references/*.md") if "shared" not in p.parts]
+        + list((shared / "references").glob("*.md")))
+    assert assets, "no shared assets found — the glob is checking nothing"
+
+    for path in assets:
         assert path.name in skill_text, (
             f"{path.name} is in the skill tree and no skill references it — "
             f"either cite it from a skill or delete it"
@@ -226,3 +293,284 @@ if __name__ == "__main__":
             print(f"ERROR {t.__name__}: {type(e).__name__}: {e}")
     print(f"\n{len(tests) - failures}/{len(tests)} passed")
     sys.exit(1 if failures else 0)
+
+
+# --------------------------------------------------------------------------
+# The plugin manifests.
+#
+# **Nothing generated or checked these, and all three had gone wrong.** They
+# claimed "Five skills" and "Twelve read-only tools", named twelve tools by hand
+# — missing `impact`, `describe_policy` and the five authoring tools — and were
+# the first thing anyone installing the plugin reads. A count in prose is a
+# second place to state a fact, which is exactly what the generated surfaces
+# exist to avoid; these tests are the cheapest available substitute for
+# generating them.
+# --------------------------------------------------------------------------
+
+MANIFESTS = (
+    PLUGIN / ".claude-plugin" / "plugin.json",
+    PLUGIN.parent / "metis-mcp" / ".claude-plugin" / "plugin.json",
+    PLUGIN.parent.parent / ".claude-plugin" / "marketplace.json",
+)
+
+
+def _manifest_text() -> str:
+    return "\n".join(p.read_text() for p in MANIFESTS if p.exists())
+
+
+def test_every_manifest_exists_and_is_valid_json():
+    import json
+
+    for path in MANIFESTS:
+        assert path.exists(), f"{path} is missing"
+        json.loads(path.read_text())
+
+
+# Enough to read any count a manifest is likely to write out. The map exists to
+# PARSE what a manifest says, not to enumerate what it may say -- the previous
+# version of these tests carried a hardcoded set of wrong numbers and checked
+# only those, so `.claude-plugin/marketplace.json` claiming 22 read-only tools
+# passed while there were 28. A guard that only catches the mistakes somebody
+# already thought of is the dead-list failure `test_agents.py` was written
+# against, reproduced inside the guard.
+_NUMBER_WORDS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+    "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16,
+    "seventeen": 17, "eighteen": 18, "nineteen": 19, "twenty": 20,
+    "twenty-one": 21, "twenty-two": 22, "twenty-three": 23, "twenty-four": 24,
+    "twenty-five": 25, "twenty-six": 26, "twenty-seven": 27,
+    "twenty-eight": 28, "twenty-nine": 29, "thirty": 30, "thirty-one": 31,
+    "thirty-two": 32, "thirty-three": 33, "thirty-four": 34, "thirty-five": 35,
+    "forty": 40, "fifty": 50,
+}
+
+
+def _stated_counts(noun: str) -> list:
+    """Every count a manifest states next to `noun`, as (phrase, number).
+
+    Digits and written-out words both, because both forms have drifted here.
+    """
+    text = _manifest_text().lower()
+    found = []
+    for match in re.finditer(rf"\b([a-z]+(?:-[a-z]+)?|\d+)\s+{noun}\b", text):
+        token = match.group(1)
+        if token.isdigit():
+            found.append((match.group(0), int(token)))
+        elif token in _NUMBER_WORDS:
+            found.append((match.group(0), _NUMBER_WORDS[token]))
+    return found
+
+
+def test_no_manifest_states_a_skill_count_that_is_wrong():
+    """A written-out number is the form these drifted in last time."""
+    from metis_mcp.agent_generator import read_skills
+
+    actual = len(read_skills())
+    for phrase, stated in _stated_counts("skills"):
+        assert stated == actual, (
+            f"a manifest says {phrase!r} and there are {actual} skills")
+
+
+def test_no_manifest_states_a_tool_count_that_is_wrong():
+    from metis_mcp.agent_generator import exposed_tools
+
+    actual = len(exposed_tools())
+    for phrase, stated in _stated_counts("read-only tools"):
+        assert stated == actual, (
+            f"a manifest says {phrase!r} and there are {actual} read-only tools")
+
+
+def test_the_count_scan_is_not_vacuous():
+    """Both guards above pass trivially if the regex matches nothing.
+
+    That is how a manifest could drop its counts entirely and still look
+    guarded. At least one count has to be found for the assertions to mean
+    anything.
+    """
+    assert _stated_counts("skills") or _stated_counts("read-only tools"), (
+        "no manifest states a skill or tool count -- the scan found nothing, "
+        "so the two guards above assert over an empty list")
+
+
+def test_no_manifest_names_a_tool_the_server_does_not_expose():
+    """The mcp manifest listed twelve tools by hand. Naming them at all is the
+    problem; naming ones that do not exist is the symptom."""
+    import re
+
+    from metis_mcp.agent_generator import exposed_tools
+
+    real = set(exposed_tools())
+    text = _manifest_text()
+    # Only flag snake_case identifiers, which is how a tool is written.
+    named = {m for m in re.findall(r"\b[a-z]+_[a-z_]+\b", text)}
+    # Words that look like tools and are not: manifest keys and env vars.
+    ignored = {"claude_plugin", "metis_mcp_write", "read_only"}
+    unknown = {n for n in named - real - ignored if not n.startswith("metis_")}
+    assert not unknown, (
+        f"a manifest names identifiers the server does not expose: "
+        f"{sorted(unknown)}")
+
+
+# --------------------------------------------------------------------------
+# Specialists.
+#
+# Nesting is **ownership, not addressing**: a specialist lives under its parent
+# on disk and is a flat peer everywhere else — in discovery, in the agent
+# surface, in the router. The failure to avoid is a specialist nothing routes to,
+# which is the orphan problem in a new place.
+# --------------------------------------------------------------------------
+
+def _specialists():
+    from metis_mcp.agent_generator import read_skills
+
+    return [s for s in read_skills() if s.parent]
+
+
+def test_there_are_specialists_to_check():
+    """A guard on the guard: the tests below pass trivially if the glob that
+    finds specialists ever stops matching."""
+    assert _specialists(), "no specialists discovered — check the glob"
+
+
+def test_every_specialist_is_routed_to_by_its_parent():
+    """A specialist nobody routes to is a skill with no way in."""
+    for skill in _specialists():
+        parent = SKILLS / skill.parent / "SKILL.md"
+        assert parent.exists(), f"{skill.name} names a parent that does not exist"
+        assert skill.name in parent.read_text(), (
+            f"{skill.parent} does not route to {skill.name}")
+
+
+def test_a_specialist_states_what_its_parent_already_enforces():
+    """Ported from Atlas, where each specialist opens by restating the parent's
+    rules as satisfied preconditions. Without it a reader cannot tell which rules
+    are in force, and the specialist grows a second, drifting copy of them."""
+    for skill in _specialists():
+        text = (skill.directory / "SKILL.md").read_text()
+        assert "Prerequisites, from the parent" in text, (
+            f"{skill.name} does not say what its parent already enforces")
+
+
+def test_a_specialist_is_a_complete_skill_not_a_fragment():
+    """Its own frontmatter, its own steps, its own refusals — the property that
+    lets it be invoked directly when the family is already known."""
+    for skill in _specialists():
+        assert skill.tools, f"{skill.name} declares no tools"
+        assert list(skill.directory.glob("steps/*.md")), f"{skill.name} has no steps"
+        text = (skill.directory / "SKILL.md").read_text()
+        assert "## What this skill must not do" in text, (
+            f"{skill.name} states no refusals of its own")
+
+
+def test_a_specialist_name_is_flat():
+    """Discovery, the agent surface and the router see a peer. A name carrying a
+    path separator would make the nesting an address."""
+    for skill in _specialists():
+        assert "/" not in skill.name and "\\" not in skill.name
+
+
+# --------------------------------------------------------------------------
+# A plugin README may not hand-list the tools.
+#
+# `plugins/metis-mcp/README.md` carried a table of twelve while the server
+# exposed thirty-one — the whole authoring surface missing — and it is the first
+# thing somebody installing the plugin reads. Both existing guards let it
+# through: the manifest scan above covers the three `.json` files, and
+# `test_documentation_sync` matched a count only when the word "tools" followed
+# the phrase, which "Twelve, all read-only:" does not.
+#
+# So this guards the disease rather than that one symptom. The rule is already
+# written in `test_no_manifest_names_a_tool_the_server_does_not_expose`'s own
+# docstring: *naming them at all is the problem.* A prose mention of one or two
+# tools is useful and stays legal; an enumeration is a second copy of a
+# generated fact, and `docs/guide/mcp-tools.md` is the first.
+# --------------------------------------------------------------------------
+
+# Naming a few tools in prose is fine — "`list_workflows` is the cheapest check"
+# tells a reader something. Five distinct names in list or table rows is an
+# inventory, and an inventory drifts.
+_INVENTORY = 5
+
+
+def _tools_enumerated(text: str) -> set:
+    """Real tool names appearing in table rows or list items."""
+    from metis_mcp.agent_generator import exposed_tools
+
+    real = set(exposed_tools())
+    named = set()
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if not stripped.startswith(("|", "-", "*", "+")):
+            continue
+        named |= {m for m in re.findall(r"`([a-z_]+)`", stripped) if m in real}
+    return named
+
+
+def test_no_plugin_readme_hand_lists_the_tools():
+    readmes = sorted((PLUGIN.parent).glob("*/README.md"))
+    assert readmes, "no plugin READMEs found — the glob is checking nothing"
+
+    for path in readmes:
+        enumerated = _tools_enumerated(path.read_text())
+        assert len(enumerated) < _INVENTORY, (
+            f"{path.relative_to(PLUGIN.parent.parent)} enumerates "
+            f"{len(enumerated)} tools by hand. That list is a second copy of "
+            f"what `metis guide` generates into docs/guide/mcp-tools.md, and it "
+            f"is the copy nothing checks. Point at the generated page instead: "
+            f"{sorted(enumerated)}")
+
+
+def test_the_inventory_scan_recognises_a_dead_list():
+    """Guarding the guard, against the exact table that was there."""
+    from metis_mcp.agent_generator import exposed_tools
+
+    real = sorted(exposed_tools())[:6]
+    table = "\n".join(f"| `{t}` | what it answers | yes |" for t in real)
+    assert len(_tools_enumerated(table)) == 6
+
+    # And prose naming a tool must stay legal, or the guard is unusable.
+    assert _tools_enumerated(
+        "Restart your client. `list_workflows` is the cheapest check.") == set()
+
+
+def test_a_skill_directory_is_named_for_the_skill_it_holds():
+    """`risk-manager/` held `metis-risk-manager`, and it was the only one.
+
+    The mismatch is not cosmetic. A specialist records its parent as the
+    DIRECTORY name while its own `name:` is the flat agent name, so anything
+    joining the two on `name` matched nothing for that one family — silently,
+    rendering a parent with an empty specialist list rather than failing.
+    """
+    for path in SKILLS.glob("*/SKILL.md"):
+        block = re.search(r"^name:\s*(.+)$", path.read_text(), re.M)
+        assert block, f"{path} declares no name"
+        assert block.group(1).strip() == path.parent.name, (
+            f"{path.parent.name}/ holds a skill named "
+            f"{block.group(1).strip()!r} — name the directory for the skill")
+
+
+def test_every_specialist_resolves_to_a_real_parent_skill():
+    """The join the routing actually depends on.
+
+    A specialist records its parent as the DIRECTORY it sits under, and the
+    parent's agent is generated by looking that directory up. If it resolves to
+    nothing the parent renders with an empty specialist list and no error — the
+    specialist becomes unreachable while every file still looks correct.
+
+    Deliberately NOT asserted: that a specialist's name carries its parent's as
+    a prefix. Six of seven do; `metis-release-readiness` under
+    `metis-coverage-report/` does not, because it reads as a capability in its
+    own right. That is a naming choice, and the join does not rest on it.
+    """
+    from metis_mcp.agent_generator import read_skills
+
+    skills = read_skills()
+    directories = {s.directory.name for s in skills if s.directory and not s.parent}
+    specialists = [s for s in skills if s.parent]
+    assert specialists, "no specialists found — this would pass vacuously"
+
+    for skill in specialists:
+        assert skill.parent in directories, (
+            f"{skill.name} records parent {skill.parent!r}, which is not a "
+            f"parent skill directory: {sorted(directories)}")

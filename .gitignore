@@ -28,7 +28,18 @@ htmlcov/
 .pytest_cache/
 
 # IDE/Editor
-.vscode/
+# Contents, not the directory itself: git will not re-include a file whose
+# PARENT is excluded, so `.vscode/` followed by `!.vscode/mcp.json` silently
+# keeps ignoring it. Excluding the contents leaves the negation reachable.
+.vscode/*
+# ...except the MCP config, which is how Copilot reaches the Métis server.
+# `.github/agents/` ships thirteen agents whose `tools:` frontmatter names MCP
+# tools, and without this file Copilot loads every one of them declaring tools
+# it has no way to call. Committed rather than left user-local because it needs
+# no absolute path — `uv run --directory` resolves from the repository root, so
+# the same file works on every clone. (The sibling project gitignores its copy
+# because its equivalent carries machine-specific paths.)
+!.vscode/mcp.json
 .idea/
 .ipynb_checkpoints
 
@@ -45,6 +56,34 @@ htmlcov/
 # the machine that started it; committing one would replay another machine's
 # position and its input fingerprints.
 metis-server/.metis/runs/
+
+# The rest of $METIS_HOME, for the same reason — and this list was one entry
+# long when it needed to be four. Two runtime artefacts were committed:
+#
+#   .metis/storage/          a graph export whose manifest declared 65 labels
+#                            against an ontology of 43, and 8 lessons against 17.
+#                            1,050 lines of Cypher describing a schema that no
+#                            longer exists — the exact class of plausible stale
+#                            artefact docs/historical/ was deleted for.
+#   .metis/reviews/          review output; the committed one was decided by
+#                            nobody and read by nothing.
+#
+# `storage.storage_dir()` is `<repo>/.metis/storage`, so this is not only about
+# Métis's own checkout: every project Métis analyses grows one of these inside
+# it, and without these lines each of them commits its own graph export.
+.metis/storage/
+.metis/reviews/
+.metis/runs/
+.metis/cache/
+
+# The rendered academy (`metis academy`). Generated, and unlike `docs/guide/` it
+# is NOT committed — the difference is what each one is for. The guide is
+# reference material a reader of the repository should see current, so it is
+# checked in and `metis guide --check` fails on a diff. This is a rendering of
+# lessons that are already here in their source form, and every page inlines a
+# ~90KB search index; committing it would put that in every diff that touches a
+# lesson, to show nobody anything they could not read in `docs/academy/`.
+docs/academy-site/
 
 # Publication baselines — the same argument. `<model>.published.json` records
 # what THIS deployment last published, written only after a successful

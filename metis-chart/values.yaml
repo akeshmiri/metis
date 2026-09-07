@@ -3,39 +3,26 @@
 # templates -- a conventional shape, not a bespoke one.
 
 default:
+  # **Every variable here is read by the code.** This block carried ten that
+  # were not: `LOG_LEVEL`, `METIS_LOG_LEVEL`, five `METIS_SOURCE_DB_*` (the
+  # database layer was staged out in the 2026-08-31 re-baseline) and, in the
+  # component below, four `OAUTH_*` and a misspelled transport. A chart that
+  # sets variables nothing reads is a chart nobody can reason about: it looks
+  # configured and is not. `ci.yml`'s `chart` job now renders this and fails on
+  # a name no module reads.
   env:
-    - name: LOG_LEVEL
-      value: "WARN"
-    - name: METIS_LOG_LEVEL
-      value: "WARN"
-    # Source-database connectivity -- Métis reads a catalogue FROM an existing
-    # Postgres it does not own. Catalogue only: schemas, tables, columns,
-    # types, nullability and keys, never row data (X-7a). This is
-    # NOT a new database deployment -- these are connection details to an
-    # already-running instance.
-    #
-    # Defaults target a local Postgres so a fresh checkout works out of the box.
-    # For an in-cluster deployment, override METIS_SOURCE_DB_HOSTNAME with the real
-    # service DNS name -- `localhost` resolves to the pod itself, not a database.
-    # METIS_SOURCE_DB_USERNAME should be a read-only role scoped to the schema-catalog
-    # objects Métis reads (CONST-052-adjacent least-privilege); do not reuse a
-    # write-capable service account.
-    - name: METIS_SOURCE_DB_HOSTNAME
-      value: "localhost"
-    - name: METIS_SOURCE_DB_PORT
-      value: "5432"
-    - name: METIS_SOURCE_DB_DATABASE
-      value: "CHANGE_ME"
-    - name: METIS_SOURCE_DB_USERNAME
-      value: "CHANGE_ME"
-    # LLM vendor call routing config (ZDR status, model names, classifications)
-    # lives ENTIRELY in the mounted metis-config Secret below, not as
-    # individual env vars here -- this is the "no configuration in code"
-    # directive applied to the chart itself, not just the Python package.
-    # See metis_mcp/mbt/graph_session.py::config_paths for the resolution logic
-    # that reads it (METIS_CONFIG_PATH, when set, is the only candidate).
-    # Note that the ZDR status and repository classifications in that Secret are
-    # a policy record: nothing in this build reads them as a gate.
+    # The one that decides what this deployment is ALLOWED to do, and it was
+    # set nowhere -- so every deployment silently took the default. Stated
+    # explicitly for that reason: `off` should be a choice, not an accident.
+    - name: METIS_MCP_WRITE
+      value: "off"          # off | author | full  (N-8)
+    # Contact with the system under test. Same argument (X-7a).
+    - name: METIS_EXECUTE
+      value: "off"          # off | observe | run
+    # The second key on a live publication. A G2 confirmation can be supplied by
+    # whatever drives a run, including an agent; this cannot (T-20).
+    - name: METIS_ALLOW_EXTERNAL_WRITES
+      value: "no"
 
   envOverrides: []
 
@@ -66,10 +53,7 @@ default:
 # no `secrets:` key at all, `.Values.secrets.sourceDbPassword` failed before
 # the `default` pipeline stage ran, regardless of what it would default to.
 secrets: {}
-  # sourceDbPassword: ""
-  # neo4jPassword: ""
-  # anthropicApiKey: ""
-  # oauthClientSecret: ""
+  # neo4jPassword: ""     # the only one with a reader
 
 external:
   enabled: true
@@ -130,14 +114,33 @@ components:
     useDefault:
       env: true
     env:
-      - name: MCP_TRANSPORT
+      # **The name the code reads.** This said `MCP_TRANSPORT`, which nothing
+      # reads, so the container fell back to `stdio` -- waiting on a stdin
+      # nobody is attached to while publishing a port nothing listened on.
+      # `server.main()`'s docstring describes exactly that failure as fixed;
+      # the fix could never reach a deployment through the wrong variable.
+      - name: METIS_MCP_TRANSPORT
         value: "streamable-http"
-      - name: OAUTH_TOKEN_TTL_SECONDS
-        value: "3600"   # CONST-064 -- 1 hour access tokens
-      - name: OAUTH_REFRESH_TTL_DAYS
-        value: "30"     # CONST-064 -- 30 day refresh tokens, revocable
-      - name: OAUTH_REVALIDATE_PER_REQUEST
-        value: "true"   # CONST-064 -- team/RBAC re-checked every request, not cached from issuance
+      # Unset, this binds 127.0.0.1 -- which inside a pod means the pod itself,
+      # so the Service would reach nothing even with the transport correct.
+      #
+      # The server prints a warning when this is not loopback, and the warning
+      # is right: this surface does not authenticate. It cannot approve or
+      # publish (N-8), and it will read out every requirement and criterion in
+      # the graph to whoever reaches it. That is bounded here by cluster
+      # networking and nothing else -- see README, "What this does not do".
+      - name: METIS_HTTP_HOST
+        value: "0.0.0.0"
+      - name: METIS_HTTP_PORT
+        value: "8090"
+      # Read from the environment, never from an argument and never from a
+      # literal in a file (PLT-005). The mounted config names this variable
+      # rather than carrying the secret.
+      - name: METIS_NEO4J_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: "{{ .Release.Name }}-secrets"
+            key: METIS_NEO4J_PASSWORD
       # Real bug found deploying this to a real cluster: this component had
       # no METIS_CONFIG_PATH/mountedSecrets at all, so it had no way to ever
       # find config.json and halted on startup, every time, regardless of image
@@ -152,9 +155,18 @@ components:
       limits:
         memory: 1Gi
         cpu: 1000m
+    # **`/healthz` is on the HTTP API, not on this process.** Verified by running
+    # the container's entrypoint: `metis-mcp-server` serves `/mcp` and answers
+    # 404 for `/healthz`, so this probe failed every time and Kubernetes
+    # restarted the pod in a loop.
+    #
+    # A TCP probe rather than a corrected HTTP one, deliberately. `/mcp` answers
+    # 406 without an `Accept: text/event-stream` header -- alive, and a probe
+    # would read it as failure -- and encoding a protocol handshake into a
+    # liveness check makes the check wrong whenever the protocol moves. This
+    # asserts less: the process is listening. That is what liveness means.
     livenessProbe:
-      httpGet:
-        path: /healthz
+      tcpSocket:
         port: 8090
       initialDelaySeconds: 10
       periodSeconds: 15

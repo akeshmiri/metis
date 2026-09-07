@@ -83,6 +83,19 @@ class GuardCheck:
     # `file:line@commit` — T-9a: a condition a reviewer cannot trace is a claim
     # they must take on trust.
     anchor: str = ""
+    # **The recovered node's own id, and it is load-bearing rather than
+    # bookkeeping.** `mbt/dimensions.build_chain` reads `check.id` to place a
+    # dimension in the chain, to report two checks sharing an evaluation order,
+    # and to gate GD-8's equivalence-class credit on an identical anchor. It was
+    # absent, so the one consumer of `Transition.checks` raised `AttributeError`
+    # on its first real call — the two halves were written against different
+    # shapes and, having no caller between them, never met.
+    #
+    # **Last, not first, and that is deliberate.** Putting it first shifted every
+    # positional construction in the suite, and `GuardCheck("t.isEmpty()")` then
+    # meant "id = t.isEmpty(), expression = empty" — a silent reinterpretation
+    # rather than an error, which is the failure mode this codebase hunts.
+    id: str = ""
 
 
 @dataclass(frozen=True)
@@ -143,6 +156,26 @@ class Transition:
     # which is most of what an API test is for.
     response_body: str = ""
     media_types: tuple = ()
+    # **The handler's measured complexity, carried from extraction.** Set during
+    # code processing rather than joined later: a `Transition` reaches a `Class`
+    # only through its payload types, so once the model exists the implementing
+    # method is no longer reachable and the figure would need an ontology edge
+    # to get back. Measuring it once, where it is known, is cheaper and truer.
+    #
+    # `0` means NOT MEASURED, never "simple" — straight-line code is 1. A source
+    # with no code behind it (an OpenAPI document, an authored model) leaves
+    # these at 0 and `risk/product.py` reports the absence rather than banding it.
+    complexity: int = 0
+    size: int = 0
+    # **How often the handler's file has been repaired, in a stated window.**
+    # Gathered the same way and for the same reason as `complexity`: the file is
+    # known while the endpoint is, and unreachable once the model exists.
+    #
+    # `0` means NOT MEASURED — no window was given, or no repair touched it. The
+    # two are separated by `repairs_window`, which is empty exactly when nobody
+    # asked. A count with no window is not a measurement.
+    repairs: int = 0
+    repairs_window: str = ""
     # X-8: a name and a guard each record which tier of X-7's cascade produced
     # them. Without this the question "which of these still read as
     # implementation detail" is not answerable by a query, only by eyeballing

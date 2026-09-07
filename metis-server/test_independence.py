@@ -183,7 +183,12 @@ _CONFIG_FILES = (
     "metis-server/metis.config.example.yaml",
     "metis-server/.metis/config.yaml",
     "metis-chart/files/metis-config.json",
-    "metis-chart/files/metis-config.yaml",
+    # `metis-chart/files/metis-config.yaml` was here and is deleted. No template
+    # mounted it, so it was a config file the chart did not use, offering `zdr`,
+    # `models`, `corpus`, `security` and `repositories` blocks nothing reads --
+    # every one of which this test would have flagged if the keys had been on
+    # its list. A file nothing mounts is the strongest form of the setting this
+    # test exists to find: it cannot be wrong, because it cannot be read.
 )
 
 # Keys that named something the v1 engine took with it. `graph.backend` selected
@@ -488,3 +493,127 @@ def test_no_module_mints_a_business_entity_id_of_its_own():
 # declare and nothing can process is a fiction" is now
 # `test_every_advertised_intake_source_can_actually_land`, checked against
 # `ANCHORS` instead of against two artefacts that only agreed with each other.
+
+
+# ---------------------------------------------------------------------------
+# Nobody's customer crosses the port.
+#
+# CLAUDE.md has always said "no company or customer name may appear in a test, a
+# fixture, or a `pack.yaml` claim", and until now nothing checked it. The proof
+# that it needed checking is in the tree: an anonymisation pass had already run,
+# by naive substitution, and left `the the pilot estate estate` in eight files —
+# a doubled article and a doubled noun, which is what a `sed` does to "the X" and
+# "X estate" when X becomes "the pilot estate".
+#
+# This is the same distinction the rest of this file draws. Attribution — naming
+# a source *file* something was ported from — is required. A customer's name is
+# not attribution, and unlike a path it is not made acceptable by sitting in a
+# comment, so there is deliberately no docstring exemption below.
+# ---------------------------------------------------------------------------
+
+# Seeded from what is known to exist in the project being ported FROM, so that
+# adding to it is a deliberate act rather than a reaction to a failing run. The
+# warehouse views are here because the sibling project's own rules record that
+# one of them maps tracker accounts to real employee names.
+_CUSTOMER_STRINGS = (
+    "one-bottomline",
+    "bat-pmx",
+    "mv_items",
+    "mv_test_cycle_statistics",
+    "mv_pipeline_execution_info",
+    "vw_core_normalized_users",
+    "atlas-workflow-manifest",
+)
+
+# Every ticket-key prefix this repository legitimately uses: the spec's own rule
+# families (PLT, CGA, ONT, CONST, …) and the fixtures (AC, TC, PROJ, ABC).
+# **Closed on purpose, in the idiom `STAGED_OUT` uses.** A customer's tracker key
+# introduces a prefix that is not here, which is the point — the check works
+# without anyone having to know the customer's name in advance. Widening it is a
+# reviewed edit, not a way to make a run go green.
+_TICKET_PREFIXES = frozenset({
+    "ABC", "AC", "ADMIN", "BM", "CGA", "CONST", "CPT", "DEMO", "DQ", "JSR",
+    "MIN", "ONT", "PG", "PLT", "PROJ", "RD", "RES", "SG", "SHA", "TC", "TR",
+    "TST",
+    # Métis's own, not a tracker's: `ac_drafting.draft_from_model` mints
+    # `DRAFT-001…` as the id of a criterion it drafted. It is ticket-shaped by
+    # coincidence, and the guard was right to ask.
+    "DRAFT",
+    # The same coincidence one layer in. `risk/` mints candidate ids as
+    # `RM-<source>-NNN` — `RM-RQ-001` from a requirement, `RM-RL-001` from a
+    # release, `RM-CR-001` from a change review, `RM-UM-001` from an unmeasured
+    # figure — and the regex's `\b` lands after the first hyphen, so it reads
+    # the infix as a tracker prefix. These are Métis's, and no tracker's.
+    "RQ", "RL", "CR", "UM",
+    # The spec's own rule families for §22 and §23, in the same idiom as PLT,
+    # CGA and ONT above. `TD-15` is a numbered rule about test design and
+    # `BA-6` one about pre-import analysis; both are ticket-shaped by the same
+    # coincidence the whole prefix list exists to disambiguate.
+    "TD", "BA",
+})
+
+_TICKET_KEY = re.compile(r"\b([A-Z]{2,6})-\d{2,}\b")
+
+# `build/` is a local artefact of `pip install`, gitignored and untracked; it
+# holds a stale copy of the whole package and would report every finding twice.
+_TEXT_SKIP = SKIP | {"build"}
+_TEXT_SUFFIXES = {".py", ".md", ".json", ".yaml", ".yml", ".sh", ".sc"}
+
+
+def _text_files():
+    """Code *and* markdown. A customer's name in a skill is still their name."""
+    for path in REPO.rglob("*"):
+        if path.is_dir() or any(part in _TEXT_SKIP for part in path.parts):
+            continue
+        if path.name == SELF:
+            continue
+        if path.suffix in _TEXT_SUFFIXES:
+            yield path
+
+
+def test_no_customer_name_appears_anywhere_in_the_tree():
+    offenders = []
+    for path in _text_files():
+        text = path.read_text(errors="ignore").lower()
+        for needle in _CUSTOMER_STRINGS:
+            if needle in text:
+                offenders.append(f"{path.relative_to(REPO)}: {needle}")
+    assert not offenders, (
+        "a customer or company name from the sibling project is in this tree:\n  "
+        + "\n  ".join(sorted(offenders)))
+
+
+def test_no_ticket_key_belongs_to_a_project_metis_has_not_heard_of():
+    """Shape, not name — which is why it keeps working after the port.
+
+    A denylist only catches the customers somebody remembered to name. A tracker
+    key has a recognisable form, so an unknown prefix is detectable without
+    knowing whose it is.
+    """
+    found, unknown = 0, []
+    for path in _text_files():
+        for prefix in _TICKET_KEY.findall(path.read_text(errors="ignore")):
+            found += 1
+            if prefix not in _TICKET_PREFIXES:
+                unknown.append(f"{path.relative_to(REPO)}: {prefix}-…")
+    assert found, (
+        "no ticket-shaped key found anywhere — the scan is checking nothing, "
+        "which is how this becomes a test that cannot fail")
+    assert not unknown, (
+        "ticket keys with a prefix this repository does not use:\n  "
+        + "\n  ".join(sorted(set(unknown)))
+        + "\n(if one is legitimately Métis's own, add it to _TICKET_PREFIXES)")
+
+
+def test_no_naive_substitution_artefact_survives():
+    """The cheap guard that would have caught the last anonymisation on the day
+    it was made: replacing a name inside "the X" leaves "the the"."""
+    offenders = []
+    for path in _text_files():
+        for line_no, line in enumerate(path.read_text(errors="ignore")
+                                       .splitlines(), 1):
+            if re.search(r"\bthe the\b", line, re.I):
+                offenders.append(f"{path.relative_to(REPO)}:{line_no}")
+    assert not offenders, (
+        "a doubled article — the signature of a search-and-replace over a name:\n  "
+        + "\n  ".join(sorted(offenders)))

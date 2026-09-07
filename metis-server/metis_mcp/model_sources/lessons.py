@@ -222,22 +222,12 @@ def plan_lessons(directory: str | Path, *, job_id: str = "manual",
                  proposed_by: str = "academy",
                  t_recorded: str | None = None):
     """`Episode` + one `Lesson` per file. Pure: no session, no writes."""
-    from metis_mcp.model_sources.landing import (
-        LandingPlan, PlannedEdge, PlannedNode)
-    from metis_mcp.ontology.validation import validate
+    from metis_mcp.model_sources.landing import LandingPlan, PlannedEdge
 
     lessons = read_lessons(directory)
     recorded = t_recorded or datetime.now(timezone.utc).isoformat(timespec="seconds")
     episode_id = episode_id_for(lessons)
     plan = LandingPlan(episode_id=episode_id)
-
-    def add_node(label: str, props: dict) -> bool:
-        outcome = validate(label, props)
-        if not outcome.valid:
-            plan.errors.extend(outcome.errors)
-            return False
-        plan.nodes.append(PlannedNode(label=label, properties=props))
-        return True
 
     # The root of this collection. Created once, before any lesson, so the
     # topics below have something to attach to whatever order they arrive in.
@@ -247,10 +237,10 @@ def plan_lessons(directory: str | Path, *, job_id: str = "manual",
     # and the root of the topic tree cannot disagree about what this is.
     plan.project = corpus
     corpus_topic_id = f"topic:{corpus}"
-    add_node("Topic", {"id": corpus_topic_id, "name": corpus,
+    plan.add_node("Topic", {"id": corpus_topic_id, "name": corpus,
                        "source_episode_id": episode_id})
 
-    add_node("Episode", {
+    plan.add_node("Episode", {
         "id": episode_id,
         "name": f"academy: {len(lessons)} lesson(s)",
         "t_recorded": recorded,
@@ -259,7 +249,7 @@ def plan_lessons(directory: str | Path, *, job_id: str = "manual",
     })
 
     for lesson in lessons:
-        add_node("Lesson", {
+        plan.add_node("Lesson", {
             "id": lesson_id(lesson["path"]),
             "source_episode_id": episode_id,
             "name": lesson["title"],
@@ -288,7 +278,7 @@ def plan_lessons(directory: str | Path, *, job_id: str = "manual",
             # The episode is whichever landing run first created it. A shared
             # node cannot carry one provenance per document pointing at it, and
             # the per-document provenance is on the edge's endpoints anyway.
-            if add_node("Topic", {"id": f"topic:{topic}", "name": topic,
+            if plan.add_node("Topic", {"id": f"topic:{topic}", "name": topic,
                                   "source_episode_id": episode_id}):
                 plan.edges.append(PlannedEdge(
                     from_label="Lesson", from_id=lesson_id(lesson["path"]),
@@ -308,7 +298,7 @@ def plan_lessons(directory: str | Path, *, job_id: str = "manual",
         parent = lesson_id(lesson["path"])
         for ordinal, (heading, body) in enumerate(sections_of(lesson["text"]), start=1):
             passage_id = f"{parent}#{ordinal:02d}"
-            if add_node("Passage", {
+            if plan.add_node("Passage", {
                 "id": passage_id,
                 "source_episode_id": episode_id,
                 "name": heading,

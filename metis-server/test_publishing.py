@@ -1,7 +1,10 @@
 """
 Drift and publication tests (application spec §7.6, §7.7; A-20..A-23).
 
-Free to run: the only transport is dry-run, which makes no network call.
+Free to run: these tests select the dry-run transport, which makes no network
+call. That is a property of what they pass, not of what exists — `zephyr-scale`
+is registered too, and reaching it takes a literal in the run AND
+`METIS_ALLOW_EXTERNAL_WRITES=yes` on the installation.
 """
 import sys
 import tempfile
@@ -460,3 +463,290 @@ def test_a_dry_run_never_needs_the_switch(monkeypatch):
     batch = _real_batch()
     result = publish(batch, DryRunTransport(), confirm(AFFIRMATIVE, "sam", batch.size))
     assert result.ok and result.dry_run
+
+
+# --------------------------------------------------------------------------
+# The live transport (W4) — the only thing in Métis that writes outside it.
+#
+# **No test here makes a network call.** `urlopen` is replaced; what is asserted
+# is the gate in front of the send and the handling of what comes back, because
+# a test that needed a real tracker would either be skipped forever or would
+# create records somebody has to clean up.
+# --------------------------------------------------------------------------
+
+import io as _io
+import json as _json
+import urllib.error as _urlerror
+
+import pytest
+
+from metis_mcp.publishing.publish import ExternalWritesDisabled
+
+import metis_mcp.publishing.zephyr as _zephyr
+from metis_mcp.publishing.publish import CREATE, DEPRECATE, UPDATE, Operation
+from metis_mcp.publishing.zephyr import PublicationFailed, ZephyrScaleTransport
+
+
+def _configured(monkeypatch, allow=True):
+    monkeypatch.setenv(_zephyr.BASE_URL_ENV, "https://tracker.example.com/api")
+    monkeypatch.setenv(_zephyr.TOKEN_ENV, "a-token")
+    monkeypatch.setenv(_zephyr.PROJECT_ENV, "DEMO")
+    if allow:
+        monkeypatch.setenv("METIS_ALLOW_EXTERNAL_WRITES", "yes")
+    else:
+        monkeypatch.delenv("METIS_ALLOW_EXTERNAL_WRITES", raising=False)
+    return ZephyrScaleTransport()
+
+
+def _responds(monkeypatch, body: dict, existing: list | None = None):
+    """Answer the duplicate search and the write separately.
+
+    A create now searches first, so a stub that returns the write's body to both
+    calls makes the search look like a hit. `existing` is what the search finds;
+    empty by default, which is the "searched, found nothing" case.
+    """
+    def _fake(request, timeout=None):
+        searching = "/testcase/search" in request.full_url
+        payload = {"values": existing or []} if searching else body
+
+        class _R:
+            def read(self):
+                return _json.dumps(payload).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+        if not searching:
+            _fake.seen = request
+        return _R()
+    monkeypatch.setattr(_zephyr.urllib.request, "urlopen", _fake)
+    return _fake
+
+
+def test_the_live_transport_is_not_a_dry_run():
+    """`is_dry_run` is what arms `check_permitted`. If this flips, the
+    installation switch stops applying and the gate is one key, not two."""
+    assert ZephyrScaleTransport.is_dry_run is False
+
+
+def test_a_g2_confirmation_alone_does_not_permit_an_external_write(monkeypatch):
+    """The argument the second switch exists for: the literal can be supplied by
+    whatever is driving the run, including an agent. A deployment switch cannot."""
+    transport = _configured(monkeypatch, allow=False)
+    with pytest.raises(ExternalWritesDisabled):
+        transport.check_permitted()
+
+
+def test_a_half_configured_installation_fails_before_the_batch_starts(monkeypatch):
+    """T-19 makes a batch one decision. Discovering a missing base URL on
+    operation four leaves three records created and the rest not."""
+    monkeypatch.setenv("METIS_ALLOW_EXTERNAL_WRITES", "yes")
+    monkeypatch.delenv(_zephyr.BASE_URL_ENV, raising=False)
+    monkeypatch.setenv(_zephyr.TOKEN_ENV, "a-token")
+    monkeypatch.setenv(_zephyr.PROJECT_ENV, "DEMO")
+    with pytest.raises(PublicationFailed) as e:
+        ZephyrScaleTransport().check_permitted()
+    assert _zephyr.BASE_URL_ENV in str(e.value) and "Nothing was sent" in str(e.value)
+
+
+def test_the_token_never_comes_from_an_argument_in_the_public_path(monkeypatch):
+    """PLT-005: a secret in argv is in the shell history and the process list.
+    The constructor accepts one only so a test need not set an environment
+    variable; nothing in the CLI or the workflow passes it."""
+    import pathlib as _p
+
+    for path in (_p.Path("metis_mcp/mbt/cli.py"),
+                 _p.Path("metis_mcp/workflow/handlers.py")):
+        assert "ZephyrScaleTransport(" not in path.read_text() or \
+               "token=" not in path.read_text()
+
+
+def test_a_published_id_comes_back_and_is_what_the_ledger_was_missing(monkeypatch):
+    """`DryRunTransport` structurally cannot produce this, which is why
+    MANUALLY_EDITED and OBSOLETE always read zero without a live transport."""
+    transport = _configured(monkeypatch)
+    _responds(monkeypatch, {"key": "DEMO-T42"})
+    published = transport.send(Operation(action=CREATE, case_id="c1",
+                                         published_id="", payload={"name": "x"}))
+    assert published == "DEMO-T42"
+    assert transport.sent == [("c1", "DEMO-T42")]
+
+
+def test_a_response_with_no_id_is_refused_rather_than_invented(monkeypatch):
+    """The write may have succeeded. Saying so beats putting a fiction in the
+    ledger, which is what a generated id would be."""
+    transport = _configured(monkeypatch)
+    _responds(monkeypatch, {"ok": True})
+    with pytest.raises(PublicationFailed) as e:
+        transport.send(Operation(action=CREATE, case_id="c1", published_id="",
+                                 payload={"name": "Archive a record"}))
+    assert "unknown" in str(e.value)
+
+
+def test_an_unreachable_tracker_says_the_outcome_is_unknown(monkeypatch):
+    """A timeout is not a failure to write — it is not knowing. A caller told
+    "failed" retries, and a retry after a write that landed creates a duplicate."""
+    transport = _configured(monkeypatch)
+
+    def _boom(request, timeout=None):
+        raise _urlerror.URLError("connection refused")
+    monkeypatch.setattr(_zephyr.urllib.request, "urlopen", _boom)
+
+    with pytest.raises(PublicationFailed) as e:
+        transport.send(Operation(action=CREATE, case_id="c1", published_id="",
+                                 payload={"name": "Archive a record"}))
+    # The search is what fails first now, and its message is the right one: a
+    # lookup that could not run is not evidence of absence.
+    assert "not evidence of absence" in str(e.value)
+
+
+def test_an_update_without_a_published_id_is_refused(monkeypatch):
+    """Updating needs the id of an existing case; without it the URL would be
+    malformed and the request would create or clobber something else."""
+    transport = _configured(monkeypatch)
+    with pytest.raises(PublicationFailed):
+        transport.send(Operation(action=UPDATE, case_id="c1", published_id="",
+                                 payload={}))
+
+
+def test_deprecation_is_a_status_change_and_never_a_delete(monkeypatch):
+    """A published case somebody may have run is evidence of what was verified."""
+    transport = _configured(monkeypatch)
+    fake = _responds(monkeypatch, {"key": "DEMO-T1"})
+    transport.send(Operation(action=DEPRECATE, case_id="c1",
+                             published_id="DEMO-T1", payload={}))
+    assert fake.seen.method == "PUT"
+    assert _json.loads(fake.seen.data)["status"] == "Deprecated"
+
+
+def test_the_failure_message_does_not_echo_the_request_body(monkeypatch):
+    """It ends up in logs, and the body sits next to an Authorization header."""
+    transport = _configured(monkeypatch)
+
+    def _http_error(request, timeout=None):
+        raise _urlerror.HTTPError("u", 401, "Unauthorized", {}, _io.BytesIO(b""))
+    monkeypatch.setattr(_zephyr.urllib.request, "urlopen", _http_error)
+
+    with pytest.raises(PublicationFailed) as e:
+        transport.send(Operation(action=CREATE, case_id="c1", published_id="",
+                                 payload={"name": "N", "secret": "sensitive-value"}))
+    assert "sensitive-value" not in str(e.value)
+    assert "a-token" not in str(e.value)
+
+
+# --------------------------------------------------------------------------
+# Check-before-create, and the ledger that could not see.
+#
+# Ported from Atlas's duplicate-guard discipline, whose central rule is that a
+# lookup which could not run is **not** evidence of absence. Métis had the
+# matching defect in two places at once: nothing ever wrote
+# `PublicationLedger.published` — only deserialisation and these tests did — and
+# `compare` read the resulting empty map as "no published case for this path".
+# Under dry-run that is invisible; the moment a live transport runs against such
+# a ledger, every case reads as new and is created a second time.
+# --------------------------------------------------------------------------
+
+def test_an_existing_case_is_not_created_a_second_time(monkeypatch):
+    transport = _configured(monkeypatch)
+    _responds(monkeypatch, {"key": "NEW"},
+              existing=[{"name": "Archive a record", "key": "DEMO-T7"}])
+    with pytest.raises(PublicationFailed) as e:
+        transport.send(Operation(action=CREATE, case_id="c1", published_id="",
+                                 payload={"name": "Archive a record"}))
+    assert "DEMO-T7" in str(e.value)
+    assert transport.sent == [], "it created despite finding a duplicate"
+
+
+def test_a_failed_duplicate_search_blocks_rather_than_assuming_absence(monkeypatch):
+    """**The rule this port is built on.** Reading a timed-out lookup as
+    "nothing there" is how a duplicate gets created."""
+    transport = _configured(monkeypatch)
+
+    def _boom(request, timeout=None):
+        raise _urlerror.URLError("search unavailable")
+    monkeypatch.setattr(_zephyr.urllib.request, "urlopen", _boom)
+
+    with pytest.raises(PublicationFailed) as e:
+        transport.send(Operation(action=CREATE, case_id="c1", published_id="",
+                                 payload={"name": "Archive a record"}))
+    assert "not evidence of absence" in str(e.value)
+    assert transport.sent == []
+
+
+def test_a_clean_search_lets_the_create_through(monkeypatch):
+    """The guard must not become a machine that only refuses."""
+    transport = _configured(monkeypatch)
+    _responds(monkeypatch, {"key": "DEMO-T9"}, existing=[])
+    assert transport.send(Operation(action=CREATE, case_id="c1",
+                                    published_id="",
+                                    payload={"name": "Archive"})) == "DEMO-T9"
+
+
+def test_update_and_deprecate_are_not_duplicate_checked(monkeypatch):
+    """Only a create can duplicate; the others address a record by id."""
+    transport = _configured(monkeypatch)
+    _responds(monkeypatch, {"key": "DEMO-T1"},
+              existing=[{"name": "anything", "key": "DEMO-T1"}])
+    assert transport.send(Operation(action=UPDATE, case_id="c1",
+                                    published_id="DEMO-T1",
+                                    payload={"name": "anything"})) == "DEMO-T1"
+
+
+def test_a_ledger_that_never_published_says_unknown_not_no():
+    """`NEW` is still the class — there is nothing else it could be — but the
+    detail must not claim knowledge the ledger does not have."""
+    from metis_mcp.publishing.drift import PublicationLedger, compare
+
+    _model, cases = _cases()
+    blind = PublicationLedger(model_id="records-api")
+    report = compare(cases, blind)
+    detail = report.items[0].detail
+    assert "UNKNOWN, not no" in detail, detail
+
+
+def test_a_ledger_that_has_published_says_no_plainly():
+    from metis_mcp.publishing.drift import PublicationLedger, compare
+
+    _model, cases = _cases()
+    seen = PublicationLedger(model_id="records-api", live_publications=3)
+    detail = compare(cases, seen).items[0].detail
+    assert "no published case for this path" in detail
+
+
+def test_a_dry_run_records_no_published_id():
+    """It learns none. Writing a fabricated one would put a fiction where the
+    next comparison reads its evidence."""
+    from metis_mcp.publishing.drift import PublicationLedger, record_publication
+
+    ledger = PublicationLedger(model_id="records-api")
+    ops = [Operation(action=CREATE, case_id="c1", published_id="", payload={})]
+    assert record_publication(ledger, ops, ["ignored"], _cases()[1],
+                              dry_run=True) == 0
+    assert ledger.published == {} and ledger.live_publications == 0
+
+
+def test_a_live_publication_is_recorded_so_the_next_run_can_see_it():
+    """The half that was missing entirely: `published` had no writer at all, so
+    MANUALLY_EDITED and OBSOLETE could never fire for any deployment."""
+    from metis_mcp.publishing.drift import PublicationLedger, record_publication
+
+    _model, cases = _cases()
+    ledger = PublicationLedger(model_id="records-api")
+    ops = [Operation(action=CREATE, case_id=cases[0].id, published_id="",
+                     payload={})]
+    assert record_publication(ledger, ops, ["DEMO-T5"], cases,
+                              dry_run=False) == 1
+    assert ledger.published[cases[0].id].published_id == "DEMO-T5"
+    assert ledger.can_see_published_content is True
+
+
+def test_the_recorded_ledger_survives_a_round_trip():
+    """`live_publications` is optional on load, so older ledgers report zero
+    honestly rather than failing to parse."""
+    from metis_mcp.publishing.drift import PublicationLedger
+
+    ledger = PublicationLedger(model_id="m", live_publications=2)
+    assert PublicationLedger.from_json(ledger.to_json()).live_publications == 2
+    assert PublicationLedger.from_json('{"model_id": "m"}').live_publications == 0

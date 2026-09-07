@@ -1,6 +1,22 @@
 ---
 name: metis-intake-processor
 description: Capture a stated requirement from a tracker or wiki — a Jira issue, a Zephyr Scale test case, or a Confluence page — as a Unified Intake Format document and land it in the graph. Every field traces to the response it came from; nothing is inferred. Use when somebody wants what a source SAYS the system should do brought into Métis. For code, OpenAPI or a database, see "Sources that do not go through UIF" below.
+workflow: intake
+allowed-tools:
+  - list_workflows
+  - run_status
+  - ask
+  - describe_policy
+  - get_requirement
+  - get_spec
+  - search_knowledge
+  - model_sources
+  - list_entities
+  - get_entity
+  - check_ears
+  - validate_intake
+knowledge-from:
+  - model_sources.intake_landing
 ---
 
 # Métis intake-processor
@@ -33,6 +49,36 @@ every item from its anchor.
 project, run JQL, walk a Confluence space, or follow links — a crawl is a
 different capability and would need arguing for.
 
+**Where the keys come from, since nothing else says.** "Named items only" is a
+constraint, not an answer: somebody still has to produce the names. Derive
+candidates from the repository already in front of you —
+
+```
+git log --pretty=%s%n%b <range> | grep -oE '[A-Z]{2,6}-[0-9]+' | sort -u
+```
+
+— and from branch names. This reads the local checkout and never the tracker, so
+it stays inside X-7a, and it produces exactly the shape `--key` takes.
+
+Three rules on the result.
+
+**An empty result is two different answers.** A command that found no keys and a
+command that failed both print nothing, and a shell pipeline erases the
+difference. Check the exit status: no keys is a finding, a failed `git` is
+`unknown` and blocks — the rule in
+`../shared/knowledge/duplicate-guard.md`, which exists because reading a failed
+lookup as "nothing there" is how the wrong thing gets created.
+
+**Confirm the list before fetching it**, showing the count; a range wider than
+intended turns a targeted intake into the crawl the paragraph above rules out,
+and the default answer is No.
+
+**Lock the primary subject before you extract**: the ticket the work is actually
+about, with everything else recorded as related rather than merged into it. A key
+appearing in a commit message is evidence the commit touched it, not evidence it
+is in scope — that is the scope lock in
+`../shared/knowledge/anti-hallucination-protocol.md`, applied to intake.
+
 **Read-only by construction.** `tracker.ENDPOINTS` is a closed allowlist of GET
 paths and `assert_read_only` checks every URL before it is issued, so a reader
 that grew a write fails in the test suite rather than in front of somebody's
@@ -52,11 +98,30 @@ this skill for them:
 |---|---|---|
 | source code | `metis analyse` | the Joern query packs |
 | OpenAPI / Swagger | `metis spec` | `code_analysis.openapi` |
-| a database catalogue | `metis data` | `code_analysis.db_catalogue` |
+| a database catalogue | *not reachable* | `code_analysis.db_catalogue` |
+
+**The third row is not a command, and saying so is the point.**
+`code_analysis.db_catalogue` is built and tested, and nothing invokes it: it has
+no CLI verb, no workflow stage, and no entry in `connectors/intakes.json`. This
+row used to name a `data` verb, which the CLI has never registered — long enough
+that a reader could have tried it. A reader that nothing calls is a capability
+nobody has, and naming a plausible command for it is worse than admitting the gap.
 
 `metis guide` renders the current capability map, and `connectors/intakes.json`
 is the declaration it is generated from — including what each intake **cannot**
 do.
+
+The reasoning behind the engine this skill drives is in
+`knowledge/index.md` — generated from the module docstrings that are its
+source of truth, so it cannot drift from the code it explains. Read a
+fragment when you need the why, not before.
+
+## The document's shape
+
+A UIF is validated against `../shared/schemas/unified-intake-format.schema.json`
+— 830 lines, and the machine-readable half of everything below. The prose here
+says what must not be trusted; the schema says what a document must contain for
+the question to arise at all.
 
 ## Non-negotiable rules
 
