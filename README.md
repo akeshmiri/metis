@@ -97,7 +97,7 @@ metis-server/                    the engine. Python, no framework.
 │   │                            no model is bundled and none is loaded by default
 │   ├── api/                     the HTTP surface: bearer auth against a digest
 │   │                            store, and a G2 confirmation bound to one run
-│   └── server.py                the MCP surface: fifty-five read-only tools,
+│   └── server.py                the MCP surface: fifty-six read-only tools,
 │                                plus a gated write half (METIS_MCP_WRITE)
 ├── document_table.py            (in metis_mcp/) the editable-generated-table
 │                                machinery three documents share: cells, scoped
@@ -106,7 +106,7 @@ metis-server/                    the engine. Python, no framework.
 ├── code_analysis/               Joern query packs → normalised contract →
 │                                synthesis. No engine type reaches the graph.
 ├── schema/                      GENERATED Cypher (Community only — C1)
-└── test_*.py                    103 test files (the TEST total is derivable —
+└── test_*.py                    104 test files (the TEST total is derivable —
                                  `pytest --collect-only -q` — and is deliberately
                                  not stated: it is the one count
                                  test_documentation_sync cannot guard, and it
@@ -115,7 +115,7 @@ metis-server/                    the engine. Python, no framework.
                                  runs a real graph
 
 .mcp.json                        registers the MCP server for this repo — stdio,
-                                 fifty-five read-only tools, no absolute paths
+                                 fifty-six read-only tools, no absolute paths
 plugins/metis/                   the thirty-nine skills (ten, plus seventeen
                                  specialists), and the generated agent files
 plugins/metis-mcp/               MCP server registration, for a marketplace install

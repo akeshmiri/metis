@@ -19,7 +19,7 @@ wherever an absolute interpreter path is needed.
 uv run python -m pytest -q
 ```
 
-103 test files — **no Neo4j, no model calls, no config file.** The engine is
+104 test files — **no Neo4j, no model calls, no config file.** The engine is
 deliberately database-free: models, criteria, path generation, coverage and
 validation are all pure. If this does not pass, stop here.
 
@@ -84,7 +84,7 @@ instance; it simply does not rely on being one.
 interpreter path and an absolute `cwd`. Both are required, and both are absolute
 on purpose: a client launches the server from its own working directory.
 
-The surface is **fifty-five read-only tools**, five of them the authoring
+The surface is **fifty-six read-only tools**, five of them the authoring
 surface (X-6e) and ten the risk toolkit — of which only `risk_candidates`,
 `requirement_risk` and `release_risk` need a graph. `list_workflows` is the cheapest check
 that it is wired up: it reads the workflow registry and needs no graph.

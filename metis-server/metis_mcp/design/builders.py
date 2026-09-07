@@ -178,6 +178,42 @@ def build_basis(context: DesignContext) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Standards coverage
+# ---------------------------------------------------------------------------
+
+def build_compliance(context: DesignContext) -> list[dict]:
+    """Which named work product each part of this design answers.
+
+    **A claim about coverage, not a claim of compliance.** It says which sections
+    carry which work product and what is missing where the answer is partial.
+    Whether that is enough for an obligation is a judgement about the obligation,
+    and `standards.describe()` says so in its own output.
+
+    **Rendered from the map rather than from the model**, which is why this
+    builder ignores `context` entirely: the answer is a property of how Métis is
+    built, and it is the same for every scope. A version that read the model
+    would produce a coverage claim that changed with the journey, which is
+    exactly the wrong thing for a standards statement to do.
+    """
+    from metis_mcp.design import standards
+
+    rows: list[dict] = []
+    for product in standards.WORK_PRODUCTS:
+        rows.append({
+            "id": row_id("std", product.standard, product.code),
+            "code": product.code,
+            "product": product.name,
+            "standard": product.standard,
+            "sections": ", ".join(product.sections) or "—",
+            "coverage": product.coverage,
+            # Empty on `full`, and mandatory otherwise: a gap with no reason
+            # cannot be told from one nobody looked at.
+            "because": product.because,
+        })
+    return rows
+
+
+# ---------------------------------------------------------------------------
 # The machine
 # ---------------------------------------------------------------------------
 
@@ -1351,6 +1387,7 @@ def _depth_gap_rows(context: DesignContext) -> list[dict]:
 #: than rendering an empty table.
 BUILDERS = {
     "build_basis": build_basis,
+    "build_compliance": build_compliance,
     "build_machine": build_machine,
     "build_conditions": build_conditions,
     "build_obligations": build_obligations,

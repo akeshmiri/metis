@@ -36,7 +36,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from metis_mcp.design import builders, inputs, sections
+from metis_mcp.design import builders, inputs, sections, standards
 from metis_mcp.document_table import (
     header,
     merge_rows,
@@ -95,6 +95,14 @@ def build(subject: str, context: builders.DesignContext, *,
     built: list[dict] = []
     for declared in wanted:
         rows = builders.builder_for(declared.builder)(context)
+        # **The work-product code is stamped here, in one place.** A section
+        # declaring a `work_product` column gets its code from `standards`, so a
+        # row and the compliance table cannot disagree about which named product
+        # the row belongs to — and a builder cannot forget to set it. The code
+        # classifies a row; it is never an identity (TD-32).
+        if any(c.key == "work_product" for c in declared.columns):
+            code = standards.code_for(declared.key)
+            rows = [{**row, "work_product": code} for row in rows]
         built.append({
             "key": declared.key,
             "rows": rows,

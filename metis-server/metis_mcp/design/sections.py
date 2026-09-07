@@ -83,6 +83,20 @@ STATE_TRANSITION = "state-transition"
 TECHNIQUES = (EQUIVALENCE_PARTITION, BOUNDARY_VALUE, DECISION_TABLE, PAIRWISE,
               STATE_TRANSITION)
 
+#: How completely a design answers a named work product, from the module that
+#: owns the map. `out-of-scope` is a real answer: a Test Log is an execution
+#: artefact and claiming it here would claim C-10's ledger and C-11's
+#: correctness figure in one move.
+from metis_mcp.design.standards import COVERAGE as WORK_PRODUCT_COVERAGE
+from metis_mcp.design.standards import WORK_PRODUCTS as _WORK_PRODUCTS
+
+#: Every declared code, and the subset a ROW may carry. A row's code classifies
+#: it; it is never a second identity, because ids stay content-derived (TD-32).
+#: `sections` being empty is what marks a product as answered nowhere in the
+#: document, so those codes appear in the compliance table and on no row.
+ALL_WORK_PRODUCT_CODES = tuple(w.code for w in _WORK_PRODUCTS)
+WORK_PRODUCT_CODES = tuple(sorted(w.code for w in _WORK_PRODUCTS if w.sections))
+
 #: The eight condition classes from
 #: `plugins/metis/skills/shared/knowledge/requirement-condition-coverage.md`.
 #: **Declared here rather than imported**, because the source of truth is that
@@ -349,7 +363,44 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
                     "these classes for",
     ),
     Section(
-        key="obligations", heading="Negative obligations", ordinal=4,
+        key="compliance", heading="Standards coverage", ordinal=4,
+        group="basis", specialist="metis-test-design",
+        summary="Which named work product each part of this design answers, and "
+                "— where the answer is partial or absent — what is missing.",
+        builder="build_compliance",
+        columns=(
+            _ID,
+            Column("code", "Code", COMPUTED, ALL_WORK_PRODUCT_CODES,
+                   means="the standard's own identifier for the work product"),
+            Column("product", "Work product", COMPUTED,
+                   means="the standard's own name for it. Distinct from the "
+                         "`Product` column other sections carry, which holds a "
+                         "row's code — a name and a classification are not the "
+                         "same field and sharing a key made one overwrite the "
+                         "other"),
+            Column("standard", "Standard", COMPUTED,
+                   means="29119-3 supersedes IEEE 829 and both are carried, "
+                         "because 829 is still the common naming reference"),
+            Column("sections", "Answered by", COMPUTED,
+                   means="the sections of this document that carry it"),
+            Column("coverage", "Coverage", COMPUTED, WORK_PRODUCT_COVERAGE,
+                   means="`out-of-scope` is a real answer, not a gap — an "
+                         "execution artefact is not a design's to produce"),
+            Column("because", "What is missing", COMPUTED,
+                   means="mandatory wherever the answer is not `full`. A gap "
+                         "with no reason cannot be told from one nobody looked "
+                         "at"),
+            *_decision_columns(),
+        ),
+        absent_means="THE STANDARDS MAP COULD NOT BE READ. A reader asking "
+                     "whether this design satisfies an obligation would have to "
+                     "answer it themselves, from the whole document",
+        empty_means="no work product is declared, which would mean the map "
+                    "itself is empty rather than that this design answers "
+                    "nothing",
+    ),
+    Section(
+        key="obligations", heading="Negative obligations", ordinal=5,
         group="conditions", specialist="metis-test-design",
         summary="The negative behaviour each endpoint's own shape obliges it to "
                 "have, and whether the model carries it.",
@@ -384,7 +435,7 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
                     "none of the four obligations applies to any of them",
     ),
     Section(
-        key="technique", heading="Techniques and coverage items", ordinal=5,
+        key="technique", heading="Techniques and coverage items", ordinal=6,
         group="conditions", specialist="metis-test-design-technique",
         summary="Which technique each behaviour warrants, and the coverage items "
                 "it yields. Chosen from the guard, never from a name.",
@@ -404,6 +455,9 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
                    means="why a technique could not be applied. A guard with an "
                          "OR makes a decision table unavailable, and half a "
                          "table is worse than none (M-17)"),
+            Column("work_product", "Product", COMPUTED,
+                   means="the 29119-3 work product this row belongs to. A "
+                         "classification, never an identity"),
             _RISK,
             *_decision_columns(),
         ),
@@ -414,7 +468,7 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
                     "design falls back to state-transition coverage alone",
     ),
     Section(
-        key="dimensions", heading="Guard dimensions and the reduction", ordinal=6,
+        key="dimensions", heading="Guard dimensions and the reduction", ordinal=7,
         group="conditions", specialist="metis-test-design-technique",
         summary="The short-circuit chain each behaviour is guarded by, and what "
                 "it costs to cover — bounded against the full product.",
@@ -459,7 +513,7 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
                      "whether the code branches",
     ),
     Section(
-        key="data", heading="Test data conditions", ordinal=7, group="conditions",
+        key="data", heading="Test data conditions", ordinal=8, group="conditions",
         specialist="metis-test-design-data",
         summary="The data each coverage item requires, stated as a condition on "
                 "the accepted space. Never a value.",
@@ -477,6 +531,9 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
             Column("derivation", "Derived from", COMPUTED,
                    ("numeric_threshold", "boolean_predicate", "contract"),
                    means="how the condition was reached, so a reader can weigh it"),
+            Column("work_product", "Product", COMPUTED,
+                   means="the 29119-3 work product this row belongs to. A "
+                         "classification, never an identity"),
             _RISK,
             *_decision_columns(),
         ),
@@ -487,7 +544,7 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
                     "thin one",
     ),
     Section(
-        key="levels", heading="Levels, existing coverage and viability", ordinal=8,
+        key="levels", heading="Levels, existing coverage and viability", ordinal=9,
         group="execution", specialist="metis-test-design-levels",
         summary="Where each condition is asserted, what already reaches it, and "
                 "what cannot be automated at all.",
@@ -513,6 +570,9 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
             Column("warranted", "Depth warranted", COMPUTED,
                    means="what the band justifies. Where this exceeds the column "
                          "beside it, a person covers the difference another way"),
+            Column("work_product", "Product", COMPUTED,
+                   means="the 29119-3 work product this row belongs to. A "
+                         "classification, never an identity"),
             _RISK,
             *_decision_columns(),
         ),
@@ -522,7 +582,7 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
         empty_means="no behaviour in scope, so no level applies",
     ),
     Section(
-        key="profile", heading="Defect-proneness factors", ordinal=9,
+        key="profile", heading="Defect-proneness factors", ordinal=10,
         group="execution", specialist="metis-test-design-levels",
         summary="What is behind the risk band, factor by factor — because the "
                 "band says how much there is to get wrong and hides what.",
@@ -555,7 +615,7 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
         empty_means="no behaviour in scope could be profiled",
     ),
     Section(
-        key="setup", heading="Setup cost and data complexity", ordinal=10,
+        key="setup", heading="Setup cost and data complexity", ordinal=11,
         group="execution", specialist="metis-test-design-levels",
         summary="What it takes to reach each behaviour, computed from the setup "
                 "chain — and the pattern choice that is a person's, not Métis's.",
@@ -593,7 +653,7 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
                     "there is no setup chain to cost",
     ),
     Section(
-        key="security", heading="Authorisation and authentication", ordinal=11,
+        key="security", heading="Authorisation and authentication", ordinal=12,
         group="quality", specialist="metis-test-design-security",
         summary="The identity and authority each call requires, from what was "
                 "recovered — and what recovery cannot tell you.",
@@ -623,7 +683,7 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
                     "evidence the surface is open by design",
     ),
     Section(
-        key="performance", heading="Load and performance candidacy", ordinal=12,
+        key="performance", heading="Load and performance candidacy", ordinal=13,
         group="quality", specialist="metis-test-design-performance",
         summary="Which calls are worth driving under load, and the refusal where "
                 "nobody has sized them.",
@@ -653,7 +713,7 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
                     "that the calls are cheap",
     ),
     Section(
-        key="contract", heading="Contract and interface", ordinal=13,
+        key="contract", heading="Contract and interface", ordinal=14,
         group="interfaces", specialist="metis-test-design-contract",
         summary="What each endpoint declares, and where the declaration and the "
                 "code disagree.",
@@ -678,7 +738,7 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
                     "compared — which covers only what was compared",
     ),
     Section(
-        key="journey", heading="Cross-surface journeys", ordinal=14,
+        key="journey", heading="Cross-surface journeys", ordinal=15,
         group="interfaces", specialist="metis-test-design-journey",
         summary="Which UI action invokes which call, and the guards a UI action "
                 "inherits from the API beneath it (M-5c).",
@@ -705,7 +765,7 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
                     "the drift report says which",
     ),
     Section(
-        key="uncertainty", heading="Open questions and assumptions", ordinal=15,
+        key="uncertainty", heading="Open questions and assumptions", ordinal=16,
         group="uncertainty", specialist="metis-test-design",
         summary="Every input nobody supplied, what its absence means, and which "
                 "section it silenced.",

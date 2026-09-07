@@ -148,6 +148,14 @@ BEYOND_THE_REFERENCE: tuple[tuple[str, str, str], ...] = (
     # renders what it recovered and draws nothing it did not — no actors, no
     # inferred grouping. It belongs to the parent because it is the whole scope
     # rather than any one specialist's slice of it.
+    # **A statement about the document rather than about the system**, which is
+    # why it belongs to the parent: it says which named work product each
+    # section answers, and where the answer is partial, what is missing. No
+    # specialist owns it because it is about all of them at once.
+    ("metis-test-design", "compliance",
+     "which ISO/IEC/IEEE 29119-3 and IEEE 829 work product each section "
+     "answers, and the three that are out of scope with the reason — an "
+     "execution artefact is not a design's to produce"),
     ("metis-test-design", "machine",
      "the state machine in scope, drawn from the recovered states and "
      "transitions — or a stated count of how many were left out, because a "

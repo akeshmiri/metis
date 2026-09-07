@@ -61,6 +61,25 @@ section, which is a lookup rather than a judgement.**
 | **`metis-test-design-contract`** | what an endpoint declares against what it does | `contract` |
 | **`metis-test-design-journey`** | which UI action invokes which call (M-5c) | `journey` |
 
+## What standards this answers, and what it does not
+
+`design_standards()` maps every section onto ISO/IEC/IEEE 29119-3's six
+design-time work products and IEEE 829's eight documents, and the `compliance`
+section renders it. **Three are `out-of-scope` and that is an answer, not a gap**
+— a Test Log, a Test Incident Report and a Test Summary Report are execution and
+reporting artefacts, and a design that claimed them would be claiming an
+observation it never made.
+
+**It is a coverage map, never a compliance claim.** It says which section answers
+which product and what is missing where the answer is partial. Whether that meets
+an obligation is a judgement about the obligation, and saying otherwise would be
+Métis certifying something it cannot compute.
+
+Two side references carry the *why*, and neither is loaded by default:
+`references/ieee-829-work-products.md` for the original element definitions when
+a deviation needs defending, and `references/life-cycle-alignment.md` for 12207
+and 15288 when a compliance requirement names one.
+
 ### Keep these yourself
 
 | Stay here | Section | Why |

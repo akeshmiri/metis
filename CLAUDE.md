@@ -83,7 +83,7 @@ such because it is not checkable the same way).
   Generation reads only `Approved` (D-10).
 - **The MCP surface is read-only by default, and by construction when it is**
   (N-8, revised). `METIS_MCP_WRITE` is `off` | `author` | `full`; at `off` — the
-  default — the write modules are never imported, so fifty-five read-only tools
+  default — the write modules are never imported, so fifty-six read-only tools
   are all that exist, five of them the authoring surface (X-6e): `call_recipe`,
   `auth_facts`, `payload_shape`, `journey_walkthrough`, `ask`. Enabling writes adds landing and the gates, each costing an
   identity, the evidence fingerprint, and a literal word. The CLI remains the

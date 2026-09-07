@@ -1227,6 +1227,28 @@ def design_sections() -> str:
 
 
 @mcp.tool()
+def design_standards() -> str:
+    """Which named work product each part of a test design answers.
+
+    ISO/IEC/IEEE 29119-3's six design-time products and IEEE 829's eight
+    documents, mapped onto the design's own sections — with `full`, `partial` or
+    `out-of-scope` and, wherever it is not `full`, what is missing.
+
+    **Three products are `out-of-scope` and that is a real answer.** A Test Log,
+    a Test Incident Report and a Test Summary Report are execution and reporting
+    artefacts; claiming them would claim C-10's ledger and C-11's correctness
+    figure in one move. Each names where it actually lives.
+
+    **This does not claim the design satisfies a standard.** It says which
+    section answers which product. Whether that meets an obligation is a
+    judgement about the obligation, not a property Métis computes.
+    """
+    from metis_mcp.design import standards
+
+    return _json({"ok": True, **standards.describe()})
+
+
+@mcp.tool()
 def design_inputs(section: str = "") -> str:
     """What a test design needs, split into what Métis gathers and what it asks.
 

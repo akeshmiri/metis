@@ -17,7 +17,7 @@
     },
     {
       "name": "metis-mcp",
-      "description": "The Métis MCP server: 55 read-only tools over the behaviour graph and the knowledge in it — read a model and validate it, coverage and what was unmeasurable, traceability and where the chain breaks, the cases a model would generate, what a diff touches, specifications and requirements, and risk exposure, EMV, PERT, register coherence, and requirement and release assessments that say what was gathered and what is still unanswered. Read-only by default and by construction at that tier (N-8); METIS_MCP_WRITE adds landing and the gates.",
+      "description": "The Métis MCP server: 56 read-only tools over the behaviour graph and the knowledge in it — read a model and validate it, coverage and what was unmeasurable, traceability and where the chain breaks, the cases a model would generate, what a diff touches, specifications and requirements, and risk exposure, EMV, PERT, register coherence, and requirement and release assessments that say what was gathered and what is still unanswered. Read-only by default and by construction at that tier (N-8); METIS_MCP_WRITE adds landing and the gates.",
       "author": {
         "name": "Métis"
       },

@@ -657,8 +657,14 @@ def test_regeneration_preserves_a_row_somebody_added_by_hand():
     first = document.render_markdown(document.build("login (api)", context))
     section = S.SECTIONS["technique"]
     anchor = next(l for l in first.splitlines() if l.startswith("| tech-"))
-    hand = ("| tech-HAND01 | (LoggedOut, submit) | password history | "
-            "equivalence-partition | 3 | — | — | change | bob | ours |")
+    # **Built from the section's real width, not hardcoded.** A hand-written row
+    # one cell short is correctly REJECTED by `parse_rows` — which is the design
+    # — so a fixture that hardcodes the count fails for the wrong reason the
+    # moment a column is added, and says nothing about the merge.
+    cells = ["tech-HAND01"] + ["—"] * (len(section.columns) - 1)
+    cells[1] = "(LoggedOut, submit)"
+    cells[-3:] = ["change", "bob", "ours"]
+    hand = "| " + " | ".join(cells) + " |"
     edited = first.replace(anchor, anchor + "\n" + hand)
 
     merged = document.merge(document.build("login (api)", context), edited)

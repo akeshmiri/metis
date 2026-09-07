@@ -20,9 +20,9 @@ A specialist has **no agent of its own** — its parent's agent routes to it as 
 
 ## MCP
 
-55 tools, 39 prompts, 222 resources.
+56 tools, 39 prompts, 224 resources.
 
-**48 of the 55 tools have no CLI path at all.** This is the concrete cost of dropping the MCP surface: each one would have to become a CLI verb or be deleted.
+**49 of the 56 tools have no CLI path at all.** This is the concrete cost of dropping the MCP surface: each one would have to become a CLI verb or be deleted.
 
 - `ac_quality`
 - `analysis_aspects`
@@ -42,6 +42,7 @@ A specialist has **no agent of its own** — its parent's agent routes to it as 
 - `design_inputs`
 - `design_report`
 - `design_sections`
+- `design_standards`
 - `get_entity`
 - `get_model`
 - `get_requirement`
@@ -90,7 +91,7 @@ Prompts are the skills, read from the same files the plugin loads — one source
 | `academy` | 25 |
 | `guide` | 7 |
 | `knowledge` | 68 |
-| `references` | 6 |
+| `references` | 8 |
 | `skill` | 39 |
 | `spec` | 1 |
 | `steps` | 76 |
@@ -143,7 +144,7 @@ Prompts are the skills, read from the same files the plugin loads — one source
 
 - `plugins/metis/agents` — 13 files
 
-Generated from the skills' frontmatter. They hold scope and nothing else: 37 distinct tool sets, 4–17 tools each out of 55. **MCP has no primitive for this** — neither a prompt nor a resource has a field expressing tool scope — which is why agents stay on the filesystem in both client formats.
+Generated from the skills' frontmatter. They hold scope and nothing else: 37 distinct tool sets, 4–17 tools each out of 56. **MCP has no primitive for this** — neither a prompt nor a resource has a field expressing tool scope — which is why agents stay on the filesystem in both client formats.
 
 ## The CLI
 

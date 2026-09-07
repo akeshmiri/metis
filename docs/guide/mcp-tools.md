@@ -6,7 +6,7 @@
 
 `METIS_MCP_WRITE` is `off` in the environment this was generated in. At `off` — the default — the write modules are never imported, so the read-only surface is not a policy but a fact about what exists (N-8, revised).
 
-55 tools registered:
+56 tools registered:
 
 - `ac_quality`
 - `analysis_aspects`
@@ -27,6 +27,7 @@
 - `design_inputs`
 - `design_report`
 - `design_sections`
+- `design_standards`
 - `flow_scaffold`
 - `get_entity`
 - `get_model`
@@ -68,7 +69,7 @@ Enabling writes adds landing and the gates, each costing an identity, the eviden
 
 ## Prompts and resources
 
-39 prompts and 222 resources, discovered from `plugins/metis/skills/` and `docs/` rather than declared here.
+39 prompts and 224 resources, discovered from `plugins/metis/skills/` and `docs/` rather than declared here.
 
 A skill is a **prompt**: the procedure, its order, its gates, its refusals. Its steps, knowledge and references are **resources**, so progressive disclosure survives — `SKILL.md` is paid for when the prompt is invoked, and a step costs nothing until it is fetched.
 
@@ -77,7 +78,7 @@ A skill is a **prompt**: the procedure, its order, its gates, its refusals. Its 
 | `academy` | 25 |
 | `guide` | 7 |
 | `knowledge` | 68 |
-| `references` | 6 |
+| `references` | 8 |
 | `skill` | 39 |
 | `spec` | 1 |
 | `steps` | 76 |
@@ -126,4 +127,4 @@ One per skill, discovered from `plugins/metis/skills/`. There is no `@mcp.prompt
 - `metis-test-generate-api`
 - `metis-test-generate-ui`
 
-Resources are not listed: 222 of them is the tree, not an inventory. Addressed as `metis://` — `metis://skill/<name>`, `metis://skill/<name>/steps/<step>`, `metis://guide/<page>`, `metis://academy/<lesson>`, `metis://spec`.
+Resources are not listed: 224 of them is the tree, not an inventory. Addressed as `metis://` — `metis://skill/<name>`, `metis://skill/<name>/steps/<step>`, `metis://guide/<page>`, `metis://academy/<lesson>`, `metis://spec`.

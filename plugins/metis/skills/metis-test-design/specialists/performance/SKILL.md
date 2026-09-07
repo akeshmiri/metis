@@ -59,8 +59,12 @@ Inventing an SLA is the one thing this classification must never do.
 ## What this skill must not do
 
 1. **Never invent a target, an SLA or a load profile.** `no-basis` is the value.
-2. **Never say anything is slow.** No execution result is ingested (§8.7, C-11);
-   this reads a model, not a run.
+2. **Never say anything is slow.** This section reads a model, not a run.
+   Execution results *are* ingested (§8.7, revised) — but they land against the
+   `TestCase` that ran, carry `provenance: observed_from_running_system`, and
+   never reach the coverage ledger (C-10). A design states what should be driven
+   under load; whether anything was slow is a different claim with a different
+   source.
 3. **Never award candidacy on a route name.** A path is a name; a paging
    parameter is a fact.
 4. **Never run load as part of designing it.** Driving load is the `run`
