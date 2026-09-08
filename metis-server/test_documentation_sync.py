@@ -190,6 +190,10 @@ def _claim_documents() -> list[Path]:
 # Every entry carries its reason. If one cannot be given, the prose is probably
 # wrong rather than the test.
 NOT_A_TOTAL = {
+    ("CHANGELOG.md", "thirty", "skills"):
+        "the SIBLING project's skill count, in the entry recording what was "
+        "ported from it. The guard cannot tell whose tree a number is about, "
+        "and this one is not Métis's",
     ("README.md", "two", "workflows"):
         "'a request matching two workflows equally' is a pair, not the total",
     ("CLAUDE.md", "45", "labels"):

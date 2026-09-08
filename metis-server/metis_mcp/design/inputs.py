@@ -269,6 +269,17 @@ ASKED_INPUTS: tuple[Input, ...] = (
                        "something outside it stops answering is not in the "
                        "source it read",
           decides_sections=("conditions",)),
+    Input("business_value",
+          "what the organisation loses when this behaviour is wrong — the only "
+          "thing that orders work by consequence rather than by defect-proneness",
+          ASKED,
+          question="If each of these behaviours failed in production, what would "
+                   "the business actually lose? Name the consequence — money, a "
+                   "customer, a regulator, an hour of somebody's day.",
+          absent_means="VALUE IS UNASSIGNED. This design can rank by how much "
+                       "there is to get wrong and not by what being wrong "
+                       "costs, and those two orders are routinely different",
+          decides_sections=("basis",)),
     Input("security_obligations",
           "whether an authorisation defect is a compliance event or a bug",
           ASKED,

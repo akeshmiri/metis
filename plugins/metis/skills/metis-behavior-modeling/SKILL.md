@@ -87,6 +87,19 @@ Report an undecided complement as a gap. Do not fill it in — inventing the
 rejection behaviour is exactly the failure the unverifiable-guard outcome exists
 to keep visible.
 
+## The standard behind this, and what it does not certify
+
+**ISO/IEC/IEEE 29119-4** — `../shared/references/iso-29119-4-coverage-measures.md`.
+The state-machine measures (`all-states`, `all-transitions`,
+`all-transition-pairs`) are computed over the machine this skill checks, so a
+machine that fails determinism or reachability makes every one of them
+unreliable rather than merely lower.
+
+**A coverage map, never a compliance claim.** `metis_mcp/standards.py` is the
+registry — which standard governs which skill, what Métis computes against it,
+and what it refuses to claim. Whether the result satisfies an obligation is a
+judgement about the obligation, not a property Métis can compute.
+
 ## What this skill must not do
 
 **Do not resolve an ambiguity for the user.** Two transitions on one trigger with

@@ -6,7 +6,7 @@
 
 `METIS_MCP_WRITE` is `off` in the environment this was generated in. At `off` — the default — the write modules are never imported, so the read-only surface is not a policy but a fact about what exists (N-8, revised).
 
-56 tools registered:
+58 tools registered:
 
 - `ac_quality`
 - `analysis_aspects`
@@ -18,6 +18,7 @@
 - `change_review`
 - `check_ears`
 - `check_intent`
+- `classify_failure`
 - `coverage`
 - `coverage_report`
 - `decision_queue`
@@ -41,6 +42,7 @@
 - `payload_shape`
 - `product_risk`
 - `release_risk`
+- `release_verdict`
 - `requirement_risk`
 - `residual_risk`
 - `risk_candidates`
@@ -69,7 +71,7 @@ Enabling writes adds landing and the gates, each costing an identity, the eviden
 
 ## Prompts and resources
 
-39 prompts and 224 resources, discovered from `plugins/metis/skills/` and `docs/` rather than declared here.
+40 prompts and 234 resources, discovered from `plugins/metis/skills/` and `docs/` rather than declared here.
 
 A skill is a **prompt**: the procedure, its order, its gates, its refusals. Its steps, knowledge and references are **resources**, so progressive disclosure survives — `SKILL.md` is paid for when the prompt is invoked, and a step costs nothing until it is fetched.
 
@@ -77,11 +79,11 @@ A skill is a **prompt**: the procedure, its order, its gates, its refusals. Its 
 |---|---|
 | `academy` | 25 |
 | `guide` | 7 |
-| `knowledge` | 68 |
-| `references` | 8 |
-| `skill` | 39 |
+| `knowledge` | 71 |
+| `references` | 11 |
+| `skill` | 40 |
 | `spec` | 1 |
-| `steps` | 76 |
+| `steps` | 79 |
 
 ### The prompts
 
@@ -97,6 +99,7 @@ One per skill, discovered from `plugins/metis/skills/`. There is no `@mcp.prompt
 - `metis-review-assist`
 - `metis-risk-manager`
 - `metis-spec-writeback`
+- `metis-system-contact`
 - `metis-test-design`
 - `metis-test-generate`
 - `metis-business-analyst-intent`
@@ -127,4 +130,4 @@ One per skill, discovered from `plugins/metis/skills/`. There is no `@mcp.prompt
 - `metis-test-generate-api`
 - `metis-test-generate-ui`
 
-Resources are not listed: 224 of them is the tree, not an inventory. Addressed as `metis://` — `metis://skill/<name>`, `metis://skill/<name>/steps/<step>`, `metis://guide/<page>`, `metis://academy/<lesson>`, `metis://spec`.
+Resources are not listed: 234 of them is the tree, not an inventory. Addressed as `metis://` — `metis://skill/<name>`, `metis://skill/<name>/steps/<step>`, `metis://guide/<page>`, `metis://academy/<lesson>`, `metis://spec`.

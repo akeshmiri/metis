@@ -1347,3 +1347,473 @@ def test_regeneration_still_preserves_a_table_edit_beside_a_diagram():
     after = document.parse(document.render_markdown(merged), section)
     assert after[target]["owner"] == "erin"
     assert "stateDiagram-v2" in document.render_markdown(merged)
+
+
+# --------------------------------------------------------------------------
+# Business value.
+#
+# **The one Atlas rule that could not cross intact.** Atlas mandates that every
+# scenario carry a business-value driver, which in practice means an LLM assigns
+# one. Métis may not: business value is what the organisation loses when
+# something is wrong, and a driver picked from a name reads — in the rendered
+# document — exactly like one a person decided.
+# --------------------------------------------------------------------------
+
+def _value_model(**kwargs):
+    from metis_mcp.mbt.model import Model, State, Transition
+
+    states = {"A": State(id="A", name="A", surface="api", is_initial=True),
+              "B": State(id="B", name="B", surface="api")}
+    return Model(id="value-api", states=states, transitions={
+        "t": Transition(id="t", source="A", trigger="POST /checkout",
+                        target="B", **kwargs)})
+
+
+def test_the_driver_vocabulary_is_closed_and_clarify_is_not_one_of_them():
+    """`clarify` is the refusal to guess, not a tenth kind of value. A human
+    choosing it would be recording indecision as a decision."""
+    assert len(S.VALUE_DRIVERS) == 9
+    assert "clarify" not in S.VALUE_DRIVERS
+    assert "clarify" in S.PROPOSED_VALUE
+
+    section = S.SECTIONS["basis"]
+    proposed = next(c for c in section.columns if c.key == "proposed_value")
+    decided = next(c for c in section.columns if c.key == "value_driver")
+    assert proposed.filled_by == S.COMPUTED
+    assert decided.filled_by == S.HUMAN
+    assert set(decided.allowed) == set(S.VALUE_DRIVERS), (
+        "a person may not record `clarify` as their decision")
+
+
+def test_no_evidence_yields_clarify_and_says_why():
+    """**The failure mode this pair of columns exists for.** A behaviour called
+    `POST /checkout` invites `Revenue`, and naming it from the route is the
+    name-based inference X-6 forbids."""
+    from metis_mcp.design.builders import DesignContext, proposed_value
+
+    value, why = proposed_value(DesignContext(model=_value_model()))
+    assert value == "clarify"
+    assert "X-6" in why or "inference from a name" in why
+
+
+def test_a_recovered_authorisation_check_supports_risk_mitigation():
+    from metis_mcp.design.builders import DesignContext, proposed_value
+
+    value, why = proposed_value(DesignContext(
+        model=_value_model(security=({"scheme": "bearer"},))))
+    assert value == "Risk Mitigation"
+    assert "authorisation check" in why
+
+
+def test_declared_constraints_support_data_quality():
+    from metis_mcp.design.builders import DesignContext, proposed_value
+
+    value, why = proposed_value(DesignContext(model=_value_model(
+        inputs=({"name": "amount", "constraints": ["@Max(1000)"]},))))
+    assert value == "Data Quality"
+    assert "constraints" in why
+
+
+def test_only_two_drivers_are_ever_proposed():
+    """Every other driver in the vocabulary needs a fact Métis does not hold.
+    If a third ever becomes proposable, it must arrive with the evidence that
+    justifies it — not by widening this list."""
+    import inspect
+
+    from metis_mcp.design import builders
+
+    source = inspect.getsource(builders.proposed_value)
+    proposed = {d for d in S.VALUE_DRIVERS if f'"{d}"' in source}
+    assert proposed == {"Risk Mitigation", "Data Quality"}, (
+        f"a driver is proposed with no stated evidence: {sorted(proposed)}")
+
+
+def test_every_basis_row_carries_the_evidence_behind_the_proposal():
+    """A reading a reader cannot audit is one they have to take on trust."""
+    from metis_mcp.design.builders import DesignContext, build_basis
+
+    rows = build_basis(DesignContext(
+        model=_value_model(security=({"scheme": "bearer"},)),
+        requirement={"id": "REQ-1", "text": "When a user pays, the system "
+                                            "shall record the payment.",
+                     "criteria": []}))
+    assert rows
+    for row in rows:
+        assert row["proposed_value"] in S.PROPOSED_VALUE
+        assert row["value_why"].strip(), "a proposal with no evidence behind it"
+
+
+def test_the_asked_input_says_what_an_unassigned_value_costs():
+    from metis_mcp.design import inputs as ledger
+
+    item = ledger.BY_NAME["business_value"]
+    assert item.source == ledger.ASKED
+    # The substance, not a chosen word: it must name BOTH orders and say they
+    # differ. Asserting one phrase would break on a rewording that changed
+    # nothing, which is a test failing for the wrong reason.
+    means = item.absent_means.lower()
+    assert "get wrong" in means and "costs" in means, item.absent_means
+    assert "differ" in means, (
+        "the cost of an unassigned value is that ordering falls back to "
+        "defect-proneness, and the two orders are routinely not the same")
+
+
+# --------------------------------------------------------------------------
+# Source fidelity, and the response oracle.
+#
+# Ported as gating rather than as a generator. The practice this came from also
+# emits the test code; R8 keeps that out, and none of what follows needs it.
+# --------------------------------------------------------------------------
+
+def _grades():
+    from metis_mcp.mbt.test_levels import (
+        COVERED, OUTCOME_UNPROVEN, UNCOVERED, Grade)
+
+    return {
+        "a": Grade("a", COVERED, level="api_functional",
+                   evidence=("Suite.testA",), detail="200 asserted"),
+        "b": Grade("b", OUTCOME_UNPROVEN, evidence=("Suite.testB",),
+                   detail="endpoint reached"),
+        "c": Grade("c", UNCOVERED, detail="nothing reaches it"),
+    }
+
+
+def test_each_grade_maps_to_one_verdict():
+    from metis_mcp.rendering import fidelity
+
+    review = fidelity.review(_grades())
+    assert review["counts"] == {"continue_as_is": 1, "improvement_needed": 1,
+                                "split_requested": 0, "generate": 1}
+    assert review["blocked"] == []
+
+
+def test_an_unproven_outcome_still_generates_and_names_the_near_miss():
+    """REQ-METIS-PG-01 is unchanged: treating unproven as proven excuses a real
+    gap. What the verdict adds is that an existing test was close, so a reviewer
+    can improve that one rather than accept a second."""
+    from metis_mcp.rendering import fidelity
+
+    review = fidelity.review(_grades())
+    assert "b" in review["may_generate"]
+    assert review["verdicts"]["b"]["existing"] == ["Suite.testB"]
+    assert "nothing here edits it" in review["verdicts"]["b"]["because"]
+
+
+def test_a_covered_transition_generates_nothing():
+    from metis_mcp.rendering import fidelity
+
+    assert "a" not in fidelity.review(_grades())["may_generate"]
+
+
+def test_a_split_blocks_the_batch_and_is_supplied_never_inferred():
+    """Deciding one test covers two things and should become two is a judgement
+    about somebody else's test. A heuristic that got it wrong would block a
+    batch over a test that was fine."""
+    from metis_mcp.rendering import fidelity
+
+    clean = fidelity.review(_grades())
+    assert clean["blocked"] == [], "no split may be inferred from a grade alone"
+
+    blocked = fidelity.review(_grades(), splits={"a": "asserts 200 and 404"})
+    assert len(blocked["blocked"]) == 1
+    assert "SPLIT IS UNRESOLVED" in blocked["means"]
+    assert "a" not in blocked["may_generate"]
+
+
+def test_every_verdict_says_why():
+    from metis_mcp.rendering import fidelity
+
+    for verdict in fidelity.review(_grades())["verdicts"].values():
+        assert verdict["because"].strip()
+
+
+def test_the_response_shape_separates_absent_from_unrecovered():
+    """`ResponseEntity<Void>` is a real answer; a body nobody read is not a body
+    that is absent. The distinction decides whether a person is asked for an
+    oracle mode at all."""
+    from metis_mcp.design.builders import _response_shape
+    from metis_mcp.mbt.model import Transition
+
+    def _t(**kwargs):
+        kwargs.setdefault("trigger", "GET /x")
+        return Transition(id="t", source="A", target="B", **kwargs)
+
+    assert _response_shape(_t(response_body="PageDto<X>")) == "collection"
+    assert _response_shape(_t(response_body="ItemDto")) == "object"
+    assert _response_shape(_t(outcome_status=204)) == "none"
+    assert _response_shape(_t()) == "unrecovered"
+
+
+def test_the_oracle_mode_is_a_human_column():
+    """A sample and a whole-set comparison are different claims, and picking one
+    silently reports the first as the second."""
+    section = S.SECTIONS["contract"]
+    mode = next(c for c in section.columns if c.key == "oracle_mode")
+    assert mode.filled_by == S.HUMAN
+    assert set(mode.allowed) == set(S.ORACLE_MODES)
+
+
+def test_the_obligations_do_not_include_a_generic_one():
+    """**`method-not-allowed` was raised and removed.** Every endpoint answers
+    on some verb, so it fired on all 28 of a real service — and the condition
+    guardrail names exactly that: no generic condition merely because it is
+    common."""
+    assert "method-not-allowed" not in S.OBLIGATIONS
+    assert "unbounded-payload" in S.OBLIGATIONS
+
+
+def test_a_bounded_body_raises_no_unbounded_payload_obligation():
+    """Where a size constraint exists, its edges are the data section's business
+    and this obligation would be a second copy of them."""
+    from metis_mcp.design.builders import _obligations_of
+    from metis_mcp.mbt.model import Transition
+
+    unbounded = Transition(id="t", source="A", trigger="POST /x", target="B",
+                           inputs=({"location": "body", "name": "dto"},))
+    bounded = Transition(id="t", source="A", trigger="POST /x", target="B",
+                         inputs=({"location": "body", "name": "dto",
+                                  "constraints": ["@Size(max=64)"]},))
+    raised = {kind for kind, _ in _obligations_of(unbounded, unbounded.inputs)}
+    assert "unbounded-payload" in raised
+    quiet = {kind for kind, _ in _obligations_of(bounded, bounded.inputs)}
+    assert "unbounded-payload" not in quiet
+
+
+# --------------------------------------------------------------------------
+# Per-level obligations (`design/level_requirements.py`).
+#
+# The gap: `build_levels` assigned a level and attached nothing to it, so two
+# people handed the same level wrote tests differing in every respect that makes
+# a suite maintainable. The sibling practice carries this as a prose fragment per
+# level, which is a template a model reproduces -- the failure a served shape
+# exists to remove.
+# --------------------------------------------------------------------------
+
+def test_every_test_level_has_obligations_and_no_entry_invents_one():
+    """Both directions, against the module that owns the vocabulary.
+
+    A level with no entry renders an empty cell among full ones, which reads as
+    "nothing is asked here". An entry for a level that does not exist is a
+    second copy of the vocabulary drifting away from `mbt/test_levels.py`.
+    """
+    from metis_mcp.mbt.test_levels import LEVELS
+    from metis_mcp.design import level_requirements as lr
+
+    for level in LEVELS:
+        assert lr.REQUIREMENTS.get(level), f"{level} carries no obligations"
+    for level in lr.REQUIREMENTS:
+        assert level in LEVELS, (
+            f"level_requirements names {level!r}, which `mbt/test_levels.py` "
+            "does not define")
+
+
+def test_an_obligation_says_who_decides_it():
+    """**The assertion that stops the column reading as a list of checks.**
+
+    Most of these are a reviewer's, not Métis's. `checkable` names the module
+    that decides, and an empty one means a person does — `describe()` renders
+    that as `a person` rather than as a blank, because a blank in a column of
+    module names reads as "none needed".
+    """
+    from metis_mcp.design import level_requirements as lr
+
+    served = lr.describe()
+    for level, obligations in served["levels"].items():
+        for obligation in obligations:
+            assert obligation["text"].strip(), f"{level} has an empty obligation"
+            assert obligation["decided_by"], (
+                f"{level}: an obligation says nothing about who decides it")
+
+
+def test_most_obligations_are_a_person_s_and_that_is_stated():
+    """The honest proportion, asserted so it cannot quietly invert.
+
+    If a later change made most of them `checkable`, that would be a real claim
+    about new enforcement and should be made deliberately — not arrived at by a
+    module name being pasted into a field.
+    """
+    from metis_mcp.design import level_requirements as lr
+
+    counts = lr.describe()["counts"]
+    assert counts["checkable"] < counts["obligations"] / 2, (
+        "most obligations now claim to be tool-checked; if that is real, the "
+        "docstring saying most are a reviewer's must change with it")
+
+
+def test_the_levels_section_carries_the_obligations_column():
+    """The wiring, not just the data."""
+    section = S.SECTIONS["levels"]
+    assert any(c.key == "level_obligations" for c in section.columns), (
+        "the obligations are computed and reach no section")
+
+
+def test_an_unknown_level_gets_a_refusal_rather_than_an_empty_cell():
+    """A blank cell reads as "nothing is asked"; this says why it is blank."""
+    from metis_mcp.design import level_requirements as lr
+
+    text = lr.summarise("no-such-level")
+    assert "not one Métis assigns" in text, (
+        "an unknown level renders as reassurance rather than as a refusal")
+
+
+def test_a_checked_obligation_is_marked_in_the_rendered_cell():
+    """The marker is what a reader scans for; without it the cell is prose."""
+    from metis_mcp.design import level_requirements as lr
+
+    cell = lr.summarise("unit")
+    assert "[checked]" in cell, "no checkable obligation is marked in `unit`"
+    cell = lr.summarise("e2e")
+    assert "[checked]" not in cell, (
+        "`e2e` has no checkable obligation and the cell claims one")
+
+
+# --------------------------------------------------------------------------
+# Mirror candidates (`build_mirror`).
+#
+# The gap: `conditions` asks whether a decision was made for each of the eight
+# classes. It does not say what specifically is missing, so a design could have
+# every row decided and no candidate written for the thing decided `test`. This
+# is the pass the sibling practice runs at scenario normalisation.
+# --------------------------------------------------------------------------
+
+def _model_exercising_every_mirror_branch():
+    """A model with a secured call and a rejection sibling.
+
+    The login fixture has neither -- every transition carries `security=()` and
+    `outcome_status=None` -- so three of the six reachable categories cannot fire
+    against it. Building a model that reaches them is what turns "no rows" from
+    an assumption into a checked fact.
+    """
+    import dataclasses
+
+    import mbt_fixtures
+
+    model = mbt_fixtures.login_model()
+    first = model.transitions["t01"]
+    secured = dataclasses.replace(first, id="tS", security=("bearer",))
+    # `target=first.source` keeps the state set unchanged; `Model.reindex`
+    # rejects a transition pointing at a state the model does not have.
+    rejected = dataclasses.replace(first, id="tR", target=first.source,
+                                   outcome_status=401)
+    return dataclasses.replace(
+        model, transitions={**model.transitions, "tS": secured, "tR": rejected})
+
+
+def test_every_reachable_mirror_category_can_actually_fire():
+    """**The test that would have caught the dead branch, and did not exist.**
+
+    The first version of `build_mirror` read `transition.auth_required`, which no
+    `Transition` has ever carried, so `authorization-alternative` was a silent
+    no-op: it would have reported no authorisation candidates on a fully secured
+    service, and every other test would have passed. The field is `security`.
+
+    So this asserts each reachable category is reachable, against a model built
+    to reach it — not against a fixture that happens not to.
+    """
+    from metis_mcp.design.builders import DesignContext, build_mirror
+
+    rows = build_mirror(DesignContext(model=_model_exercising_every_mirror_branch()))
+    seen = {row["category"] for row in rows}
+    for category in ("partition-complement", "state-alternative",
+                     "authorization-alternative"):
+        assert category in seen, (
+            f"{category} produced no row against a model built to produce one — "
+            "the branch is reading something that is not there")
+
+
+def test_the_two_unreachable_categories_are_reported_rather_than_absent():
+    """A category that silently disappears reads as a category with nothing in it.
+
+    `dependency-failure` and `exclusion` cannot be derived from source — a
+    timeout is a deployment fact, and what a system deliberately does not do is
+    intent nobody wrote down (S-19). They are in the vocabulary so they can be
+    *reported* as unreachable, which is the same move `build_conditions` makes.
+    """
+    from metis_mcp.design.builders import DesignContext, build_mirror
+
+    rows = build_mirror(_login_context())
+    for category in ("dependency-failure", "exclusion"):
+        matching = [r for r in rows if r["category"] == category]
+        assert len(matching) == 1, (
+            f"{category} is not reported exactly once as unreachable")
+        assert "clarify" in matching[0]["proposed"], (
+            f"{category} does not resolve to clarify")
+        assert matching[0]["found_by"], (
+            f"{category} says it is unreachable and does not say why")
+
+
+def test_the_unreachable_categories_are_reported_once_not_per_behaviour():
+    """Repeating an identical refusal on every behaviour buries the real rows."""
+    from metis_mcp.design.builders import DesignContext, build_mirror
+
+    rows = build_mirror(_login_context())
+    behaviours = len({r["subject"] for r in rows
+                      if r["category"] == "partition-complement"})
+    assert behaviours > 1, "the fixture no longer has several behaviours"
+    unreachable = [r for r in rows if r["category"] == "dependency-failure"]
+    assert len(unreachable) == 1
+
+
+def test_every_mirror_category_is_in_the_closed_vocabulary():
+    from metis_mcp.design.builders import (DesignContext, build_mirror,
+                                           MIRROR_CATEGORIES)
+
+    rows = build_mirror(DesignContext(model=_model_exercising_every_mirror_branch()))
+    for row in rows:
+        assert row["category"] in MIRROR_CATEGORIES, (
+            f"{row['category']!r} is not a declared mirror category")
+
+
+def test_a_candidate_names_the_recovered_fact_that_raised_it():
+    """A proposal a reader cannot trace is one they can only accept or refuse
+    on trust, which is what X-6 exists to prevent."""
+    from metis_mcp.design.builders import DesignContext, build_mirror
+
+    for row in build_mirror(_login_context()):
+        assert row["found_by"].strip(), f"{row['id']} names no source fact"
+        assert row["proposed"].strip(), f"{row['id']} proposes nothing"
+
+
+def test_a_candidate_is_never_a_criterion():
+    """The rule that keeps this safe: a proposal is not a requirement.
+
+    Nothing in a mirror row may read as an authored criterion, and the decision
+    column is a person's. `pending` is not written as a value any more — the
+    absence of a decision IS pending, and a second field saying so was a
+    duplicate of the column the merge already preserves.
+    """
+    from metis_mcp.design.builders import DesignContext, build_mirror
+
+    rows = build_mirror(_login_context())
+    for row in rows:
+        assert "decision" not in row, (
+            "the builder writes a decision; that column is a person's")
+        assert "status" not in row, (
+            "a `status` field duplicates the `decision` column the merge "
+            "already preserves")
+
+
+def test_mirror_rows_are_stable_across_runs():
+    """P-7: the same candidate is the same row, so a decision survives."""
+    from metis_mcp.design.builders import build_mirror
+
+    first = {r["id"] for r in build_mirror(_login_context())}
+    second = {r["id"] for r in build_mirror(_login_context())}
+    assert first == second and first, "candidate ids are not stable"
+
+
+def test_the_mirror_section_carries_no_probability():
+    """The same prohibition every other section carries."""
+    section = S.SECTIONS["mirror"]
+    keys = {c.key for c in section.columns}
+    assert "probability" not in keys
+    assert "risk_band" in keys, "a candidate carries a band and never a forecast"
+
+
+def test_the_mirror_section_says_what_absent_and_empty_each_mean():
+    """The distinction the whole document turns on, for the new section too."""
+    section = S.SECTIONS["mirror"]
+    assert "NO CANDIDATES" in section.absent_means
+    assert "not the same as" in section.absent_means, (
+        "an absent mirror section must not read as 'nothing is missing'")
+    assert section.empty_means and section.empty_means != section.absent_means

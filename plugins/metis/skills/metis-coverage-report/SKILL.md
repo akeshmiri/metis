@@ -121,6 +121,18 @@ disagree in front of a reader.
 Everything on this page applies there too. The specialist adds the discipline for
 the one question, not a different set of rules.
 
+## The standard behind this, and what it does not certify
+
+**ISO/IEC/IEEE 29119-4** — `../shared/references/iso-29119-4-coverage-measures.md`.
+It names the seven criteria Métis computes and the three things every figure is
+bounded by: what extraction reached, approval state, and C-11 — a transition may
+be fully covered and currently failing.
+
+**A coverage map, never a compliance claim.** `metis_mcp/standards.py` is the
+registry — which standard governs which skill, what Métis computes against it,
+and what it refuses to claim. Whether the result satisfies an obligation is a
+judgement about the obligation, not a property Métis can compute.
+
 ## What this skill must not do
 
 1. **Never emit a Go / No-Go, a readiness score, or a pass rate** (C-11, C-10).

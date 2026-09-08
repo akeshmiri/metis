@@ -8,5 +8,6 @@ a fragment cheaper than putting the same prose in `../SKILL.md`.
 
 | Fragment | Generated from |
 |---|---|
+| [`standards.md`](standards.md) | `metis_mcp/standards.py` |
 | [`risk-register.md`](risk-register.md) | `metis_mcp/risk/register.py` |
 | [`risk-report.md`](risk-report.md) | `metis_mcp/risk/report.py` |

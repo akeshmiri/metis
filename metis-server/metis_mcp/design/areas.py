@@ -2,8 +2,8 @@
 
 **This exists so that "the design family is complete" is a claim a test can
 check rather than one somebody asserts.** It is `risk/areas.py` one domain over,
-and it was written for the same reason: a family of nine sections and eight
-skills with nothing recording which skill covers which activity is a family
+and it was written for the same reason: a family of sections and skills with
+nothing recording which skill covers which activity is a family
 where a reader cannot tell whether `technique` covers data conditions without
 opening it, and neither can a test.
 
@@ -168,6 +168,19 @@ BEYOND_THE_REFERENCE: tuple[tuple[str, str, str], ...] = (
      "every behaviour against the eight condition classes, each with an "
      "explicit decision and a reason — including the classes that do not apply, "
      "which is the half that must not silently disappear"),
+    # **Not an activity of the design process, and it is the one the sibling
+    # practice runs that Métis had no answer for.** `conditions` asks whether a
+    # decision was made for each of the eight classes; this asks what
+    # specifically is missing, as concrete candidates rather than classes. A
+    # design can have every condition row decided and still no candidate written
+    # for the thing decided `test`. It stays with the parent for the same reason
+    # `conditions` does: it is the completeness question, and it crosses every
+    # specialist's territory without belonging to one.
+    ("metis-test-design", "mirror",
+     "specific scenarios the recovered evidence suggests and no authored "
+     "criterion states — each a proposal carrying `derived_from: model`, never "
+     "counted with the authored criteria, and two categories reported as "
+     "unreachable rather than left silently absent"),
     ("metis-test-design", "uncertainty",
      "every input nobody supplied, what its absence means, and which section it "
      "silenced — the section that makes the rest safe to read"),

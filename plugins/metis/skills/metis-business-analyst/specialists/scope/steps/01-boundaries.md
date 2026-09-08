@@ -7,7 +7,7 @@
    is cheap to close now and expensive later.
 2. `search_knowledge` for what the graph already holds about this area. A need
    that restates an existing claim is a duplicate, and
-   `../../../shared/knowledge/duplicate-guard.md` has the four verdicts —
+   `../../../../shared/knowledge/duplicate-guard.md` has the four verdicts —
    `unknown` blocks.
 3. Ask the three questions nobody volunteers:
 

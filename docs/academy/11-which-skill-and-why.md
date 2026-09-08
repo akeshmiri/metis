@@ -3,7 +3,7 @@ topics: practice
 ---
 # 11 · Which skill, and why that one
 
-Métis has thirty-nine skills. This is how to pick one, and — more usefully — why
+Métis has forty skills. This is how to pick one, and — more usefully — why
 the boundaries fall where they do, which is the part no individual skill can
 explain about itself.
 
@@ -22,6 +22,7 @@ explain about itself.
 | …for a UI surface | `metis-test-generate-ui` | a guard may be inherited (M-5c), and a selector is authored or absent |
 | know how covered something is | `metis-coverage-report` | and what could **not** be measured, which is the half that makes the rest safe |
 | answer "is it ready to ship?" | `metis-release-readiness` | it needs execution evidence, and says so when it has none |
+| touch the running system — read a database or cluster, or drive load | `metis-system-contact` | it states the `METIS_EXECUTE` tier before it acts, and a fact observed there is never merged with one recovered from source |
 | see what a change puts at risk | `metis-change-impact` | the model knows which behaviour a diff touches |
 | put the specification where the team reads it | `metis-spec-writeback` | a spec only Métis can see is one nobody reads |
 | work out whether a half-formed idea can be imported at all | `metis-business-analyst` | four readings, and only one of them can refuse |

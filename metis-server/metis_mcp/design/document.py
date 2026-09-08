@@ -36,7 +36,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from metis_mcp.design import builders, inputs, sections, standards
+from metis_mcp.design import (builders, inputs, level_requirements,
+                              sections, standards)
 from metis_mcp.document_table import (
     header,
     merge_rows,
@@ -103,6 +104,15 @@ def build(subject: str, context: builders.DesignContext, *,
         if any(c.key == "work_product" for c in declared.columns):
             code = standards.code_for(declared.key)
             rows = [{**row, "work_product": code} for row in rows]
+        # **The level's obligations are stamped the same way, and for the same
+        # reason.** They are a property of the level, not of the row, so a
+        # builder computing them per row would be recomputing one lookup and
+        # could disagree with itself between two rows carrying the same level.
+        if any(c.key == "level_obligations" for c in declared.columns):
+            rows = [{**row,
+                     "level_obligations": level_requirements.summarise(
+                         row.get("level", ""))}
+                    for row in rows]
         built.append({
             "key": declared.key,
             "rows": rows,

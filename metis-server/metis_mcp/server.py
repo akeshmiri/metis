@@ -1592,9 +1592,30 @@ def analysis_report(document_json: str, journey: str = "", surface: str = "api",
         for item in risk_ledger.inputs_for(risk_ledger.REQUIREMENT)
         if item.source == risk_ledger.ASKED and item.required]
 
+    # The fifth reading. Like the design half it needs a model, so it is
+    # gathered only behind a named journey — and `journey_consulted` already
+    # tells a reader which of the two states this run was in.
+    consumers_unknown = consumers_total = 0
+    if journey:
+        from metis_mcp.analysis import consumers as consumer_analysis
+
+        try:
+            with session() as s:
+                loaded = load_from_graph(s, journey, surface)
+            if loaded.found:
+                counted = consumer_analysis.describe(loaded.model)
+                consumers_unknown = counted["unknown"]
+                consumers_total = len(counted["by_transition"])
+        except GraphNotConfigured:
+            # A run without a graph is a normal way to use this. The aspect
+            # reports nothing rather than reporting zero unknowns, which would
+            # read as "every consumer is named".
+            pass
+
     analysis = readiness.analyse(
         document, wording=wording, intent_problems=intent_problems,
-        design_missing=design_missing, risk_missing=risk_missing)
+        design_missing=design_missing, risk_missing=risk_missing,
+        consumers_unknown=consumers_unknown, consumers_total=consumers_total)
 
     subject_name = subjects[0].id if len(subjects) == 1 else (journey or "intent")
     if as_markdown:
@@ -2214,6 +2235,78 @@ def residual_risk(journey: str, surface: str = "api",
         "residual": report,
         "exit_criteria": prioritisation.exit_criteria(report, limits),
     })
+
+
+# **The read half of a write tool, which had no read half.**
+# `defects/classify.py` was reachable only through `file_defect` -- a write-tier
+# tool needing `METIS_MCP_WRITE` *and* `METIS_ALLOW_EXTERNAL_WRITES` -- so the
+# question could not be asked without filing a defect. That is the wrong order:
+# the classification is what tells you whether a defect is the right artefact at
+# all. A schema drift points at the system, an assertion drift at the test, a 503
+# at the environment, and none of those wants the same person.
+@mcp.tool()
+def classify_failure(evidence: str, expected: str = "", actual: str = "",
+                     phase: str = "") -> str:
+    """What a failure points at: the system, the test, or the environment.
+
+    **No priority is set**, and that is a refusal rather than an omission: how
+    urgent a defect is depends on what it blocks and who is waiting, and neither
+    is in a stack trace.
+
+    **Métis did not observe this failure** — the evidence is the caller's, and
+    `unclassified` means no rule matched it, never that it is benign.
+    """
+    from metis_mcp.defects import classify
+
+    return _json({"ok": True,
+                  **classify.describe(evidence, expected=expected,
+                                      actual=actual, phase=phase)})
+
+
+# `risk/verdict.py` closed the recommendation vocabulary and had no importer
+# anywhere in `metis_mcp/` -- a rule whose whole point is being enforced rather
+# than remembered, enforced by nothing. The release-readiness specialist
+# meanwhile reproduced the whole ladder in prose, so the refusal its own text
+# called "checked rather than remembered" was a model copying a table correctly.
+@mcp.tool()
+def release_verdict(recommendation: str = "", confidence: str = "",
+                    execution_records: int = -1, stale: bool = False) -> str:
+    """Whether the evidence supports the recommendation somebody wants to give.
+
+    **Refuses `Go` on coverage alone.** Coverage says a behaviour is *tested*
+    and nothing about whether it *works*, so covered-and-failing is a real state
+    — and it is the state a coverage-derived `Go` would call ready (C-11).
+
+    Pass `recommendation` and `confidence` to check a pairing, or
+    `execution_records` (and `stale`) to derive the confidence from the evidence
+    that exists. With no recommendation it serves the whole ladder.
+
+    **The verdict is on the pairing, never on the release.** A refusal says the
+    words do not match the evidence; whether the release is safe is a different
+    question with a different owner.
+    """
+    from metis_mcp.risk import verdict as ladder
+
+    if not recommendation:
+        return _json({"ok": True, "ladder": ladder.describe()})
+
+    if not confidence:
+        if execution_records < 0:
+            return _json({
+                "ok": False,
+                "reason": ("give either `confidence`, or `execution_records` so "
+                           "it can be derived. Neither was supplied, and "
+                           "assuming one would invent the evidence this refuses "
+                           "to let a recommendation rest on"),
+                "confidence": list(ladder.CONFIDENCE)})
+        confidence = ladder.confidence_from(execution_records, stale=stale)
+
+    try:
+        checked = ladder.check(recommendation, confidence)
+    except ladder.UnknownConfidence as e:
+        return _json({"ok": False, "reason": str(e),
+                      "confidence": list(ladder.CONFIDENCE)})
+    return _json({**checked, "derived_confidence": confidence})
 
 
 @mcp.tool()

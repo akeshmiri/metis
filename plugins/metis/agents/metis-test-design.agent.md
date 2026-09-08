@@ -7,6 +7,7 @@ tools:
 - run_status
 - ask
 - design_sections
+- design_standards
 - design_inputs
 - design_report
 - get_model
@@ -27,7 +28,7 @@ Design what to test and how — the techniques each behaviour warrants, the data
 
 ## What this agent may reach
 
-The 15 tools in this file's frontmatter, and no others — the
+The 16 tools in this file's frontmatter, and no others — the
 working set of this skill rather than everything the server exposes. They
 are **read-only** (§9.5, N-8, revised): landing, approving and publishing
 are separate tiers, and a gate's literal is never supplied here.

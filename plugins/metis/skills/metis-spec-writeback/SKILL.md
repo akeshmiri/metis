@@ -82,6 +82,18 @@ agreed to a write outside Métis.
 When a run is refused, say which of the two was missing. "Refused" alone sends
 somebody to re-type a word that was never the problem.
 
+## The standard behind this, and what it does not certify
+
+**ISO/IEC/IEEE 29148** — `../shared/references/iso-29148-requirements.md`. The
+regenerated specification is a view of an approved model, so it inherits the
+standard's *conforming* and *singular* characteristics from the criteria behind
+it and claims none of the six that need a person.
+
+**A coverage map, never a compliance claim.** `metis_mcp/standards.py` is the
+registry — which standard governs which skill, what Métis computes against it,
+and what it refuses to claim. Whether the result satisfies an obligation is a
+judgement about the obligation, not a property Métis can compute.
+
 ## What this skill must not do
 
 1. **Never overwrite a file the team has edited** (T-15). If the plan withholds

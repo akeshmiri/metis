@@ -463,7 +463,21 @@ def _grades(args, model: Model):
 
 
 def cmd_coverage_gap(args) -> int:
-    """What already covers this model, and what would still be generated."""
+    """What already covers this model, what would be generated, and what to do.
+
+    **The verdicts are the half this printed a distribution without.**
+    `format_grades` says how many transitions are covered, unproven and
+    uncovered; it does not say what to DO about the middle one, and "a test
+    reaches this endpoint but the outcome is unevidenced" wants a different
+    action from "nothing exists". `rendering/fidelity.py` had those three
+    verdicts and no importer anywhere in `metis_mcp/`, so the rule it encodes —
+    never rewrite or split somebody else's test automatically — was carried by
+    nothing.
+
+    **A split blocks and is reported separately from the counts.** A batch with
+    one split request and forty clean verdicts is a blocked batch, and a
+    distribution that buried the one would read as healthy.
+    """
     model = _load(args)
     grades = _grades(args, model)
     if grades is None:
@@ -471,7 +485,20 @@ def cmd_coverage_gap(args) -> int:
               "see what existing tests already cover (REQ-METIS-PG-01).")
         return 1
     print(format_grades(grades, model))
-    return 0
+
+    from metis_mcp.rendering import fidelity
+
+    reviewed = fidelity.review({tid: g for tid, g in grades.items()})
+    print("\nWhat to do about what already exists")
+    for name, count in reviewed["counts"].items():
+        if count:
+            print(f"  {name:20} {count}")
+    print(f"  {reviewed['means']}")
+    for entry in reviewed["blocked"]:
+        print(f"  BLOCKED {entry.get('transition_id', '')}: "
+              f"{entry.get('because', '')}")
+    # A blocked batch is an exit code, not a line somebody has to notice.
+    return 2 if reviewed["blocked"] else 0
 
 
 def _generate(args) -> tuple[Model, object]:

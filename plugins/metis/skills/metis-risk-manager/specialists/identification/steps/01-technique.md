@@ -1,6 +1,6 @@
 # 1 · Choose the technique, and say what it will miss
 
-Read `../../references/identification-techniques.md`. Each technique's weakness
+Read `../../../references/identification-techniques.md`. Each technique's weakness
 is the operative half.
 
 Choose on two questions:
@@ -25,7 +25,7 @@ rather than repeating the first pass more loudly.
 ## Default when there is no strong signal
 
 RBS prompt first — run `risk_categories()` and walk the categories asking what
-could go wrong in each (`../../references/risk-breakdown-structure.md` says what
+could go wrong in each (`../../../references/risk-breakdown-structure.md` says what
 an RBS is for, and why an empty category is the interesting one) — then
 assumption analysis on whatever the plan takes for granted. Between them they cover breadth and the certainties nobody questions,
 which are the two largest sources of missed risk.

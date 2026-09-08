@@ -135,12 +135,39 @@ set on the machine. Say which of the two is in force *before* the gate, not
 after: a reviewer who thinks they are publishing and is not has been misled, and
 so has one who thinks they are rehearsing and is not.
 
-## The design-sync gate
+## The design-sync gate — not wired, and do not run it
 
 `../shared/scripts/check_design_sync.py` is a deterministic structural diff
-between a high-level design and its detailed form — no model call, just a check
-that two independently written documents still agree. Run it before the gate:
-Python computes, the model writes, Python verifies, and this is the third step.
+between a high-level design and its detailed form. **It has no producer in
+Métis, so it cannot pass.** It compares `.metis/test-design/<id>.overview.md`
+against `<id>.md` using `SG-xx` group ids and an `overview-source-hash` marker;
+Métis renders **one** design document (`design/document.py`), and no `SG-`, no
+`Source Group` and no hash marker exist anywhere in `metis_mcp/`. Run today it
+returns `Missing high-level overview artifact` and nothing else — every time,
+for every scope.
+
+This section used to say "run it before the gate". That is the failure mode
+`CLAUDE.md` names from the other side: not a silent success but a **guaranteed
+failure presented as a step**, which teaches a reader to ignore the one gate in
+this tree that actually blocks.
+
+The script is kept, unwired, because the two-artifact split may still earn its
+place — a design too large for a reviewer to hold is when an overview is worth
+writing. Until something produces one, the checks that do run here are
+`design/document.py`'s own `verify()` and `merge()`.
+
+## The standard behind this, and what it does not certify
+
+**ISO/IEC/IEEE 29119-3** — `../shared/references/iso-29119-3-test-documentation.md`.
+This skill answers the two work products the design marks `out-of-scope`: the
+Test Case Specification and the Test Procedure Specification. A `.feature` file
+is the procedure *as specification* — never step definitions binding it to a
+system.
+
+**A coverage map, never a compliance claim.** `metis_mcp/standards.py` is the
+registry — which standard governs which skill, what Métis computes against it,
+and what it refuses to claim. Whether the result satisfies an obligation is a
+judgement about the obligation, not a property Métis can compute.
 
 ## What this skill must not do
 

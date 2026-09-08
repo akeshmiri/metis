@@ -83,6 +83,18 @@ statement about what extraction reached and not about whether the code branches.
 
 `steps/01-select.md`, then `steps/02-enumerate.md`.
 
+## The standard behind this, and what it does not certify
+
+**ISO/IEC/IEEE 29119-4** — `../../../shared/references/iso-29119-4-coverage-measures.md`
+for the coverage *measures*; `../../../shared/references/test-techniques-reference.md`
+beside it for the techniques themselves. A coverage item is what a technique
+asks for; whether anything asserts it is a different question (C-11).
+
+**A coverage map, never a compliance claim.** `metis_mcp/standards.py` is the
+registry — which standard governs which skill, what Métis computes against it,
+and what it refuses to claim. Whether the result satisfies an obligation is a
+judgement about the obligation, not a property Métis can compute.
+
 ## What this skill must not do
 
 1. **Never award a technique on a name.** `POST /login` does not imply boundary

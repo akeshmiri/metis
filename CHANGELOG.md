@@ -372,6 +372,100 @@ an edited one.
   seven defining fields are unanswered is a form rather than a fact, and nothing
   would read it yet. Four conditions that would reverse it are named.
 
+### The Atlas gap, closed — standards, requirement depth, and two capabilities
+
+A full inventory of the sibling project's thirty skills against Métis's found it
+ahead on standards vocabulary and behind on computation. Both directions are now
+addressed, and two of the things the plan called gaps turned out already to
+exist.
+
+**Standards.** `design/standards.py` maps ISO/IEC/IEEE 29119-3's six design-time
+work products and IEEE 829's eight documents onto the design's own sections, with
+`full` / `partial` / `out-of-scope` and — wherever it is not full — what is
+missing. A new `compliance` section renders it and `design_standards()` serves
+it. Two side references carry the *why*: the original 829 element definitions,
+and 12207/15288 life-cycle alignment.
+
+**Three products are `out-of-scope` and that is an answer.** A Test Log, a Test
+Incident Report and a Test Summary Report are execution and reporting artefacts;
+claiming them would claim C-10's ledger and C-11's correctness figure in one
+move. Six of the fifteen classic Test Plan elements are recorded as *not
+answerable* — schedule, staffing, suspension criteria — because a design that
+filled them would be inventing a plan.
+
+**It is a coverage map and never a compliance claim**, and a test forbids any
+`because` line reading as one.
+
+**Business value, the one rule that could not cross intact.** The sibling
+mandates that every scenario carry a value driver, which in practice means an
+LLM assigns one. Métis may not: business value is what the organisation loses
+when something is wrong, and a driver picked from a route name reads — in the
+rendered document — exactly like one a person decided. So the nine drivers are a
+closed vocabulary across **two** columns: `proposed_value`, computed only from
+recovered evidence, and `value_driver`, a person's. Only two proposals are
+defensible — a recovered authorisation check supports `Risk Mitigation`, declared
+input constraints support `Data Quality` — and everything else is `clarify`. A
+test asserts no third driver is ever proposed without stated evidence.
+
+**Requirement depth.** Declined acceptance criteria are numbered and named:
+`ABC-123-AC-001`, namespaced by source key because numbering restarts per
+document and six sibling stories each contribute an `AC-001`. S-13 is unchanged —
+no criterion is created — but a reviewer can now say *which* was declined and
+`metis-knowledge-capture` has a numbered list to mine against.
+
+`analysis/consumers.py` classifies who reads what a behaviour produces —
+`REPORT`, `EXPORT`, `GRID`, `INTEGRATION`, `NOTIFICATION` — from recovered facts
+only: a declared media type, a paging parameter, a collection shape. The sibling
+reads ticket prose and attaches a confidence to the guess; a route called
+`/export` is a name, and `text/csv` is a fact. Measured on the real estate, 52 of
+56 behaviours come back `unknown`, and that is reported rather than resolved.
+Two kinds Métis can never recover (`SCHEDULED_JOB`, `AUDIT`) are left out rather
+than carried as a vocabulary it cannot honour.
+
+It became the **fifth reading** in the pre-import analysis, owned by
+`metis-business-analyst-scope`.
+
+**Gating ported without the code generation.** R8 holds. What crossed:
+`rendering/fidelity.py` turns the three existing-coverage grades into
+`continue_as_is` / `improvement_needed` / `generate`, with `split_requested`
+**supplied and never inferred** — deciding somebody else's test covers two things
+is a judgement, and a heuristic that got it wrong would block a batch over a test
+that was fine. `improvement_needed` still generates (REQ-METIS-PG-01 is
+unchanged) and now also names the existing test that was close.
+
+The response oracle became refusals in `metis-test-design-contract`: status plus
+a non-null body is not verification; every declared field is covered or its
+omission recorded; and a list endpoint's oracle mode is a **human column**,
+because `full-list` and `random-record` make different claims and choosing
+silently reports a sample as the whole set.
+
+**A generic obligation was raised and removed.** `method-not-allowed` fired on
+every endpoint that answers on any verb — 28 of 28 on a real service — and the
+condition guardrail names exactly that case: no generic condition merely because
+it is common. It is gone, and `unbounded-payload` replaced it, raised only where
+a body exists *and* no field declares a size.
+
+**Two "missing capabilities" already existed.** `publishing/tracker_write.py`
+carries `JiraWriter` and `GitLabWriter`, both ported from the same practice, both
+behind the two-key gate, both checking for a duplicate first — so defect filing
+and merge-request creation needed nothing. What was genuinely missing was the
+step in front of filing: `defects/classify.py` reads a failure into seven classes
+and, more usefully, says what the evidence **points at** — the system, the test,
+or the environment. A test-side failure filed as a product defect goes to a team
+that cannot reproduce it. **No priority is set**: how urgent a defect is depends
+on what it blocks and who is waiting, and neither is in a stack trace.
+
+**The release recommendation has words now.** `risk/verdict.py` closes the
+vocabulary at `Go` / `Go with Conditions` / `No-Go` over the four confidence
+levels the skill already had — and **enforces** what was previously prose: `Go`
+requires an observed run, and coverage alone can never reach it. Covered-and-
+failing is a real state and it is precisely the state a coverage-derived `Go`
+would call ready.
+
+**Deliberately not ported**, both by decision: code generation (R8 holds; only
+the gating crossed) and the analytics query library, which will be added to
+Athena.
+
 ### §22 and §23 are agreed, and a design can now carry a picture
 
 Both sections moved from **drafted** to **agreed** on review.

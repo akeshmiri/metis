@@ -109,6 +109,18 @@ step cites it, not before.
 is a gap none of the four readers can see**, which is the case this file is
 editable for.
 
+## The standard behind this, and what it does not certify
+
+**ISO/IEC/IEEE 29148** — `../shared/references/iso-29148-requirements.md`. The
+standard's requirement-set characteristics are why `readiness` refuses narrowly:
+`not-ready` means the claim cannot be *represented* (D-1), never that it is
+unfinished.
+
+**A coverage map, never a compliance claim.** `metis_mcp/standards.py` is the
+registry — which standard governs which skill, what Métis computes against it,
+and what it refuses to claim. Whether the result satisfies an obligation is a
+judgement about the obligation, not a property Métis can compute.
+
 ## What this skill must not do
 
 1. **Never invent the need.** A vague intent is a question for the person who

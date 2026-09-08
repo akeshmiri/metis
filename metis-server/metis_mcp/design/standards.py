@@ -2,7 +2,8 @@
 
 **Why a map rather than more sections.** ISO/IEC/IEEE 29119-3 names six design-time
 work products and IEEE 829 names eight documents. Métis already carries most of
-their *content* across fifteen sections; what it lacked was the standard's
+their *content* across the sections `sections.py` serves; what it lacked was
+the standard's
 vocabulary, so a reader asking "does this satisfy 29119-3?" had to answer by
 reading the whole document and deciding for themselves.
 
@@ -140,6 +141,12 @@ WORK_PRODUCTS: tuple[WorkProduct, ...] = (
 #: beyond-the-standard character goes in that product's `because` line instead,
 #: so a reader is never told two different things about one section.
 METIS_OWN: dict[str, str] = {
+    "mirror": "candidates for criteria nobody wrote. Neither standard has a "
+              "work product for this: 29119-3 documents the conditions derived "
+              "from a specification, and this proposes the ones the "
+              "specification is missing. Claiming it as part of a Test Design "
+              "Specification would present proposals as derived conditions, "
+              "which is the merge C-11 forbids one domain over",
     "obligations": "what an endpoint's own shape obliges it to do, judged "
                    "against the outcomes actually recovered. The standards "
                    "describe deriving conditions from a specification; this "

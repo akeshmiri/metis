@@ -120,6 +120,47 @@ def _behaviour(model: Model, transition_id: str) -> str:
 # Basis
 # ---------------------------------------------------------------------------
 
+def proposed_value(context: DesignContext) -> tuple[str, str]:
+    """A value driver, only where recovered evidence supports one.
+
+    **Two proposals are defensible and everything else is `clarify`.** A
+    behaviour guarded by a recovered authorisation check is protecting something,
+    so `Risk Mitigation` is a reading of a fact. Inputs carrying declared
+    validation constraints are protecting the data those constraints describe, so
+    `Data Quality` is likewise.
+
+    Anything past that is a guess. *This endpoint is called `checkout`, so it is
+    Revenue* is exactly the name-based inference X-6 forbids — and a driver
+    arrived at that way is indistinguishable, in the rendered document, from one
+    a person decided. That is the whole reason the proposal and the decision are
+    two columns.
+
+    Scope-level rather than per claim: the evidence is about the model, and
+    computing it per row would imply a per-claim judgement nothing supports.
+    """
+    model = context.model
+    if model is None:
+        return "clarify", "no model in scope"
+
+    secured = [t for t in model.transitions.values() if t.security]
+    if secured:
+        return ("Risk Mitigation",
+                f"{len(secured)} behaviour(s) carry a recovered authorisation "
+                f"check — something is being protected")
+
+    constrained = [t for t in model.transitions.values()
+                   if any((p or {}).get("constraints") for p in (t.inputs or ()))]
+    if constrained:
+        return ("Data Quality",
+                f"{len(constrained)} behaviour(s) declare input constraints — "
+                f"data is being protected")
+
+    return ("clarify",
+            "no recovered evidence supports a driver. Naming one from the "
+            "endpoint or the requirement's wording would be inference from a "
+            "name (X-6)")
+
+
 def build_basis(context: DesignContext) -> list[dict]:
     """The claims this design demonstrates, with their provenance and state.
 
@@ -131,6 +172,7 @@ def build_basis(context: DesignContext) -> list[dict]:
     from metis_mcp.ears_checker import check_ears_conformance
 
     rows: list[dict] = []
+    value, value_why = proposed_value(context)
     requirement = context.requirement or {}
     text = requirement.get("text") or requirement.get("statement") or ""
     if text:
@@ -144,6 +186,8 @@ def build_basis(context: DesignContext) -> list[dict]:
             "quality": ("EARS-conformant" if conformance.conformant
                         else "not EARS-conformant — two readers may satisfy "
                              "this differently (S-13)"),
+            "proposed_value": value,
+            "value_why": value_why,
         })
 
     for criterion in requirement.get("criteria") or ():
@@ -160,6 +204,8 @@ def build_basis(context: DesignContext) -> list[dict]:
             # Advisory and blocking nothing (S-4). Reported so a reader can
             # weigh what the criterion can actually assert.
             "quality": "; ".join(findings) if findings else "no quality finding",
+            "proposed_value": value,
+            "value_why": value_why,
         })
 
     for specification in context.specifications or ():
@@ -173,6 +219,8 @@ def build_basis(context: DesignContext) -> list[dict]:
             "provenance": specification.get("provenance") or "",
             "lifecycle": specification.get("lifecycle_state") or "",
             "quality": "",
+            "proposed_value": value,
+            "value_why": value_why,
         })
     return rows
 
@@ -599,6 +647,13 @@ _SATISFIED_BY = {
     "not-found": (404,),
     "authorization-denied": (401, 403),
     "validation-error": (400, 422),
+    # The transport half. 415 and 405 are the statuses a framework produces for
+    # these, and 413 the one for a body past its limit — but the verdict is
+    # still judged against what the endpoint was SEEN to produce, so an API
+    # answering 400 to a bad content type reads `unmet` and a person confirms
+    # whether that is deliberate.
+    "unsupported-media-type": (415,),
+    "unbounded-payload": (413,),
 }
 
 
@@ -708,6 +763,35 @@ def _obligations_of(transition, inputs) -> list[tuple[str, str]]:
             found.append(("enum-variation",
                           f"`{(parameter or {}).get('name')}` is enumerated over "
                           f"{len(values)} constant(s)"))
+
+    # **The transport and contract mutations.** Each is raised by a recovered
+    # fact and by nothing else: a declared media type, a body, an HTTP verb.
+    # Mutating one dimension at a time is the practice; raising a mutation for a
+    # dimension the endpoint does not have would be inventing the dimension.
+    media = tuple(str(m) for m in (getattr(transition, "media_types", ()) or ())
+                  if m)
+    if media:
+        found.append(("unsupported-media-type",
+                      f"declares {', '.join(sorted(media))}, so a caller can "
+                      f"send something else"))
+
+    # **`method-not-allowed` was raised here and has been removed.** Every
+    # endpoint answers on some verb, so it fired on every one of them — 28 of 28
+    # on a real service — and `requirement-condition-coverage.md`'s first
+    # guardrail names exactly that: do not add a generic condition merely
+    # because it is common. A row on every endpoint dilutes the rows that were
+    # raised by a fact, which is the same lesson the sibling project learned
+    # when it removed its forced per-criterion negatives.
+    #
+    # An unbounded body is different: it is raised only where a body exists AND
+    # no field declares a size, so a bounded one raises nothing and its edges
+    # are the data section's business instead.
+    body = [p for p in inputs if (p or {}).get("location") == "body"]
+    if body and not any((p or {}).get("constraints") for p in body):
+        names = ", ".join(str((p or {}).get("name")) for p in body)
+        found.append(("unbounded-payload",
+                      f"accepts a body ({names}) and no field declares a size "
+                      f"constraint, so nothing states how large it may be"))
     return found
 
 
@@ -1267,6 +1351,7 @@ def build_contract(context: DesignContext) -> list[dict]:
                          f"nothing was seen to produce it")
         rows.append({
             "id": row_id("contract", tid),
+            "shape": _response_shape(transition),
             "call": transition.trigger,
             "declared": (f"{declared_status}" if declared_status else
                          "no status declared"),
@@ -1275,6 +1360,27 @@ def build_contract(context: DesignContext) -> list[dict]:
             "risk_band": context.band(tid),
         })
     return rows
+
+
+def _response_shape(transition) -> str:
+    """Whether the response body is a collection, an object, or absent.
+
+    **`unrecovered` is not `none`.** `ResponseEntity<Void>` is a real answer and
+    a body nobody read is not a body that is absent — the same distinction
+    `coverage_report`'s `unmeasured` keeps, one field down. Only a collection has
+    an oracle mode to choose, so the difference decides whether a person is asked
+    a question at all.
+    """
+    body = str(getattr(transition, "response_body", "") or "").strip()
+    if not body:
+        # An outcome with no declared body and no recovered status is a body
+        # nobody read; one with a status is a deliberate empty response.
+        return "none" if transition.outcome_status else "unrecovered"
+    lowered = body.lower()
+    if any(f in lowered for f in ("page", "list", "collection", "[]", "set<",
+                                  "iterable", "array")):
+        return "collection"
+    return "object"
 
 
 # ---------------------------------------------------------------------------
@@ -1385,6 +1491,189 @@ def _depth_gap_rows(context: DesignContext) -> list[dict]:
 #: Builder name -> function. `sections.py` names one per section and this is
 #: where the name resolves, so a section pointing at nothing fails a test rather
 #: than rendering an empty table.
+# ---------------------------------------------------------------------------
+# Mirror candidates
+# ---------------------------------------------------------------------------
+
+#: What a mirror candidate was derived from. Closed, and the last two exist to
+#: be *unreachable* — see `build_mirror`.
+MIRROR_CATEGORIES: tuple[str, ...] = (
+    "partition-complement",
+    "boundary",
+    "factor-combination",
+    "state-alternative",
+    "authorization-alternative",
+    "requiredness",
+    "dependency-failure",
+    "exclusion",
+)
+
+def _covering_criterion(criteria: tuple[dict, ...], *needles: str) -> str:
+    """The id of an authored criterion whose text names all of `needles`.
+
+    **Deliberately crude, and the crudeness is stated in the output.** This is a
+    substring test over authored prose, so it finds a criterion that mentions the
+    same variable and misses one that says the same thing in other words. It is
+    used only to *suppress* a candidate, never to claim coverage: a false match
+    drops a proposal a person would have seen, which is why `found_by` records
+    that the match was textual and `clarify` remains available to them.
+    """
+    for criterion in criteria:
+        body = (criterion.get("text") or "").lower()
+        if body and all(n.lower() in body for n in needles if n):
+            return criterion.get("id") or "an authored criterion"
+    return ""
+
+
+def build_mirror(context: DesignContext) -> list[dict]:
+    """Specific scenarios the recovered evidence suggests, and nobody wrote down.
+
+    **How this differs from `conditions`, which is the question it kept getting
+    confused with.** `conditions` is a completeness matrix: every behaviour
+    against the eight classes, each with a decision, so a class cannot silently
+    disappear. It answers *was a decision made here*. This answers the next
+    question — *what specifically is missing* — and its rows are concrete
+    candidates rather than classes: not "boundary: clarify" but "the value at
+    100, the lower boundary of `amount > 100`, and no criterion names it".
+
+    A design can pass `conditions` with every row decided and still have no
+    candidate written for the thing that was decided `test`. That gap is what
+    this closes, and it is the practice the sibling project runs at scenario
+    normalisation.
+
+    **Six categories are reached from recovered facts and two never are.**
+    `dependency-failure` and `exclusion` are in `MIRROR_CATEGORIES` precisely so
+    they can be reported as unreachable rather than quietly absent — the same
+    move `build_conditions` makes for the same two classes, and for the same
+    reason: a category that disappears reads as a category with nothing in it.
+
+    **Every candidate is a proposal and none is a criterion.** Each carries
+    `derived_from: model`, is `pending` until a person decides, and is never
+    counted with authored criteria — C-11's rule one domain over. An accepted
+    candidate becomes an authored criterion by somebody writing it; nothing here
+    promotes one.
+
+    **A candidate already covered is suppressed and says how it was matched.**
+    The match is textual (`_covering_criterion`), so it can be wrong in the
+    direction of dropping a proposal. That is recorded in the row rather than
+    hidden, because a suppressed candidate a person cannot see is worse than a
+    duplicate one they can dismiss.
+    """
+    from metis_mcp.mbt import design as engine
+    from metis_mcp.mbt import techniques
+
+    model = context.model
+    if model is None:
+        return []
+
+    criteria = tuple((context.requirement or {}).get("criteria") or ())
+
+    rejections: dict[tuple[str, str], list[str]] = {}
+    for transition in model.transitions.values():
+        if (transition.outcome_status or 0) >= 400:
+            rejections.setdefault(
+                (transition.source, transition.trigger), []).append(transition.id)
+
+    rows: list[dict] = []
+
+    def add(tid: str, category: str, variant: str, found_by: str,
+            proposed: str, covered: str = "") -> None:
+        rows.append({
+            "id": row_id("mir", tid, category, variant),
+            "subject": _behaviour(model, tid),
+            "category": category,
+            "variant": variant,
+            "found_by": found_by,
+            "proposed": proposed,
+            "covered_by": covered,
+            "risk_band": context.band(tid),
+        })
+
+    for tid in context.ordered_transition_ids():
+        transition = model.transitions[tid]
+        guard = transition.guard or ""
+        analysis = techniques.analyse_guard(guard)
+
+        # 1. The complement of every partition. This is the half a positive
+        #    suite most reliably lacks.
+        for partition in analysis.partitions:
+            if not partition.condition.startswith("NOT ("):
+                continue
+            covered = _covering_criterion(criteria, partition.variable)
+            add(tid, "partition-complement", partition.condition,
+                f"guard `{guard}` partitioned by `{partition.derived_from}`",
+                "an assertion for the rejected side of this guard", covered)
+
+        # 2. Each numeric boundary, named as a value rather than as a class.
+        for boundary in analysis.boundaries:
+            value = getattr(boundary, "value", None)
+            variable = getattr(boundary, "variable", "") or guard
+            variant = (f"{variable} at {value}" if value is not None
+                       else f"{variable} at its boundary")
+            add(tid, "boundary", variant,
+                f"numeric threshold recovered from `{guard}`",
+                "an assertion at the boundary itself, not either side of it",
+                _covering_criterion(criteria, str(value) if value is not None else ""))
+
+        # 3. Factor pairs. `all_pairs` is the same engine `technique` uses, so a
+        #    candidate here and a coverage item there cannot disagree.
+        factors = engine.factors_for(transition)
+        if len(factors) > 1:
+            for combination in engine.all_pairs(factors):
+                variant = ", ".join(f"{k}={v}" for k, v in sorted(combination.items()))
+                add(tid, "factor-combination", variant,
+                    f"{len(factors)} recovered factors, paired by `all_pairs`",
+                    "one case per pair; the chain in `dimensions` bounds how "
+                    "many of these are reachable")
+
+        # 4. The rejection sibling, where the model carries one.
+        for sibling in rejections.get((transition.source, transition.trigger), []):
+            if sibling == tid:
+                continue
+            add(tid, "state-alternative", _behaviour(model, sibling),
+                f"a sibling transition on ({transition.source}, "
+                f"{transition.trigger}) with a >=400 outcome",
+                "an assertion that this alternative is what happens, not "
+                "merely that the happy path works")
+
+        # 5. Authorisation, only where a check was actually recovered. An
+        #    absent check is "nobody looked", never "open" — declarative
+        #    security is all extraction sees.
+        # `security`, not an invented attribute name. The first version of this
+        # read `auth_required`, which no `Transition` has ever carried, so the
+        # branch was a silent no-op that would have reported "no authorisation
+        # candidates" on a fully secured service. Every other builder here reads
+        # `transition.security`; this now does too.
+        if transition.security:
+            add(tid, "authorization-alternative", "the same call, unauthorised",
+                f"{len(transition.security)} declared security requirement(s) "
+                "on this transition",
+                "an assertion that the call is refused without authority")
+
+    # 6 and 7. The two that are never reachable, reported once rather than
+    # per behaviour: repeating an identical refusal on every row would bury the
+    # candidates that are real.
+    for category, why in (
+        ("dependency-failure",
+         "what this behaviour depends on, and how it fails, is not in the code "
+         "that calls it — a timeout is a deployment fact"),
+        ("exclusion",
+         "what the system deliberately does NOT do is a decision nobody wrote "
+         "into the source; recovering it would be inventing intent (S-19)"),
+    ):
+        rows.append({
+            "id": row_id("mir", "unreachable", category),
+            "subject": "every behaviour in scope",
+            "category": category,
+            "variant": "no candidate can be proposed",
+            "found_by": why,
+            "proposed": "clarify — a person names these or nobody does",
+            "covered_by": "",
+            "risk_band": "",
+        })
+    return rows
+
+
 BUILDERS = {
     "build_basis": build_basis,
     "build_compliance": build_compliance,
@@ -1401,6 +1690,7 @@ BUILDERS = {
     "build_performance": build_performance,
     "build_contract": build_contract,
     "build_journey": build_journey,
+    "build_mirror": build_mirror,
     "build_uncertainty": build_uncertainty,
 }
 

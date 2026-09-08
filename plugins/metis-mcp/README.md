@@ -79,7 +79,7 @@ MCP has the primitives to close that, and they line up with the placement rule
 | Primitive | Holds | Which is |
 |---|---|---|
 | **tool** | a question with a determinate answer the engine computes | 34 of them |
-| **prompt** | the procedure, its order, its gates, its refusals | the 39 skills |
+| **prompt** | the procedure, its order, its gates, its refusals | the 40 skills |
 | **resource** | a document somebody wrote, addressed by URI | 97 of them |
 
 The rule is about **layers, not transports**. A skill delivered as a prompt is

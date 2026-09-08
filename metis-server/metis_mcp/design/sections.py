@@ -97,6 +97,24 @@ from metis_mcp.design.standards import WORK_PRODUCTS as _WORK_PRODUCTS
 ALL_WORK_PRODUCT_CODES = tuple(w.code for w in _WORK_PRODUCTS)
 WORK_PRODUCT_CODES = tuple(sorted(w.code for w in _WORK_PRODUCTS if w.sections))
 
+#: What a behaviour is worth testing FOR. Nine drivers, closed, taken from the
+#: practice this family was compared against.
+#:
+#: **Métis may not assign one, and that is the whole design of the columns that
+#: use it.** Business value is a business fact: what the organisation loses when
+#: something is wrong. Recovered code cannot produce one, and a driver an LLM
+#: picked reads exactly like a driver somebody decided — which is the invention
+#: X-6e and `risk/inputs.py` exist to prevent. So `proposed_value` is computed
+#: only where recovered evidence supports it, and `value_driver` is a person's.
+VALUE_DRIVERS = ("Revenue", "Cost Reduction", "User Efficiency",
+                 "Risk Mitigation", "User Experience", "Compliance",
+                 "Competitive Advantage", "Technical Debt Paydown",
+                 "Data Quality")
+
+#: What Métis may propose, and the one thing it says when it cannot. `clarify` is
+#: not a driver — it is the refusal to guess one.
+PROPOSED_VALUE = VALUE_DRIVERS + ("clarify",)
+
 #: The eight condition classes from
 #: `plugins/metis/skills/shared/knowledge/requirement-condition-coverage.md`.
 #: **Declared here rather than imported**, because the source of truth is that
@@ -113,11 +131,25 @@ CONDITION_CLASSES = ("allowed", "prohibited", "partition", "boundary",
 #: sitting on it is an open question rather than a closed decision.
 CONDITION_DECISIONS = ("test", "not-applicable", "clarify")
 
+#: How a list-returning endpoint's response is verified. **A choice, never a
+#: default**: full-list validation and random-record sampling make different
+#: claims, and a run that picked one silently would report a sample as though it
+#: were the whole set.
+#:
+#: `not-a-list` is computed — a response body that is not a collection has no
+#: mode to choose — and the other two are a person's.
+ORACLE_MODES = ("full-list", "random-record", "not-a-list")
+
 #: The negative behaviour an endpoint's own shape obliges it to have. Each is
 #: derived from a recovered fact — a path parameter, a declared security
 #: requirement, a body — never from a route that looks like it should have one.
 OBLIGATIONS = ("not-found", "authorization-denied", "validation-error",
-               "enum-variation")
+               "enum-variation",
+               # The transport and contract half. The practice this came from
+               # calls them mutations of one positive test — mutate one
+               # dimension at a time — and each is raised here only by a
+               # recovered fact, never by the shape of the route.
+               "unsupported-media-type", "unbounded-payload")
 
 #: Whether the model already carries the obligation. **`unmet` is not "the code
 #: is broken".** It says no such outcome was recovered, and only a person can say
@@ -246,6 +278,17 @@ _RISK = Column("risk_band", "Risk", COMPUTED, RISK_BANDS,
                      "failure is — this table carries no probability")
 
 
+#: What a mirror candidate was derived from. Imported from the builder that
+#: computes them, never restated -- a second copy is how a section starts
+#: reporting a category nothing can produce.
+from metis_mcp.design.builders import MIRROR_CATEGORIES  # noqa: E402
+
+#: A person's verdict on a candidate. `clarify` is not a synonym for `reject`:
+#: it says the candidate could not be understood well enough to decide, which is
+#: a different state and a different next action.
+MIRROR_DECISIONS: tuple[str, ...] = ("accept", "reject", "clarify")
+
+
 GROUPS: tuple[Group, ...] = (
     Group("basis", "What this design rests on", 1,
           "the claims being demonstrated, and the state of the model they were "
@@ -294,6 +337,21 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
             Column("quality", "Quality findings", COMPUTED,
                    means="unmeasurable qualifiers and non-atomicity. Advisory: "
                          "it blocks nothing (S-4)"),
+            Column("proposed_value", "Value (proposed)", COMPUTED,
+                   PROPOSED_VALUE,
+                   means="Métis's reading, and only where recovered evidence "
+                         "supports it. `clarify` everywhere else — a driver "
+                         "guessed from a name reads exactly like one somebody "
+                         "decided"),
+            Column("value_why", "On what evidence", COMPUTED,
+                   means="the recovered fact behind the proposal, so a reader "
+                         "can disagree with the evidence rather than only with "
+                         "the reading. Repeated on every row because the "
+                         "evidence is about the scope, not one claim"),
+            Column("value_driver", "Value driver", HUMAN, VALUE_DRIVERS,
+                   means="yours. What the business loses when this is wrong is "
+                         "not in the code, and no amount of static analysis "
+                         "produces it"),
             *_decision_columns(),
         ),
         absent_means="NO BASIS WAS GATHERED. Everything below describes what the "
@@ -544,7 +602,59 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
                     "thin one",
     ),
     Section(
-        key="levels", heading="Levels, existing coverage and viability", ordinal=9,
+        key="mirror", heading="Missing-criterion candidates", ordinal=9,
+        group="conditions", specialist="metis-test-design",
+        summary="Specific scenarios the recovered evidence suggests and no "
+                "authored criterion states. Proposals, pending a person.",
+        builder="build_mirror",
+        columns=(
+            _ID,
+            Column("subject", "Behaviour", COMPUTED,
+                   means="the transition the candidate is about, or `every "
+                         "behaviour in scope` for a category that is never "
+                         "reachable"),
+            Column("category", "Category", COMPUTED, MIRROR_CATEGORIES,
+                   means="six are reached from recovered facts. "
+                         "`dependency-failure` and `exclusion` never are, and "
+                         "they are in the vocabulary so they can be REPORTED as "
+                         "unreachable rather than quietly absent"),
+            Column("variant", "Candidate", COMPUTED,
+                   means="the specific scenario, not the class it belongs to. "
+                         "`conditions` answers whether a decision was made; "
+                         "this answers what exactly is missing"),
+            Column("found_by", "Found by", COMPUTED,
+                   means="the recovered fact that raised it, so a reader can "
+                         "disagree with the input rather than only the proposal"),
+            Column("proposed", "Proposed assertion", COMPUTED,
+                   means="what a criterion for this would have to say. It is a "
+                         "proposal and never a criterion — an accepted candidate "
+                         "becomes one by somebody writing it"),
+            Column("covered_by", "Perhaps already asserted by", COMPUTED,
+                   means="an authored criterion whose TEXT names the same "
+                         "variable. The match is a substring test and can be "
+                         "wrong both ways, which is why the candidate is still "
+                         "shown rather than suppressed"),
+            _RISK,
+            Column("decision", "Decision", HUMAN, MIRROR_DECISIONS,
+                   means="yours. A candidate Métis proposed is not a "
+                         "requirement until a person accepts it, and nothing "
+                         "here is counted with the authored criteria (C-11)"),
+            Column("owner", "Owner", HUMAN,
+                   means="one named person. 'The team' is not an owner"),
+            Column("notes", "Notes", HUMAN,
+                   means="preserved across regeneration, like the two beside it"),
+        ),
+        absent_means="NO CANDIDATES WERE PROPOSED, which is not the same as "
+                     "nothing being missing. Without a model there is no "
+                     "recovered fact to derive one from, so this section says "
+                     "nothing about the completeness of the criteria",
+        empty_means="every recovered fact already has an authored criterion "
+                    "naming its variable — on a textual match, which is weaker "
+                    "than it sounds and is why the two unreachable categories "
+                    "still appear below",
+    ),
+    Section(
+        key="levels", heading="Levels, existing coverage and viability", ordinal=10,
         group="execution", specialist="metis-test-design-levels",
         summary="Where each condition is asserted, what already reaches it, and "
                 "what cannot be automated at all.",
@@ -573,6 +683,12 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
             Column("work_product", "Product", COMPUTED,
                    means="the 29119-3 work product this row belongs to. A "
                          "classification, never an identity"),
+            Column("level_obligations", "Level asks for", COMPUTED,
+                   means="what a test at this level owes beyond asserting the "
+                         "behaviour, from `design/level_requirements.py`. "
+                         "`[checked]` marks the few a tool decides; everything "
+                         "else is a reviewer's, and the marker is there so the "
+                         "column cannot read as a list of things Métis verified"),
             _RISK,
             *_decision_columns(),
         ),
@@ -582,7 +698,7 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
         empty_means="no behaviour in scope, so no level applies",
     ),
     Section(
-        key="profile", heading="Defect-proneness factors", ordinal=10,
+        key="profile", heading="Defect-proneness factors", ordinal=11,
         group="execution", specialist="metis-test-design-levels",
         summary="What is behind the risk band, factor by factor — because the "
                 "band says how much there is to get wrong and hides what.",
@@ -615,7 +731,7 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
         empty_means="no behaviour in scope could be profiled",
     ),
     Section(
-        key="setup", heading="Setup cost and data complexity", ordinal=11,
+        key="setup", heading="Setup cost and data complexity", ordinal=12,
         group="execution", specialist="metis-test-design-levels",
         summary="What it takes to reach each behaviour, computed from the setup "
                 "chain — and the pattern choice that is a person's, not Métis's.",
@@ -653,7 +769,7 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
                     "there is no setup chain to cost",
     ),
     Section(
-        key="security", heading="Authorisation and authentication", ordinal=12,
+        key="security", heading="Authorisation and authentication", ordinal=13,
         group="quality", specialist="metis-test-design-security",
         summary="The identity and authority each call requires, from what was "
                 "recovered — and what recovery cannot tell you.",
@@ -683,7 +799,7 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
                     "evidence the surface is open by design",
     ),
     Section(
-        key="performance", heading="Load and performance candidacy", ordinal=13,
+        key="performance", heading="Load and performance candidacy", ordinal=14,
         group="quality", specialist="metis-test-design-performance",
         summary="Which calls are worth driving under load, and the refusal where "
                 "nobody has sized them.",
@@ -713,7 +829,7 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
                     "that the calls are cheap",
     ),
     Section(
-        key="contract", heading="Contract and interface", ordinal=14,
+        key="contract", heading="Contract and interface", ordinal=15,
         group="interfaces", specialist="metis-test-design-contract",
         summary="What each endpoint declares, and where the declaration and the "
                 "code disagree.",
@@ -729,7 +845,17 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
             Column("deviation", "Deviation", COMPUTED,
                    means="the difference, as a condition. A deviation is a test "
                          "case and a question, never a defect Métis declared"),
+            Column("shape", "Response shape", COMPUTED,
+                   ("collection", "object", "none", "unrecovered"),
+                   means="whether the body is a collection, from the recovered "
+                         "response type. `unrecovered` is not `none` — a body "
+                         "nobody read is not a body that is absent"),
             _RISK,
+            Column("oracle_mode", "Oracle mode", HUMAN, ORACLE_MODES,
+                   means="for a collection: `full-list` compares the whole set, "
+                         "`random-record` samples one. **A sample is not a claim "
+                         "about the list**, and choosing silently would report "
+                         "it as though it were"),
             *_decision_columns(),
         ),
         absent_means="NO CONTRACT WAS READ, and the boundaries were never stated. "
@@ -738,7 +864,7 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
                     "compared — which covers only what was compared",
     ),
     Section(
-        key="journey", heading="Cross-surface journeys", ordinal=15,
+        key="journey", heading="Cross-surface journeys", ordinal=16,
         group="interfaces", specialist="metis-test-design-journey",
         summary="Which UI action invokes which call, and the guards a UI action "
                 "inherits from the API beneath it (M-5c).",
@@ -765,7 +891,7 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
                     "the drift report says which",
     ),
     Section(
-        key="uncertainty", heading="Open questions and assumptions", ordinal=16,
+        key="uncertainty", heading="Open questions and assumptions", ordinal=17,
         group="uncertainty", specialist="metis-test-design",
         summary="Every input nobody supplied, what its absence means, and which "
                 "section it silenced.",

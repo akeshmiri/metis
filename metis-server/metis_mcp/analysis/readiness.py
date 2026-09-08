@@ -84,7 +84,8 @@ def subjects_of(document) -> list[Subject]:
 
 
 def analyse(document, *, wording=None, design_missing=None, risk_missing=None,
-            intent_problems=None, untestable_reasons=None) -> dict:
+            intent_problems=None, untestable_reasons=None,
+            consumers_unknown=0, consumers_total=0) -> dict:
     """Every gap the four aspects find, and whether this may be imported.
 
     `wording` maps a subject id to `(ears_conformant, quality_findings)`.
@@ -128,6 +129,10 @@ def analyse(document, *, wording=None, design_missing=None, risk_missing=None,
     scope = subjects[0].id if len(subjects) == 1 else "<this scope>"
     found += gaps.from_design(scope, design_missing)
     found += gaps.from_risk(scope, risk_missing)
+    # Counts rather than a model: this module stays pure, and the classification
+    # is done by the caller that holds the graph — the same split the design and
+    # risk halves already use.
+    found += gaps.from_consumers(scope, consumers_unknown, consumers_total)
 
     verdict = gaps.readiness(found)
     return {
@@ -137,8 +142,8 @@ def analyse(document, *, wording=None, design_missing=None, risk_missing=None,
         "aspects": list(gaps.ASPECTS),
         **verdict,
         "aspects_mean": (
-            "four readers, each seeing a hole the other three cannot: whether "
-            "there is a need here at all, whether its wording can be satisfied "
-            "twice the same way, whether anything could ever test it, and "
-            "whether anybody has said what being wrong costs"),
+            "five readers, each seeing a hole the others cannot: whether there "
+            "is a need here at all, whether its wording can be satisfied twice "
+            "the same way, whether anything could ever test it, whether anybody "
+            "has said what being wrong costs, and who reads what it produces"),
     }

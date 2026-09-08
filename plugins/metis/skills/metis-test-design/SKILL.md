@@ -8,6 +8,7 @@ allowed-tools:
   - run_status
   - ask
   - design_sections
+  - design_standards
   - design_inputs
   - design_report
   - get_model
@@ -19,6 +20,7 @@ allowed-tools:
   - product_risk
   - risk_priority
 knowledge-from:
+  - standards
   - design.inputs
   - design.sections
 ---
@@ -48,14 +50,24 @@ fact is the copy nothing checks. Call the tool; render what it gives you.
 
 ## Routing — which specialist
 
-Nine sections, seven specialists, and the parent keeps two. **Route on the
-section, which is a lookup rather than a judgement.**
+**Route on the section, which is a lookup rather than a judgement.** A
+specialist owning more than one section owns them together, because they answer
+one question in two tables — splitting them would make a reader consult two
+skills to learn what one technique costs.
+
+**No count is stated here, and that is deliberate.** This table said "nine
+sections, seven specialists, and the parent keeps two" while `design_sections()`
+served sixteen and the table below listed four — a hand-written number that
+drifted three ways at once, in the one file whose whole point is that the shape
+is served rather than restated. `design_sections()` is the inventory; this is
+the routing, and `test_design_areas.py` asserts every served section appears in
+one of the two tables.
 
 | Route to | For | Section |
 |---|---|---|
-| **`metis-test-design-technique`** | which technique a behaviour warrants, and its coverage items | `technique` |
+| **`metis-test-design-technique`** | which technique a behaviour warrants, and its coverage items | `technique`, `dimensions` |
 | **`metis-test-design-data`** | what the data must satisfy | `data` |
-| **`metis-test-design-levels`** | which level, what already covers it, what can be automated | `levels` |
+| **`metis-test-design-levels`** | which level, what already covers it, what can be automated | `levels`, `profile`, `setup` |
 | **`metis-test-design-security`** | authorisation and authentication conditions | `security` |
 | **`metis-test-design-performance`** | load candidacy, and where nobody has sized it | `performance` |
 | **`metis-test-design-contract`** | what an endpoint declares against what it does | `contract` |
@@ -87,7 +99,10 @@ and 15288 when a compliance requirement names one.
 | the basis, and whether there is one | `basis` | every specialist's rows are about it |
 | condition completeness | `conditions` | it is the denominator every other section is measured against |
 | negative obligations | `obligations` | it crosses authorisation, contract and data, and belongs to none of them |
+| missing-criterion candidates | `mirror` | it is the completeness question `conditions` opens, answered as specific proposals rather than classes — and no specialist owns a question about all of them |
 | the uncertainty ledger | `uncertainty` | consolidating what each section could not state *is* running the design |
+| the machine in scope | `machine` | the one thing Métis draws, and it is the whole scope rather than any specialist's slice of it |
+| the standards map | `compliance` | it is a statement about the document, not the system, so it is about every specialist at once |
 
 **The `conditions` section is the one that decides whether the rest can be
 trusted.** A positive case says what the system does. It does not say what the
@@ -181,6 +196,19 @@ design whose sections are all full still needs accepting, because "Métis derive
 this" is a statement about Métis rather than a decision about testing.
 
 The literal is `accept-design`, it is the human's, and it is not `accept-risk`.
+
+## The standard behind this, and what it does not certify
+
+**ISO/IEC/IEEE 29119-3** — `../shared/references/iso-29119-3-test-documentation.md`.
+The design answers four of the six design-time work products; the Test Case and
+Test Procedure specifications are `metis-test-generate`'s, which is a hand-off
+rather than a gap. IEEE 829 and the 12207/15288 alignment are the two side
+references already named above.
+
+**A coverage map, never a compliance claim.** `metis_mcp/standards.py` is the
+registry — which standard governs which skill, what Métis computes against it,
+and what it refuses to claim. Whether the result satisfies an obligation is a
+judgement about the obligation, not a property Métis can compute.
 
 ## What this skill must not do
 

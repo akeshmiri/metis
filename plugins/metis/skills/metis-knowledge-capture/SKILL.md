@@ -209,6 +209,19 @@ because an unasked question and an answered one look identical in the output.
 Two of the eight — `dependency-failure` and `non-goal` — have no machinery behind
 them here. Record them as undrawn rather than as covered.
 
+## The standard behind this, and what it does not certify
+
+**ISO/IEC/IEEE 29148** — `../shared/references/iso-29148-requirements.md`. It
+lists the nine characteristics of a well-formed requirement and marks which
+Métis can check: three, partly or fully. **Six are not computable**, and a tool
+reporting a requirement "conformant" would be answering the three and implying
+the six.
+
+**A coverage map, never a compliance claim.** `metis_mcp/standards.py` is the
+registry — which standard governs which skill, what Métis computes against it,
+and what it refuses to claim. Whether the result satisfies an obligation is a
+judgement about the obligation, not a property Métis can compute.
+
 ## What this skill must not do
 
 1. **Never write the graph.** It writes a JSON file and prints the command that

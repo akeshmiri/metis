@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from metis_mcp.analysis.gaps import DESIGN, INTENT, REQUIREMENT, RISK
+from metis_mcp.analysis.gaps import CONSUMER, DESIGN, INTENT, REQUIREMENT, RISK
 
 
 @dataclass(frozen=True)
@@ -52,6 +52,14 @@ ASPECT_OWNERS: tuple[Aspect, ...] = (
            "a claim that is well worded, agreed, and impossible to verify. "
            "Asking before the work starts costs one question; asking after "
            "costs the build", local=False),
+    Aspect(CONSUMER, "Who reads what this produces?",
+           "metis-business-analyst-scope",
+           "a behaviour feeding a report is tested differently from one feeding "
+           "another system — different levels, different data conditions, "
+           "different obligations. Classified from recovered facts (a media "
+           "type, a paging parameter, a collection shape) and `unknown` "
+           "wherever none of them fires, because a stated consumer is a better "
+           "fact than an inferred one", local=True),
     Aspect(RISK, "What does being wrong cost?",
            "metis-risk-manager-requirement-risk",
            "business criticality and volatility — the impact and probability "

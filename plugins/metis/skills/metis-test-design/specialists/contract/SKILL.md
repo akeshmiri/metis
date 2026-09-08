@@ -49,6 +49,31 @@ both sides and asks — it does not pick a winner and it does not file a bug.
 describes one process as though it were the system: what crosses a boundary,
 and therefore what a contract test is even for, is unknown.
 
+## What a case may claim about a response
+
+Four rules, and each exists because the assertion it forbids looks like
+verification and is not.
+
+**Status plus a non-null body is not verification.** `assertNotNull` is a
+defensive guard before dereferencing a response, never a verification point on
+its own. A case that proves only *it answered 200 and something came back* has
+asserted that the endpoint exists.
+
+**Every field the contract declares is covered, or its omission is recorded.**
+Omit one only where the source says it is generated, transient, nondeterministic
+or unavailable — and say which, because an unexplained omission and a forgotten
+field are indistinguishable afterwards.
+
+**A list endpoint has an oracle mode and it is a person's choice.** `full-list`
+compares the whole set; `random-record` samples one. They make different claims,
+and a run that picked one silently would report a sample as though it were the
+whole list. The `Oracle mode` column is yours; Métis computes only whether the
+response *is* a collection.
+
+**A sample is not a claim about the set.** Where `random-record` is chosen, the
+case says so in its own words — including the selected key, so somebody can
+reproduce it.
+
 ## Steps
 
 `steps/01-compare.md`.
@@ -63,3 +88,8 @@ and therefore what a contract test is even for, is unknown.
    produce it, and that is exactly what makes it worth a test.
 4. **Never call an endpoint to check.** A design reads the model; contacting the
    system under test is a tier and it is `off` by default.
+5. **Never choose an oracle mode.** A sample and a whole-set comparison are
+   different claims, and picking one for somebody is how a sample gets reported
+   as a list.
+6. **Never accept status-plus-non-null as an oracle.** It proves the endpoint
+   exists, which is not what the case was written to check.

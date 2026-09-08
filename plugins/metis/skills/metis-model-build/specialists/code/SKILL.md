@@ -11,6 +11,7 @@ allowed-tools:
   - model_sources
   - impact
   - sql_review
+  - sql_confirm
   - list_entities
   - get_entity
 knowledge-from:

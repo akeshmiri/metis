@@ -83,7 +83,7 @@ such because it is not checkable the same way).
   Generation reads only `Approved` (D-10).
 - **The MCP surface is read-only by default, and by construction when it is**
   (N-8, revised). `METIS_MCP_WRITE` is `off` | `author` | `full`; at `off` — the
-  default — the write modules are never imported, so fifty-six read-only tools
+  default — the write modules are never imported, so fifty-eight read-only tools
   are all that exist, five of them the authoring surface (X-6e): `call_recipe`,
   `auth_facts`, `payload_shape`, `journey_walkthrough`, `ask`. Enabling writes adds landing and the gates, each costing an
   identity, the evidence fingerprint, and a literal word. The CLI remains the
@@ -343,7 +343,9 @@ with no implementation, and a default install loads no model.
   `sections.py` is the template registry, `builders.py` computes rows from what
   `mbt/techniques.py`, `mbt/design.py`, `mbt/test_levels.py`, `viability.py`,
   `rendering/contract.py` and `risk/prioritisation.py` already knew, and
-  `document.py` renders and merges. Nine sections in six groups, carried by a parent and seven specialists.
+  `document.py` renders and merges. Six groups, carried by a parent and seven
+  specialists; `design_sections()` is the inventory and no prose restates the
+  count, because the one that was written down drifted three ways at once.
   **The template is served by `design_sections()` and never restated in a
   `SKILL.md`** — a template a model imitates is imitated differently every run,
   and `test_design_areas.py` fails a skill that reproduces a section's columns.
@@ -386,6 +388,44 @@ with no implementation, and a default install loads no model.
   response was "test this more". Each factor now carries the response it asks
   for, and an unmeasured one is a **row saying so** rather than a blank: a blank
   among counts reads as zero, and zero reads as simple.
+
+- **The design states its own standards coverage, and three products are
+  `out-of-scope` on purpose.** `design/standards.py` maps 29119-3's six
+  design-time work products and IEEE 829's eight onto the sections, both
+  directions asserted. A Test Log, a Test Incident Report and a Test Summary
+  Report are execution and reporting artefacts — claiming them would claim
+  C-10's ledger and C-11's correctness figure at once. It is a **coverage map,
+  never a compliance claim**, and a test forbids a `because` line that reads as
+  one.
+
+- **Business value is proposed only from evidence, and decided by a person.**
+  Nine closed drivers across two columns. A recovered authorisation check
+  supports `Risk Mitigation`; declared input constraints support `Data Quality`;
+  everything else is `clarify`. The sibling project has an LLM assign one to
+  every scenario, and a driver picked from a route name is indistinguishable, in
+  the rendered document, from one somebody decided.
+
+- **Consumers are classified from recovered facts, and 52 of 56 come back
+  `unknown`.** `analysis/consumers.py` reads a declared media type, a paging
+  parameter, a collection shape — never ticket prose, because `/export` is a
+  name and `text/csv` is a fact. Two kinds it can never recover are left out of
+  the vocabulary rather than carried as a promise it cannot keep. It is the
+  fifth pre-import reading.
+
+- **A generic obligation was raised and removed, which is the rule working.**
+  `method-not-allowed` fired on 28 of 28 endpoints, and
+  `requirement-condition-coverage.md`'s first guardrail names exactly that: no
+  condition merely because it is common. `unbounded-payload` replaced it, raised
+  only where a body exists *and* nothing declares a size.
+
+- **`Go` requires an observed run, and it is enforced rather than remembered.**
+  `risk/verdict.py` closes the recommendation vocabulary and refuses `Go` on
+  coverage alone — covered-and-failing is the state a coverage-derived `Go`
+  would call ready. Defect filing and merge requests already existed in
+  `publishing/tracker_write.py`; what was missing was `defects/classify.py`,
+  which says what a failure **points at** — the system, the test, or the
+  environment. **No priority is set**: how urgent a defect is depends on what it
+  blocks, and that is not in a stack trace.
 
 - **A design section is a table or a diagram, and the mode is declared.**
   `machine` renders the state machine in scope as mermaid — the only picture

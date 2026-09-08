@@ -1,7 +1,7 @@
 """The design family's map, asserted in both directions.
 
 **Why this file exists.** `risk/areas.py`'s docstring makes the argument and it
-applies unchanged here: a family of nine sections and eight skills with nothing
+applies unchanged here: a family of sections and skills with nothing
 recording which skill covers which activity is a family where a reader cannot
 tell whether `technique` covers data conditions without opening it, and neither
 can a test. So the mapping is data, and this asserts it holds.
@@ -147,6 +147,46 @@ def test_every_specialist_names_the_section_it_owns():
         for key in owned:
             assert f"`{key}`" in text, (
                 f"{name} owns the {key!r} section and does not say so")
+
+
+def test_the_parent_names_every_section_the_registry_serves():
+    """The parent routes, so it must know every section exists.
+
+    `test_every_specialist_names_the_section_it_owns` checks the specialists and
+    nothing checked the parent, which is how four sections came to be absent
+    from the file that routes them: `machine`, which the parent **owns**, and
+    `dimensions`, `profile` and `setup`, which specialists own and the routing
+    table did not list. A reader following that table could not reach them.
+
+    It also stated "nine sections, seven specialists, and the parent keeps two"
+    while the registry served sixteen and the table below it listed four. The
+    count is gone rather than corrected -- a hand-written number in the one
+    skill whose stated rule is that the shape is served, never restated, is a
+    second copy by definition (`docs/academy/10-where-a-thing-belongs.md`).
+    """
+    text = (SKILLS / "metis-test-design" / "SKILL.md").read_text()
+    missing = [key for key in sections.SECTIONS if f"`{key}`" not in text]
+    assert not missing, (
+        "the parent routes the design and never names these sections: "
+        + ", ".join(missing))
+
+
+def test_the_parent_states_no_section_count():
+    """A count is a copy of a served fact, and this one drifted three ways.
+
+    Guarded by shape rather than by the specific stale words, so re-introducing
+    the same mistake with a different number still fails.
+    """
+    text = (SKILLS / "metis-test-design" / "SKILL.md").read_text()
+    numbers = ("Nine sections", "nine sections", "Sixteen sections",
+               "sixteen sections", "Fifteen sections", "fifteen sections")
+    # The paragraph explaining why the count was removed quotes the old one, so
+    # the check is scoped to the routing claim rather than the whole file.
+    routing = text.split("## Routing")[1].split("### Keep these yourself")[0]
+    quoted = routing.split("No count is stated here")[0]
+    offenders = [n for n in numbers if n in quoted]
+    assert not offenders, (
+        f"the routing section states a section count again: {offenders}")
 
 
 # --------------------------------------------------------------------------

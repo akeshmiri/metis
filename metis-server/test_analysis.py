@@ -179,7 +179,10 @@ def test_a_missing_specification_is_reported_once_and_not_twice():
         f"INT-2's missing specification is reported {len(about_int2)} times")
 
 
-def test_all_four_aspects_are_represented_in_a_full_reading():
+def test_every_aspect_is_represented_in_a_full_reading():
+    """Parametrised over `ASPECTS` rather than a hardcoded four, so a sixth
+    reading added without a way to produce a gap fails here instead of shipping
+    as a heading that is always empty."""
     document = _intent_file()
     result = readiness.analyse(
         document,
@@ -187,9 +190,22 @@ def test_all_four_aspects_are_represented_in_a_full_reading():
         design_missing=[{"name": "environments", "absent_means": "x",
                          "question": "which environments exist?"}],
         risk_missing=[{"name": "business_criticality", "absent_means": "y",
-                       "question": "what does the business lose?"}])
+                       "question": "what does the business lose?"}],
+        consumers_unknown=3, consumers_total=4)
     for aspect in gaps.ASPECTS:
         assert result["counts"][aspect] > 0, f"the {aspect} reading found nothing"
+
+
+def test_the_document_renders_every_aspect_it_declares():
+    """A heading with no explanation beside it is what a `KeyError` here used to
+    be — the fifth reading arrived before the table that describes them did."""
+    from metis_mcp.analysis import document as analysis_document
+
+    result = readiness.analyse(_intent_file())
+    text = analysis_document.render_markdown(
+        analysis_document.build("ABC-1", result))
+    for aspect in gaps.ASPECTS:
+        assert f"| {aspect} |" in text, f"{aspect} has no row in the document"
 
 
 def test_a_well_formed_intent_is_ready_and_still_carries_gaps():

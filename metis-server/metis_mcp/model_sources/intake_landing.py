@@ -142,6 +142,64 @@ def _claimed_criteria(document: dict) -> list:
     return found
 
 
+def numbered_claims(document: dict) -> list[dict]:
+    """The declined claims, each with a stable trackable id.
+
+    **The rule does not change; the record does.** S-13 still refuses to create
+    an `AcceptanceCriterion` from a criterion the document asserts about itself —
+    a claim by the document that raised the requirement is not independent
+    evidence of it. What was missing is that the declined claims had no
+    *identity*, so a reviewer could say "two were declined" and nobody could say
+    *which*, and `metis-knowledge-capture` had nothing to mine against.
+
+    **Namespaced by source key, and that is not decoration.** Numbering restarts
+    per document — `AC-001` is the first claim of *this* ticket — so six sibling
+    stories each contribute an `AC-001`. Without the prefix the mapping back to
+    the owning ticket is gone, which is a collision the sibling project hit and
+    documented before this port existed.
+
+    Order is the order the document put them in, across every location
+    `_claimed_criteria` searches. A claim's position in its own source is the
+    only ordering that means anything here; sorting would invent one.
+    """
+    key = _source_key(document) or "UIF"
+    return [{"id": f"{key}-AC-{index:03d}",
+             "text": _claim_text(claim),
+             "source_key": key,
+             "position": index}
+            for index, claim in enumerate(_claimed_criteria(document), start=1)]
+
+
+def _claim_text(claim) -> str:
+    """A claim's words, whatever shape the document wrapped them in.
+
+    A producer may emit a bare string or an object with the text under any of
+    several keys. Reading only one shape would silently number an empty claim,
+    which is worse than not numbering it: the id would exist and point at
+    nothing.
+    """
+    if isinstance(claim, str):
+        return claim.strip()
+    if isinstance(claim, dict):
+        for field in ("text", "criterion", "statement", "description", "value"):
+            value = claim.get(field)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return ""
+
+
+def _source_key(document: dict) -> str:
+    """The document's own key, for namespacing. Never invented."""
+    scope = document.get("scope") if isinstance(document, dict) else None
+    for holder, field in ((scope, "source_key"), (scope, "key"),
+                          (document, "key"), (document, "id")):
+        if isinstance(holder, dict):
+            value = holder.get(field)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return ""
+
+
 def conformance(document: dict) -> Conformance:
     """Check a UIF document the whole way through before anything is planned.
 
@@ -499,13 +557,20 @@ def describe(plan: LandingPlan, document: dict) -> str:
     # are the two places a person is told what was declined, and when they read
     # the document differently the same UIF reports two criteria at one door and
     # none at the other.
-    claimed = len(_claimed_criteria(document))
-    if claimed:
+    numbered = numbered_claims(document)
+    if numbered:
         lines.append("")
         lines.append(
-            f"  {claimed} acceptance criteria are claimed by this document and "
-            f"NONE is created:")
+            f"  {len(numbered)} acceptance criteria are claimed by this document "
+            f"and NONE is created:")
         lines.append("     an upstream extractor's labelling is not evidence. The "
                      "text goes through")
         lines.append("     mining and review like any other intake (S-4).")
+        lines.append("")
+        # **Named, not counted.** "Two were declined" is not something a
+        # reviewer can act on; `ABC-1-AC-002` is, and it is what
+        # `metis-knowledge-capture` mines against.
+        for claim in numbered:
+            text = claim["text"] or "(no text in the claim)"
+            lines.append(f"     {claim['id']}  {text[:88]}")
     return "\n".join(lines)

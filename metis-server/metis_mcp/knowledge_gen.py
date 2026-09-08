@@ -107,13 +107,23 @@ def render_index(skill: str, modules: list[str], inherited: list[str] | None = N
         return "\n".join(lines) + "\n"
 
     if not modules:
+        # **The hop count differs between a skill and a specialist, and writing
+        # one for both put a path that resolves to nothing into every generated
+        # index.** From `<family>/knowledge/` the shared tree is two levels up;
+        # from `<family>/specialists/<name>/knowledge/` it is four. The single
+        # `../shared/knowledge/` this used to emit resolved to
+        # `<name>/shared/knowledge/`, which has never existed -- in 21 files,
+        # every one of them generated, so the wrong path was reproduced rather
+        # than written. It is computed from `parent` for the same reason the
+        # rest of this module is generated at all.
+        shared = "../../../../shared/knowledge/" if parent else "../../shared/knowledge/"
         lines += [
             "**Nothing is extracted for this skill, and that is a decision.**",
             "",
             "Its frontmatter names no `knowledge-from` module. The discipline this",
             "skill needs is either always-enforced — in which case it belongs in",
             "`../SKILL.md`, which is loaded every time — or it is shared, in which",
-            "case it is in `../shared/knowledge/` and cited from a step.",
+            f"case it is in `{shared}` and cited from a step.",
             "",
             "A fragment earns its place here when a step needs the reasoning and",
             "paying for it on every invocation would be waste.",
@@ -165,9 +175,14 @@ def generate() -> dict[Path, str]:
         for dotted in named:
             out[directory / f"{_slug(dotted)}.md"] = render_fragment(
                 dotted, module_docstring(dotted) or "")
+        # `parent` is passed unconditionally because it now answers two
+        # questions, not one: whose knowledge is inherited (used only when
+        # something *is* inherited, below) and **how deep this file sits**,
+        # which decides the hop count to `shared/`. Passing it only alongside
+        # `inherited` meant a specialist with nothing inherited rendered a
+        # top-level skill's path -- the 21-file defect this fixes.
         out[directory / "index.md"] = render_index(
-            skill.name, named, inherited=inherited,
-            parent=skill.parent if inherited else "")
+            skill.name, named, inherited=inherited, parent=skill.parent)
     return out
 
 

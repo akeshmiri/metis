@@ -19,26 +19,51 @@ from metis_mcp.review.roles import PROPOSE
 
 def file_defect(project: str, summary: str, description: str,
                 issue_type: str = "Bug", labels: str = "",
-                actor: str = "", role: str = "") -> dict:
+                evidence: str = "", expected: str = "", actual: str = "",
+                phase: str = "", actor: str = "", role: str = "") -> dict:
     """File one tracker issue, after checking it is not already filed.
 
-    **Not built from an execution result.** Métis ingests none (§8.7), so the
-    evidence is whatever the caller passes — a described failure, a validation
-    finding, a reconciliation gap. It is never a claim that a test ran.
+    **Métis does not observe the failure.** Execution results *are* ingested
+    (§8.7, revised), but they land against the `TestCase` that ran and never
+    reach this tool — the evidence here is whatever the caller passes. Filing is
+    still not a claim that Métis watched a test fail.
+
+    **`evidence` is classified before anything is filed.** Passing the runner's
+    output adds a root-cause label and, more usefully, what the evidence points
+    at: the system, the test, or the environment. Getting that wrong is what
+    sends an outage to a product team and a product defect to nobody.
+
+    No priority is set. How urgent a defect is depends on what it blocks and who
+    is waiting, and neither is in a stack trace.
 
     Refuses if an unresolved issue with this summary exists, and refuses if the
     check could not run: two defects for one failure is what a retry produces
     when the second run could not see the first.
     """
+    from metis_mcp.defects import classify as classifier
     from metis_mcp.publishing.tracker_write import JiraWriter
 
     grant = policy.authorise(PROPOSE, actor, role)
+    found = tuple(l.strip() for l in labels.split(",") if l.strip())
+
+    reading = None
+    if evidence or expected or actual:
+        reading = classifier.describe(evidence, expected=expected,
+                                      actual=actual, phase=phase)
+        # The label rides along only when a rule actually matched. Tagging an
+        # issue `unclassified` adds a word and no information, and it would
+        # become a label somebody filters on.
+        if reading["classified"]:
+            found = found + (reading["label"],)
+
     writer = JiraWriter(project)
     result = writer.create_issue(
-        summary, description, issue_type=issue_type,
-        labels=tuple(l.strip() for l in labels.split(",") if l.strip()))
+        summary, description, issue_type=issue_type, labels=found)
     result["filed_by"] = grant.identity.name
-    result["means"] = "a described defect, not an observed test failure (§8.7)"
+    if reading:
+        result["classification"] = reading
+    result["means"] = ("a described defect. Métis did not observe this failure "
+                       "— the evidence is the caller's")
     return result
 
 

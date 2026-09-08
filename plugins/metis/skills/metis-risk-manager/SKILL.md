@@ -14,6 +14,7 @@ allowed-tools:
   - risk_report
   - risk_candidates
 knowledge-from:
+  - standards
   - risk.register
   - risk.report
 ---
@@ -142,6 +143,22 @@ reading rows.
 are different kinds of number, and the tools refuse the input that belongs to the
 other. `risk_emv(3, 100000)` is refused precisely because `300000` would look
 completely normal and be five times too large.
+
+## The standard behind this, and what it does not certify
+
+**ISO 31000** — `references/iso-31000-risk-management.md`. It is **guidance with
+no conformity assessment**, so "complies with ISO 31000" is a category error and
+Métis makes no such claim. The reference maps this family's stages onto the
+published process and names the one step that is not automated: communication
+and consultation is a conversation with people.
+
+**ISO/IEC/IEEE 29119-2** — `references/iso-29119-2-risk-based-testing.md`, for
+the risk-based test strategy half.
+
+**A coverage map, never a compliance claim.** `metis_mcp/standards.py` is the
+registry — which standard governs which skill, what Métis computes against it,
+and what it refuses to claim. Whether the result satisfies an obligation is a
+judgement about the obligation, not a property Métis can compute.
 
 ## What this skill must not do
 

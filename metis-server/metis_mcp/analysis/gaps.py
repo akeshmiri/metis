@@ -41,7 +41,12 @@ from dataclasses import dataclass
 #: whether there is anything here at all, and the later three are only
 #: meaningful once it says yes.
 INTENT, REQUIREMENT, DESIGN, RISK = "intent", "requirement", "design", "risk"
-ASPECTS = (INTENT, REQUIREMENT, DESIGN, RISK)
+#: The fifth, and the one that changes what the other four are *for*: who reads
+#: what this produces. A behaviour feeding a report is tested differently from
+#: one feeding another system, and a claim that names no consumer leaves the
+#: design guessing which.
+CONSUMER = "consumer"
+ASPECTS = (INTENT, REQUIREMENT, DESIGN, RISK, CONSUMER)
 
 READY, NOT_READY = "ready", "not-ready"
 
@@ -236,6 +241,27 @@ def from_risk(subject: str, missing_required) -> list[Gap]:
 # ---------------------------------------------------------------------------
 # The verdict.
 # ---------------------------------------------------------------------------
+
+def from_consumers(subject: str, unknown: int, total: int) -> list[Gap]:
+    """Behaviour whose consumer no recovered fact names.
+
+    **Reported, never blocking.** An unnamed consumer does not make a claim
+    unrepresentable — it makes the design that follows it less specific, which is
+    a cost rather than a refusal. And the honest closer is the intake, not a
+    classifier: a consumer somebody *stated* is a better fact than one inferred,
+    so the gap points at the person who knows rather than at more analysis.
+    """
+    if not total or not unknown:
+        return []
+    return [Gap(
+        aspect=CONSUMER, subject=subject,
+        what=(f"{unknown} of {total} behaviour(s) have no recovered signal "
+              f"saying who reads what they produce — no media type, no paging, "
+              f"no collection shape"),
+        closes_with=("ask the requester, and record it in the intake. A stated "
+                     "consumer beats an inferred one, and naming it from the "
+                     "route would be inference from a name (X-6)"))]
+
 
 def readiness(found: list[Gap]) -> dict:
     """Whether this intent may be imported, and precisely what is in the way.

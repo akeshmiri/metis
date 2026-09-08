@@ -79,6 +79,19 @@ catching it. The live defect is reported beside the score as its own finding.
 Rating a caught failure as poorly-detected would push effort away from the
 failures nobody can see.
 
+## The standard behind this, and what it does not certify
+
+**ISO/IEC 25010** — `../../references/iso-25010-quality-model.md`. Métis follows
+the **2023** nine-characteristic model, not 2011's eight: Usability became
+Interaction capability, Portability became Flexibility, and Safety was added.
+Testability sits under Maintainability, which is why an untestable requirement
+is a product risk and not only a process complaint.
+
+**A coverage map, never a compliance claim.** `metis_mcp/standards.py` is the
+registry — which standard governs which skill, what Métis computes against it,
+and what it refuses to claim. Whether the result satisfies an obligation is a
+judgement about the obligation, not a property Métis can compute.
+
 ## What this skill must not do
 
 - **Never derive a probability from coverage.** Coverage says *untested*; it

@@ -83,6 +83,7 @@ wrong workflow produces a confident artefact about the wrong thing.
 | `metis-review-assist` | A workflow has halted at model-approval, or when a user wants help deciding approve/reject on a model's elements — Not for batch-approving a queue |
 | `metis-risk-manager` | A request concerns risk identification, a risk register, exposure or EMV, response strategies, a risk review or a risk report |
 | `metis-spec-writeback` | Someone asks to update or write back a spec, or to put the generated specification where the team reads it |
+| `metis-system-contact` | Someone asks Métis to look at a running system, collect cluster or query evidence, or run a load scenario — Not for anything recovered from source; that is metis-model-build |
 | `metis-test-design` | Someone asks what testing a scope involves, wants a test design or test approach, or asks which technique applies — Not for rendering cases from an approved model; that is metis-test-generate |
 | `metis-test-generate` | Someone asks to generate test cases for a model, render a feature file, or publish a batch to a tracker |
 | `metis-business-analyst-intent` | An intent is vague, when a need has no stated behaviour, or when somebody asks whether an idea is ready to be written down |

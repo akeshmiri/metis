@@ -123,6 +123,18 @@ A UIF is validated against `../shared/schemas/unified-intake-format.schema.json`
 says what must not be trusted; the schema says what a document must contain for
 the question to arise at all.
 
+## The standard behind this, and what it does not certify
+
+**ISO/IEC/IEEE 29148** — `../shared/references/iso-29148-requirements.md`. It is
+why free prose lands as a `Finding` rather than a `Requirement`: `ears_pattern`
+has no empty form, and a sentence with no trigger and no response cannot become
+one without inventing the missing half (S-13).
+
+**A coverage map, never a compliance claim.** `metis_mcp/standards.py` is the
+registry — which standard governs which skill, what Métis computes against it,
+and what it refuses to claim. Whether the result satisfies an obligation is a
+judgement about the obligation, not a property Métis can compute.
+
 ## Non-negotiable rules
 
 1. **A document's claimed acceptance criteria are never trusted.** A UIF may

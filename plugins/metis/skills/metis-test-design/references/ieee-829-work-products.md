@@ -73,3 +73,15 @@ silently would let a reader assume they were covered.
 Do not copy this content into a skill. The mapping is served by
 `design_standards()`; this is the *why* behind it, and duplicating it would
 create the second copy that drifts.
+
+## What this reference does not do
+
+It does not reproduce the standard, and answering an 829 document is not a claim
+to have produced it in the form 829 specifies. IEEE 829-2008 is **superseded by
+ISO/IEC/IEEE 29119-3** and is carried here only because it remains the more
+commonly spoken naming reference in practice — read
+`../../shared/references/iso-29119-3-test-documentation.md` for the current one.
+
+Whether Métis's coverage of a work product satisfies an obligation is a judgement
+about the obligation. `design/standards.py` forbids a `because` line that reads
+otherwise, and `metis_mcp/standards.py` records the same limit for this entry.

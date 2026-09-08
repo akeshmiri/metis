@@ -20,9 +20,9 @@ A specialist has **no agent of its own** — its parent's agent routes to it as 
 
 ## MCP
 
-56 tools, 39 prompts, 224 resources.
+58 tools, 40 prompts, 234 resources.
 
-**49 of the 56 tools have no CLI path at all.** This is the concrete cost of dropping the MCP surface: each one would have to become a CLI verb or be deleted.
+**51 of the 58 tools have no CLI path at all.** This is the concrete cost of dropping the MCP surface: each one would have to become a CLI verb or be deleted.
 
 - `ac_quality`
 - `analysis_aspects`
@@ -34,6 +34,7 @@ A specialist has **no agent of its own** — its parent's agent routes to it as 
 - `change_review`
 - `check_ears`
 - `check_intent`
+- `classify_failure`
 - `coverage_report`
 - `decision_queue`
 - `describe_execution`
@@ -52,6 +53,7 @@ A specialist has **no agent of its own** — its parent's agent routes to it as 
 - `payload_shape`
 - `product_risk`
 - `release_risk`
+- `release_verdict`
 - `requirement_risk`
 - `residual_risk`
 - `risk_candidates`
@@ -90,15 +92,15 @@ Prompts are the skills, read from the same files the plugin loads — one source
 |---|---|
 | `academy` | 25 |
 | `guide` | 7 |
-| `knowledge` | 68 |
-| `references` | 8 |
-| `skill` | 39 |
+| `knowledge` | 71 |
+| `references` | 11 |
+| `skill` | 40 |
 | `spec` | 1 |
-| `steps` | 76 |
+| `steps` | 79 |
 
 ## Skills
 
-39 under `plugins/metis/skills/`. Each declares its own `workflow:` and `allowed-tools:`, which is what the agents are generated from.
+40 under `plugins/metis/skills/`. Each declares its own `workflow:` and `allowed-tools:`, which is what the agents are generated from.
 
 - `metis-behavior-modeling`
 - `metis-business-analyst` — drives `intent-review`
@@ -110,6 +112,7 @@ Prompts are the skills, read from the same files the plugin loads — one source
 - `metis-review-assist`
 - `metis-risk-manager` — drives `risk-review`
 - `metis-spec-writeback` — drives `spec-writeback`
+- `metis-system-contact`
 - `metis-test-design` — drives `test-design`
 - `metis-test-generate` — drives `test-generate`
 - `metis-business-analyst-intent`
@@ -142,9 +145,9 @@ Prompts are the skills, read from the same files the plugin loads — one source
 
 ## Agents
 
-- `plugins/metis/agents` — 13 files
+- `plugins/metis/agents` — 14 files
 
-Generated from the skills' frontmatter. They hold scope and nothing else: 37 distinct tool sets, 4–17 tools each out of 56. **MCP has no primitive for this** — neither a prompt nor a resource has a field expressing tool scope — which is why agents stay on the filesystem in both client formats.
+Generated from the skills' frontmatter. They hold scope and nothing else: 38 distinct tool sets, 4–17 tools each out of 58. **MCP has no primitive for this** — neither a prompt nor a resource has a field expressing tool scope — which is why agents stay on the filesystem in both client formats.
 
 ## The CLI
 

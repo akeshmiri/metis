@@ -7,7 +7,7 @@
 Its frontmatter names no `knowledge-from` module. The discipline this
 skill needs is either always-enforced — in which case it belongs in
 `../SKILL.md`, which is loaded every time — or it is shared, in which
-case it is in `../shared/knowledge/` and cited from a step.
+case it is in `../../../../shared/knowledge/` and cited from a step.
 
 A fragment earns its place here when a step needs the reasoning and
 paying for it on every invocation would be waste.

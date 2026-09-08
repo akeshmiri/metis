@@ -1,6 +1,6 @@
 # 4 · Compute, with the tools, and report what it rests on
 
-Read `../../references/quantitative-methods.md` for what each method is for.
+Read `../../../references/quantitative-methods.md` for what each method is for.
 
 ## Always call the tool
 

@@ -113,6 +113,30 @@ def test_every_command_a_skill_names_is_a_real_cli_verb():
         + ", ".join(f"{s}:{v}" for s, v in sorted(set(unknown))))
 
 
+# A tool call as a skill writes one: `design_sections()` in an inline span. This
+# is deliberately narrower than the CLI scan above, because a bare word is a
+# word -- `coverage` and `impact` are English -- while `` `coverage(` `` is
+# unambiguously a call.
+_TOOL_CALL = re.compile(r"`(\w+)\(")
+
+
+def _cited_tools(directory: Path) -> set[str]:
+    """Every tool a skill's own prose tells the model to call.
+
+    `SKILL.md` plus the `steps/` and `knowledge/` files that belong to it. A
+    nested specialist has its own frontmatter and is scanned as its own skill,
+    so its directory is not walked from the parent.
+    """
+    files = [directory / "SKILL.md"]
+    files += sorted(directory.glob("steps/*.md"))
+    files += sorted(directory.glob("knowledge/*.md"))
+    cited: set[str] = set()
+    for path in files:
+        if path.exists():
+            cited |= set(_TOOL_CALL.findall(path.read_text()))
+    return cited
+
+
 def test_no_skill_still_calls_a_tool_the_server_does_not_expose():
     """A skill calling a tool that does not exist cannot work.
 
@@ -122,8 +146,14 @@ def test_no_skill_still_calls_a_tool_the_server_does_not_expose():
     It now compares against what `server.py` actually defines, which cannot go
     stale. The agents are covered by `test_agents.py`, a second surface this
     file deliberately does not reach into.
+
+    **The `metis_*` scan it used to do was vacuous and stayed that way through
+    the rebuild.** Every tool on the surface is unprefixed now, so a regex for
+    `\bmetis_[a-z_]+\b` matched nothing a skill could get wrong -- it could only
+    ever have caught a v1 name, and `test_agents.py` already owns that. Scanning
+    the call form instead is what makes it capable of failing again.
     """
-    from metis_mcp.agent_generator import exposed_tools
+    from metis_mcp.agent_generator import exposed_tools, read_skills
 
     real = set(exposed_tools())
     assert real, "no tools parsed from server.py"
@@ -138,6 +168,93 @@ def test_no_skill_still_calls_a_tool_the_server_does_not_expose():
             offenders.append(f"{path.relative_to(SKILLS)}:{name}")
     assert not offenders, (
         "these reference tools that do not exist: " + ", ".join(sorted(offenders)))
+
+
+def test_every_tool_a_skill_cites_is_one_it_is_granted():
+    """A skill telling the model to call a tool its frontmatter denies.
+
+    `allowed-tools:` is what `agent_generator` turns into the generated agent's
+    tool grant, so a tool cited in prose and missing from that list is
+    **unreachable**: the skill reads correct, and the agent cannot execute it.
+    Nothing caught this class before, because the only tool check asked whether
+    the *server* exposed a name -- never whether *this skill* was granted it.
+
+    It found `metis-test-design` telling the model to call `design_standards()`
+    while granting fifteen other tools and not that one. The `compliance`
+    section it renders was therefore unreachable from the skill that owns it.
+    """
+    from metis_mcp.agent_generator import exposed_tools, read_skills
+
+    real = set(exposed_tools())
+    offenders: list[str] = []
+    for skill in read_skills():
+        granted = set(skill.tools)
+        if not granted:
+            # A skill declaring no tools gets the whole surface (see
+            # `agent_generator`), so there is nothing to deny.
+            continue
+        for name in sorted(_cited_tools(skill.directory) & real):
+            if name not in granted:
+                offenders.append(f"{skill.name} cites {name}() but does not grant it")
+    assert not offenders, "\n".join(offenders)
+
+
+def test_the_granted_tool_scan_is_not_vacuous():
+    """The guard on the guard, and this file's own convention.
+
+    The scan above is only meaningful while skills actually write tool calls in
+    the form it matches. If the prose style changes, it must fail here rather
+    than start passing everywhere.
+    """
+    from metis_mcp.agent_generator import exposed_tools, read_skills
+
+    real = set(exposed_tools())
+    seen = set()
+    for skill in read_skills():
+        seen |= _cited_tools(skill.directory) & real
+    assert len(seen) > 10, (
+        f"only {len(seen)} tool calls found in the whole skill tree — the "
+        "`name(` form the scan depends on is no longer how skills write them")
+
+
+def test_every_relative_path_a_skill_writes_resolves():
+    """A path written as a path must lead somewhere.
+
+    **Scoped to `../` deliberately.** A backtick span like `steps/01-plan.md`
+    is prose naming a file in another skill's tree, and resolving it from the
+    citing file would be wrong. A span that opens with `../` is unambiguously a
+    relative path from *this* file, so it is checkable and was worth checking:
+    it found 24 of them, three hand-written and **21 generated** by
+    `knowledge_gen.render_index`, which emitted a specialist's hop count as a
+    top-level skill's. A wrong path reproduced into 21 files is the failure
+    `docs/academy/10-where-a-thing-belongs.md` warns about from the other side —
+    generation does not make a path right, it makes a wrong one uniform.
+
+    Markdown links (`[x](y.md)`) are checked by the same rule and were all
+    already sound; the breakage was entirely in backticked spans, which nothing
+    had ever looked at.
+    """
+    offenders: list[str] = []
+    for path in SKILLS.rglob("*.md"):
+        text = path.read_text()
+        written = set(re.findall(r"`(\.\.?/[^`\s]+)`", text))
+        written |= {c for c in re.findall(r"\]\(([^)#\s]+)\)", text)
+                    if c.startswith(".") and "<" not in c}
+        for ref in written:
+            if not (path.parent / ref).resolve().exists():
+                offenders.append(f"{path.relative_to(SKILLS)} -> {ref}")
+    assert not offenders, (
+        "these relative paths lead nowhere:\n  " + "\n  ".join(sorted(offenders)))
+
+
+def test_the_relative_path_scan_is_not_vacuous():
+    """The guard on the guard: skills must still be writing relative paths."""
+    found = 0
+    for path in SKILLS.rglob("*.md"):
+        found += len(re.findall(r"`(\.\.?/[^`\s]+)`", path.read_text()))
+    assert found > 20, (
+        f"only {found} relative paths in the skill tree — the scan above is "
+        "no longer looking at anything")
 
 
 def test_every_skill_declares_a_name_and_a_description():
@@ -208,6 +325,49 @@ def test_the_ported_design_gate_runs_and_is_not_atlas_coupled():
     assert '".metis"' in text, "it must resolve under .metis/ instead"
     assert "--root" in text and "--atlas-root" not in text, "the flag is renamed"
     assert "Ported from Atlas" in text, "provenance is recorded, not erased"
+
+
+def test_no_skill_tells_anyone_to_run_the_unwired_design_gate():
+    """A gate with no producer must not be presented as a step.
+
+    `check_design_sync.py` compares a high-level design against its detailed
+    form using `SG-xx` group ids and an `overview-source-hash` marker. **Métis
+    produces none of those** — `design/document.py` renders one document — so
+    the script returns `Missing high-level overview artifact` for every scope,
+    every time. `metis-test-generate/SKILL.md` said "run it before the gate",
+    which is a guaranteed failure dressed as a procedure: worse than a dead
+    reference, because it teaches a reader to ignore a gate that does block.
+
+    The check is conditional rather than absolute, so **wiring it up makes this
+    pass instead of having to be deleted**: if anything in `metis_mcp/` starts
+    emitting the marker, a skill may instruct running it again.
+    """
+    engine = Path(__file__).resolve().parent / "metis_mcp"
+    produced = any(
+        "overview-source-hash" in path.read_text(errors="ignore")
+        for path in engine.rglob("*.py"))
+    if produced:
+        return
+
+    offenders = []
+    for path in SKILLS.rglob("*.md"):
+        text = path.read_text()
+        if "check_design_sync" not in text:
+            continue
+        # Naming it while saying it is unwired is exactly right; instructing a
+        # run is what must not survive. **Quoted spans are stripped first** --
+        # the corrected text quotes the instruction it removed in order to say
+        # why, and a check that cannot tell a quotation from a directive would
+        # forbid explaining the fix.
+        prose = re.sub(r'"[^"]*"', "", text)
+        # A negated instruction is the correct state, so "do not run it" and
+        # "never run it" are not offenders -- only a bare directive is.
+        if re.search(r"(?<!do not )(?<!never )\brun it\b", prose, re.I):
+            offenders.append(str(path.relative_to(SKILLS)))
+    assert not offenders, (
+        "nothing in metis_mcp/ emits an `overview-source-hash`, so "
+        "check_design_sync.py cannot pass — yet these instruct running it: "
+        + ", ".join(offenders))
 
 
 def test_the_shared_knowledge_that_survives_is_the_knowledge_skills_cite():

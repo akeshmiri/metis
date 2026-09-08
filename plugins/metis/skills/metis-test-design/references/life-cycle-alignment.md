@@ -60,3 +60,14 @@ which sections it therefore could not state.
   to confirm it.
 - The scope grows a hardware or system boundary, and 15288 becomes the right
   reference.
+
+## What this reference does not do
+
+It does not reproduce either standard, and **nothing computes this alignment** —
+it is a reading a person recorded here, checked by no test. That is the one entry
+in `metis_mcp/standards.py` with an empty `computes`, declared rather than filled
+with a module name that would not be doing the work.
+
+It is also not a conformance claim. Placing a design section against a life-cycle
+process says which process the section touches; whether the process is
+adequately performed is a judgement about the project.

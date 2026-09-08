@@ -152,6 +152,8 @@ _ASPECT_MEANS = {
     "requirement": "whether the wording can be satisfied twice the same way",
     "design": "whether anything could ever test it, whatever gets built",
     "risk": "whether anybody has said what being wrong costs",
+    "consumer": "who reads what this produces — a report and an integration "
+                "are tested differently, and nothing else notices",
 }
 
 
