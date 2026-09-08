@@ -27,8 +27,8 @@ recovers stops being the whole picture, and the design should say so.
 | Requirements analysis | §6.4.2 | turning needs into verifiable requirements | EARS conformance and criterion quality, in the basis section |
 | Architecture / design definition | §6.4.4 | structure, components, interfaces | **asked.** `runtime_architecture` and `design_specification` are questions; Métis recovers what the code does, not what it was meant to do |
 | Integration | §6.4.6 | combining units into an integrated whole | the contract and journey sections |
-| Verification | §6.4.7 | built *right* — conforms to the specified requirement | the technique, dimensions and data sections |
-| Validation | §6.4.8 | does the *right thing* — meets the actual need | the acceptance criteria a case asserts against |
+| Verification | §6.4.7 | built *right* — conforms to the specified requirement | the **`verification`** section, which carries the box transparency each guard's evidence supports, plus technique, dimensions and data |
+| Validation | §6.4.8 | does the *right thing* — meets the actual need | the **`validation`** section. Mostly `no` or `clarify`, and that is the finding rather than a failure of the section |
 | Qualification testing | §6.4.9 | independent evaluation before release | `metis-release-readiness`, not the design |
 
 ## The row worth arguing about
@@ -71,3 +71,21 @@ with a module name that would not be doing the work.
 It is also not a conformance claim. Placing a design section against a life-cycle
 process says which process the section touches; whether the process is
 adequately performed is a judgement about the project.
+
+
+## Why these two are separate sections and not one
+
+12207 keeps §6.4.7 and §6.4.8 apart, and Métis follows it for a reason of its
+own: **"built right" is answerable from the implementation and "the right thing"
+is not answerable from it at all.**
+
+Métis computes a great deal about verification — every guard, its atomic
+conditions, how much of the inside was visible when it was recovered. It
+computes almost nothing about validation, because the only evidence for a *need*
+is a criterion somebody wrote **without reading the code**. Where the criterion
+was written from the code, its agreeing with the code is coverage and never
+correctness (S-19, §4.1), so validation there is not weak — it is impossible.
+
+A single "V&V" section would put a full table beside an empty one under one
+heading, and the fullness would be read as covering both. Keeping them adjacent
+and separate is what makes the emptiness of the second legible.

@@ -85,13 +85,17 @@ AREAS: tuple[Area, ...] = (
          "the factors behind the band — branching, coupling, size, repair "
          "history — and the design response each one asks for, which is never "
          "the same as 'test it more'"),
-    Area(8, "Setup and data requirements", "metis-test-design-levels", "setup",
+    Area(8, "Verification depth", "metis-test-design-levels", "verification",
+         "how much of the inside each guard's evidence actually showed — "
+         "white, grey or black box, read from `guard_claim` rather than chosen "
+         "— and what a test at that transparency cannot establish"),
+    Area(9, "Setup and data requirements", "metis-test-design-levels", "setup",
          "what reaching each behaviour costs, computed from the setup chain "
          "rather than guessed from a business verb — and the pattern choice "
          "left to whoever knows the environment"),
     # The crossing. These three run in generation, and saying so here is what
     # makes the hand-off a checked fact rather than an assumption.
-    Area(9, "Test case derivation", "metis-test-generate", "",
+    Area(12, "Test case derivation", "metis-test-generate", "",
          "one path, one case, one assertion (T-1a) — rendered from an approved "
          "model rather than from this document"),
     Area(10, "Test set assembly", "metis-test-generate", "",
@@ -176,6 +180,17 @@ BEYOND_THE_REFERENCE: tuple[tuple[str, str, str], ...] = (
     # for the thing decided `test`. It stays with the parent for the same reason
     # `conditions` does: it is the completeness question, and it crosses every
     # specialist's territory without belonging to one.
+    # **Verification and validation are two areas, and merging them is the
+    # failure the split exists to prevent.** ISO/IEC/IEEE 12207 keeps §6.4.7
+    # and §6.4.8 apart for the same reason: "built right" is answerable from
+    # the implementation and "the right thing" is not answerable from it at
+    # all. Verification rides with `levels` because box transparency decides
+    # which level can assert a condition; validation stays with the parent
+    # because it is about the basis, and no specialist owns that.
+    ("metis-test-design", "validation",
+     "whether anything states what each behaviour is FOR, and therefore "
+     "whether it can be validated at all — `no` where every criterion is "
+     "`code_derived` (S-19), `clarify` where nobody has said"),
     ("metis-test-design", "mirror",
      "specific scenarios the recovered evidence suggests and no authored "
      "criterion states — each a proposal carrying `derived_from: model`, never "

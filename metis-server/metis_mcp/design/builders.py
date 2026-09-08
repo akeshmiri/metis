@@ -1674,6 +1674,153 @@ def build_mirror(context: DesignContext) -> list[dict]:
     return rows
 
 
+# ---------------------------------------------------------------------------
+# Verification and validation
+#
+# **Two sections, because they are two questions and the answer to one is
+# routinely offered as the answer to the other.** Verification asks whether the
+# thing was built to the specification. Validation asks whether the
+# specification was the right thing to build. Métis can compute a great deal
+# about the first and almost nothing about the second, and a single "V&V"
+# section would let the first one's fullness stand in for the second one's
+# emptiness -- which is S-19 with a table around it.
+# ---------------------------------------------------------------------------
+
+#: Whether a behaviour can be validated at all, and by what.
+CAN_VALIDATE = ("yes", "no", "clarify")
+
+
+def build_verification(context: DesignContext) -> list[dict]:
+    """Was it built to the specification — and how much of the inside was seen.
+
+    **The transparency is recovered, not chosen.** A design normally states box
+    transparency as a decision ("white-box here, black-box there"). Métis has no
+    standing to make that decision and does not need to: `guard_claim` already
+    records what each guard was recovered *from*, so the visibility is a property
+    of the evidence. `design/transparency.py` does the mapping and refuses to
+    guess at a claim it does not recognise.
+
+    **Every row says what its transparency cannot establish.** A white-box row
+    can assert the branch is taken and cannot assert the branch is right; a
+    black-box row can assert the interface behaves as declared and cannot tell
+    whether a declared outcome is implemented at all. Printing the first half
+    without the second is how a full verification table comes to read as
+    sufficiency.
+
+    **Levels are what the box permits, not what the design picked.**
+    `build_levels` assigns; this reports the constraint. You cannot assert a
+    private branch through an HTTP call, and a design that assigns
+    `api_functional` to a white-box condition has a gap rather than a plan.
+    """
+    from metis_mcp.design import transparency
+    from metis_mcp.mbt.criteria import guard_conditions
+
+    model = context.model
+    if model is None:
+        return []
+
+    rows: list[dict] = []
+    for tid in context.ordered_transition_ids():
+        transition = model.transitions[tid]
+        seen = transparency.for_transition(transition)
+        conditions = guard_conditions(transition)
+        anchored = "yes" if transition.guard_anchor else "no"
+        rows.append({
+            "id": row_id("ver", tid),
+            "subject": _behaviour(model, tid),
+            "box": seen.box,
+            "claim": seen.claim or "(none recorded)",
+            "because": seen.because,
+            "levels": ", ".join(transparency.levels_for(seen.box)) or
+                      "none — the evidence supports no transparency claim",
+            "conditions": str(len(conditions)) if conditions else "0",
+            "anchored": anchored,
+            "verifies": seen.verifies,
+            "cannot": seen.cannot,
+            "risk_band": context.band(tid),
+        })
+    return rows
+
+
+def build_validation(context: DesignContext) -> list[dict]:
+    """Was it the right thing — which Métis mostly cannot answer, and says so.
+
+    **This section is expected to be mostly `no`, and that is the finding.**
+    Validation compares behaviour against the need somebody actually had. The
+    only evidence Métis holds for a need is an acceptance criterion or
+    requirement that was written **independently of the code**. Where the
+    criterion was written *from* the code, its agreeing with the code is
+    evidence of coverage and never of correctness (S-19, §4.1) — so validation
+    is not weak there, it is impossible, and the row says which.
+
+    **`clarify` is not a softer `no`.** `no` means Métis has the provenance and
+    it rules validation out. `clarify` means nobody has told Métis what the
+    behaviour is for, which is a question with an owner rather than a verdict.
+
+    **Nothing here is derived from the implementation.** That is the whole
+    point: a "need" summarised from recovered code is the implementation
+    restated as its own intent, which is the defect S-19 names and the reason
+    `runtime_architecture` and `design_specification` are `asked` inputs rather
+    than gathered ones.
+    """
+    model = context.model
+    if model is None:
+        return []
+
+    requirement = context.requirement or {}
+    criteria = tuple(requirement.get("criteria") or ())
+    independent = [c for c in criteria
+                   if (c.get("provenance") or "") in
+                   ("independently_authored", "human_confirmed")]
+    derived = [c for c in criteria
+               if (c.get("provenance") or "") == "code_derived"]
+
+    rows: list[dict] = []
+    for tid in context.ordered_transition_ids():
+        behaviour = _behaviour(model, tid)
+        if independent:
+            claim = "; ".join(
+                (c.get("text") or "")[:90] for c in independent[:2])
+            plural = "criterion" if len(independent) == 1 else "criteria"
+            can, why, needed = ("yes",
+                                f"{len(independent)} {plural} authored "
+                                "independently of the code",
+                                "assert the behaviour against the criterion, "
+                                "not against the branch that implements it")
+        elif derived:
+            claim = "; ".join((c.get("text") or "")[:90] for c in derived[:2])
+            plural = ("the one criterion reaching this behaviour is"
+                      if len(derived) == 1
+                      else f"all {len(derived)} criteria reaching it are")
+            can, why, needed = (
+                "no",
+                f"{plural} `code_derived` — written from the code, so "
+                "agreement with the code is coverage and never correctness "
+                "(S-19, §4.1)",
+                "a criterion somebody writes from the need, without reading "
+                "the implementation first")
+        else:
+            claim = ""
+            can, why, needed = (
+                "clarify",
+                "no acceptance criterion reaches this behaviour, so there is "
+                "nothing stating what it is FOR",
+                "somebody states the need. Until then this behaviour is "
+                "verifiable and not validatable, and those are different words")
+        rows.append({
+            "id": row_id("val", tid),
+            "subject": behaviour,
+            "claim": claim,
+            "provenance": ("independently_authored" if independent
+                           else "code_derived" if derived else ""),
+            "can_validate": can,
+            "why": why,
+            "needed": needed,
+            "risk_band": context.band(tid),
+        })
+    return rows
+
+
 BUILDERS = {
     "build_basis": build_basis,
     "build_compliance": build_compliance,
@@ -1691,6 +1838,8 @@ BUILDERS = {
     "build_contract": build_contract,
     "build_journey": build_journey,
     "build_mirror": build_mirror,
+    "build_verification": build_verification,
+    "build_validation": build_validation,
     "build_uncertainty": build_uncertainty,
 }
 

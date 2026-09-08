@@ -75,8 +75,13 @@ WORK_PRODUCTS: tuple[WorkProduct, ...] = (
         "TDS", "Test Design Specification", ISO_29119_3,
         "the test approach for a feature: its test conditions, the coverage "
         "items they yield, and the pass/fail criteria",
-        ("conditions", "technique", "dimensions", "security", "performance",
-         "contract", "journey"), FULL),
+        # `verification` belongs here rather than in `METIS_OWN`: box
+        # transparency and what a test at that depth establishes IS the test
+        # approach, which is what a TDS documents. Its sibling `validation` is
+        # NOT here -- 29119-3 designs tests against a specification and cannot
+        # ask whether the specification came from the need or from the code.
+        ("conditions", "technique", "dimensions", "verification", "security",
+         "performance", "contract", "journey"), FULL),
     WorkProduct(
         "TCS", "Test Case Specification", ISO_29119_3,
         "concrete inputs, preconditions and expected results for a condition",
@@ -141,6 +146,13 @@ WORK_PRODUCTS: tuple[WorkProduct, ...] = (
 #: beyond-the-standard character goes in that product's `because` line instead,
 #: so a reader is never told two different things about one section.
 METIS_OWN: dict[str, str] = {
+    "validation": "whether a behaviour can be validated at all. Neither "
+                  "standard has a work product for this, and 29119-3 could "
+                  "not: it documents the design of tests against a "
+                  "specification, and this asks whether the specification "
+                  "itself was written from the need or from the code (S-19). "
+                  "ISO/IEC/IEEE 12207 §6.4.8 is where validation lives, and "
+                  "that is a life-cycle process rather than a document",
     "mirror": "candidates for criteria nobody wrote. Neither standard has a "
               "work product for this: 29119-3 documents the conditions derived "
               "from a specification, and this proposes the ones the "

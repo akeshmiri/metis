@@ -1817,3 +1817,190 @@ def test_the_mirror_section_says_what_absent_and_empty_each_mean():
     assert "not the same as" in section.absent_means, (
         "an absent mirror section must not read as 'nothing is missing'")
     assert section.empty_means and section.empty_means != section.absent_means
+
+
+# --------------------------------------------------------------------------
+# Box transparency and the V&V split.
+#
+# Two asks, one root: a design that says "verified" without saying how much of
+# the inside anybody could see, and that lets verification stand in for
+# validation. 12207 keeps §6.4.7 and §6.4.8 apart because "built right" is
+# answerable from the implementation and "the right thing" is not answerable
+# from it at all.
+# --------------------------------------------------------------------------
+
+def test_every_link_constant_the_extractors_emit_has_a_transparency():
+    """Both directions, against the module that defines the vocabulary.
+
+    `code_analysis/contract.py` declares the `LINK_*` values and `synthesis.py`
+    emits one more (`advice-scope`) that the declared list does not contain. A
+    claim with no mapping would silently become `unknown`, which is safe — but
+    a DECLARED claim with no mapping is an omission, and this is what catches it.
+    """
+    from code_analysis import contract
+    from metis_mcp.design import transparency
+
+    declared = [v for k, v in vars(contract).items()
+                if k.startswith("LINK_") and isinstance(v, str)]
+    assert declared, "no LINK_ constants found — the scan is checking nothing"
+    for claim in declared:
+        mapped = transparency.for_claim(claim)
+        assert mapped.claim == claim, (
+            f"{claim!r} is a declared link value with no transparency mapping — "
+            "it falls through to the unrecognised branch")
+
+
+def test_a_name_match_is_not_white_box():
+    """**The mapping worth arguing about, and X-6 settles it.**
+
+    A disclosed name heuristic produces no knowledge of the inside. Grading it
+    as structural would let a route called `validateAndSave` claim the branch
+    coverage of a branch nobody found.
+    """
+    from metis_mcp.design import transparency
+
+    assert transparency.for_claim("name-match").box == transparency.UNKNOWN
+
+
+def test_an_unrecognised_claim_is_unknown_and_says_it_was_not_classified():
+    """Never the nearest neighbour.
+
+    The extractors already emit a value the declared vocabulary does not list,
+    so a further one is likely rather than hypothetical. Bucketing it would put
+    a transparency claim on evidence nobody has classified.
+    """
+    from metis_mcp.design import transparency
+
+    found = transparency.for_claim("some-future-extractor-value")
+    assert found.box == transparency.UNKNOWN
+    assert "not a claim this mapping recognises" in found.because
+    assert not found.levels, "an unclassified claim permits no level by name"
+
+
+def test_every_transparency_states_what_it_cannot_establish():
+    """A transparency printed with no stated limit reads as sufficiency, which
+    is the single way the verification table could mislead."""
+    from metis_mcp.design import transparency
+
+    for claim, entry in transparency.describe()["claims"].items():
+        assert entry["cannot"].strip(), f"{claim!r} states no limit"
+        assert entry["because"].strip(), f"{claim!r} does not say why"
+
+
+def test_unknown_transparency_permits_every_level_rather_than_none():
+    """Not knowing how a guard was recovered constrains nothing.
+
+    Returning no levels would read as "no level can test this", which is a much
+    stronger claim than the evidence supports — and the demo model is entirely
+    `unknown`, so this is the common path rather than an edge case.
+    """
+    from metis_mcp.mbt.test_levels import LEVELS
+    from metis_mcp.design import transparency
+
+    assert set(transparency.levels_for(transparency.UNKNOWN)) == set(LEVELS)
+    assert transparency.levels_for(transparency.WHITE) != LEVELS, (
+        "white-box must constrain the level; it cannot be asserted over HTTP")
+
+
+def test_every_verification_row_carries_a_transparency_and_its_limit():
+    from metis_mcp.design.builders import build_verification
+    from metis_mcp.design import transparency
+
+    rows = build_verification(_login_context())
+    assert rows, "no verification rows for a model with transitions"
+    for row in rows:
+        assert row["box"] in transparency.BOXES, row["box"]
+        assert row["cannot"].strip(), f"{row['id']} states no limit"
+        assert row["verifies"].strip(), f"{row['id']} establishes nothing"
+
+
+def _validation_rows(criteria):
+    from metis_mcp.design.builders import build_validation
+
+    return build_validation(_login_context(requirement={"criteria": criteria}))
+
+
+def test_a_code_derived_criterion_cannot_validate():
+    """**S-19, and the reason validation is its own section.**
+
+    A criterion written from the code agreeing with the code is evidence of
+    coverage and never of correctness. That makes validation *impossible* there,
+    not merely weak — and a merged V&V section would have let the verification
+    half's fullness stand in for it.
+    """
+    rows = _validation_rows([{"text": "the record is archived",
+                              "provenance": "code_derived"}])
+    assert rows
+    for row in rows:
+        assert row["can_validate"] == "no", row
+        assert "S-19" in row["why"]
+        assert row["needed"].strip(), "a `no` row must carry the next step"
+
+
+def test_an_independently_authored_criterion_can_validate():
+    rows = _validation_rows([{"text": "an archived record is not listed",
+                              "provenance": "independently_authored"}])
+    for row in rows:
+        assert row["can_validate"] == "yes", row
+
+
+def test_no_criterion_at_all_is_clarify_and_not_no():
+    """`clarify` is not a softer `no`.
+
+    `no` means Métis has the provenance and it rules validation out. `clarify`
+    means nobody has said what the behaviour is for, which is a question with an
+    owner rather than a verdict.
+    """
+    rows = _validation_rows([])
+    for row in rows:
+        assert row["can_validate"] == "clarify", row
+        assert "nothing stating what it is FOR" in row["why"]
+
+
+def test_validation_reads_no_fact_from_the_implementation():
+    """The rule that keeps the section honest.
+
+    A "need" summarised from recovered code is the implementation restated as
+    its own intent. So a validation row's verdict must depend on criterion
+    provenance ALONE — changing the model's guards must not move it.
+    """
+    import dataclasses
+
+    from metis_mcp.design.builders import DesignContext, build_validation
+    import mbt_fixtures
+
+    criteria = [{"text": "x", "provenance": "code_derived"}]
+    plain = mbt_fixtures.login_model()
+    verdicts = {r["subject"]: r["can_validate"] for r in build_validation(
+        DesignContext(model=plain, requirement={"criteria": criteria}))}
+
+    # Same model, every guard rewritten. Verification would change; validation
+    # must not.
+    rewritten = dataclasses.replace(plain, transitions={
+        tid: dataclasses.replace(tr, guard="something_entirely_different",
+                                 guard_claim="resolved")
+        for tid, tr in plain.transitions.items()})
+    after = {r["subject"]: r["can_validate"] for r in build_validation(
+        DesignContext(model=rewritten, requirement={"criteria": criteria}))}
+    assert verdicts == after, (
+        "a validation verdict moved when the implementation changed — it is "
+        "reading the code, which is the defect S-19 names")
+
+
+def test_verification_and_validation_are_two_sections_in_one_group():
+    """Separate, and adjacent. Merging them is the failure; scattering them
+    across the document is a different one — a reader must be able to see the
+    second immediately after the first, which is what makes the emptiness of the
+    second legible."""
+    verification, validation = S.SECTIONS["verification"], S.SECTIONS["validation"]
+    assert verification.group == validation.group == "assurance"
+    assert abs(verification.ordinal - validation.ordinal) == 1
+    assert verification.key != validation.key
+
+
+def test_the_validation_section_refuses_to_read_as_validated_when_absent():
+    """An absent validation section must never be read as a validated system,
+    and an empty one is not the same as a passing one."""
+    section = S.SECTIONS["validation"]
+    assert "never be read as a validated system" in section.absent_means
+    assert "does NOT mean every behaviour" in section.empty_means

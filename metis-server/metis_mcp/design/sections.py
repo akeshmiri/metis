@@ -288,6 +288,13 @@ from metis_mcp.design.builders import MIRROR_CATEGORIES  # noqa: E402
 #: a different state and a different next action.
 MIRROR_DECISIONS: tuple[str, ...] = ("accept", "reject", "clarify")
 
+#: Box transparency, imported from the module that derives it. A second copy
+#: here is how a design starts reporting a transparency nothing computes.
+from metis_mcp.design.transparency import BOXES  # noqa: E402
+
+#: Whether a behaviour can be validated at all. Imported for the same reason.
+from metis_mcp.design.builders import CAN_VALIDATE  # noqa: E402
+
 
 GROUPS: tuple[Group, ...] = (
     Group("basis", "What this design rests on", 1,
@@ -297,16 +304,23 @@ GROUPS: tuple[Group, ...] = (
     Group("conditions", "What must be varied", 2,
           "the techniques the behaviour warrants and the data conditions they "
           "require. Conditions on data, never values (M-9)"),
-    Group("execution", "Where it runs, and whether it can", 3,
+    Group("assurance", "Built right, and the right thing", 3,
+          "verification and validation, kept apart. Verification asks whether "
+          "the thing was built to the specification and carries the box "
+          "transparency each guard's evidence actually supports; validation "
+          "asks whether the specification was the right thing, which Métis "
+          "mostly cannot answer. One section would let the first one's "
+          "fullness stand in for the second one's emptiness (S-19)"),
+    Group("execution", "Where it runs, and whether it can", 4,
           "the level each condition is asserted at, what already covers it, and "
           "what cannot be automated at all"),
-    Group("quality", "The attributes behind the behaviour", 4,
+    Group("quality", "The attributes behind the behaviour", 5,
           "authorisation and load. Both refuse rather than guess: an unrecovered "
           "check is not an absent one, and an unsized endpoint is `no-basis`"),
-    Group("interfaces", "Across a boundary", 5,
+    Group("interfaces", "Across a boundary", 6,
           "the contract each call declares and the journeys that cross surfaces. "
           "Both depend on an architecture nobody has stated to Métis"),
-    Group("uncertainty", "What we do not know", 6,
+    Group("uncertainty", "What we do not know", 7,
           "every unanswered input, what its absence means, and which section it "
           "silenced. This group is the reason the design can be trusted: it is "
           "where the design says what it is not"),
@@ -654,7 +668,87 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
                     "still appear below",
     ),
     Section(
-        key="levels", heading="Levels, existing coverage and viability", ordinal=10,
+        key="verification", heading="Verification — built to the specification",
+        ordinal=10, group="assurance", specialist="metis-test-design-levels",
+        summary="Whether each behaviour was built to what was specified, and "
+                "how much of the inside the evidence actually showed.",
+        builder="build_verification",
+        columns=(
+            _ID,
+            Column("subject", "Behaviour", COMPUTED),
+            Column("box", "Transparency", COMPUTED, BOXES,
+                   means="**recovered, never chosen.** `guard_claim` records "
+                         "what the guard was recovered FROM, so the visibility "
+                         "is a property of the evidence rather than a strategy "
+                         "somebody picked. An unrecognised claim is `unknown`, "
+                         "never the nearest value that already exists"),
+            Column("claim", "From", COMPUTED,
+                   means="the `guard_claim` value itself, quoted so a reader "
+                         "can check the mapping rather than trust it"),
+            Column("because", "Why that much was visible", COMPUTED),
+            Column("levels", "Levels this permits", COMPUTED,
+                   means="what the transparency ALLOWS, not what the design "
+                         "assigned — `levels` does that. A white-box condition "
+                         "assigned to an api_functional test is a gap"),
+            Column("conditions", "Atomic conditions", COMPUTED,
+                   means="how many the guard has. 0 means none were recovered, "
+                         "which is not the same as a guard with none"),
+            Column("anchored", "Traceable", COMPUTED, ("yes", "no"),
+                   means="whether the guard carries a `file:line@commit` "
+                         "(T-9a). A guard a reviewer cannot trace to a line is "
+                         "a claim they take on trust"),
+            Column("verifies", "This establishes", COMPUTED),
+            Column("cannot", "This cannot establish", COMPUTED,
+                   means="mandatory on every row. A transparency printed with "
+                         "no stated limit reads as sufficiency, which is the "
+                         "single way this table could mislead"),
+            _RISK,
+            *_decision_columns(),
+        ),
+        absent_means="NO VERIFICATION CAN BE PLANNED. Without a model there is "
+                     "no guard, no transparency and no condition to assert — so "
+                     "this says nothing about whether the system matches its "
+                     "specification",
+        empty_means="no behaviour is in scope, so there is nothing to verify",
+    ),
+    Section(
+        key="validation", heading="Validation — the right thing to build",
+        ordinal=11, group="assurance", specialist="metis-test-design",
+        summary="Whether there is anything stating what each behaviour is FOR, "
+                "and therefore whether it can be validated at all.",
+        builder="build_validation",
+        columns=(
+            _ID,
+            Column("subject", "Behaviour", COMPUTED),
+            Column("claim", "Validated against", COMPUTED,
+                   means="the independently-authored criterion this would be "
+                         "checked against. Empty means there is none, which is "
+                         "the finding rather than a blank"),
+            Column("provenance", "Provenance", COMPUTED,
+                   ("independently_authored", "human_confirmed", "code_derived", ""),
+                   means="the only thing that decides this column. A criterion "
+                         "written FROM the code cannot validate it (S-19)"),
+            Column("can_validate", "Can be validated", COMPUTED, CAN_VALIDATE,
+                   means="`no` means Métis has the provenance and it rules "
+                         "validation out. `clarify` means nobody has said what "
+                         "the behaviour is for — a question with an owner, not "
+                         "a softer `no`"),
+            Column("why", "Why", COMPUTED),
+            Column("needed", "What would make it possible", COMPUTED,
+                   means="the action, so a `no` row is a next step rather than "
+                         "a complaint"),
+            _RISK,
+            *_decision_columns(),
+        ),
+        absent_means="NOTHING IS KNOWN ABOUT WHAT ANY OF THIS IS FOR. An absent "
+                     "validation section must never be read as a validated "
+                     "system — it means the question was not asked",
+        empty_means="no behaviour is in scope. It does NOT mean every behaviour "
+                    "is validated; a mostly-`no` table is the expected result "
+                    "and an empty one is a different fact",
+    ),
+    Section(
+        key="levels", heading="Levels, existing coverage and viability", ordinal=12,
         group="execution", specialist="metis-test-design-levels",
         summary="Where each condition is asserted, what already reaches it, and "
                 "what cannot be automated at all.",
@@ -698,7 +792,7 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
         empty_means="no behaviour in scope, so no level applies",
     ),
     Section(
-        key="profile", heading="Defect-proneness factors", ordinal=11,
+        key="profile", heading="Defect-proneness factors", ordinal=13,
         group="execution", specialist="metis-test-design-levels",
         summary="What is behind the risk band, factor by factor — because the "
                 "band says how much there is to get wrong and hides what.",
@@ -731,7 +825,7 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
         empty_means="no behaviour in scope could be profiled",
     ),
     Section(
-        key="setup", heading="Setup cost and data complexity", ordinal=12,
+        key="setup", heading="Setup cost and data complexity", ordinal=14,
         group="execution", specialist="metis-test-design-levels",
         summary="What it takes to reach each behaviour, computed from the setup "
                 "chain — and the pattern choice that is a person's, not Métis's.",
@@ -769,7 +863,7 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
                     "there is no setup chain to cost",
     ),
     Section(
-        key="security", heading="Authorisation and authentication", ordinal=13,
+        key="security", heading="Authorisation and authentication", ordinal=15,
         group="quality", specialist="metis-test-design-security",
         summary="The identity and authority each call requires, from what was "
                 "recovered — and what recovery cannot tell you.",
@@ -799,7 +893,7 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
                     "evidence the surface is open by design",
     ),
     Section(
-        key="performance", heading="Load and performance candidacy", ordinal=14,
+        key="performance", heading="Load and performance candidacy", ordinal=16,
         group="quality", specialist="metis-test-design-performance",
         summary="Which calls are worth driving under load, and the refusal where "
                 "nobody has sized them.",
@@ -829,7 +923,7 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
                     "that the calls are cheap",
     ),
     Section(
-        key="contract", heading="Contract and interface", ordinal=15,
+        key="contract", heading="Contract and interface", ordinal=17,
         group="interfaces", specialist="metis-test-design-contract",
         summary="What each endpoint declares, and where the declaration and the "
                 "code disagree.",
@@ -864,7 +958,7 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
                     "compared — which covers only what was compared",
     ),
     Section(
-        key="journey", heading="Cross-surface journeys", ordinal=16,
+        key="journey", heading="Cross-surface journeys", ordinal=18,
         group="interfaces", specialist="metis-test-design-journey",
         summary="Which UI action invokes which call, and the guards a UI action "
                 "inherits from the API beneath it (M-5c).",
@@ -891,7 +985,7 @@ SECTIONS: dict[str, Section] = {s.key: s for s in (
                     "the drift report says which",
     ),
     Section(
-        key="uncertainty", heading="Open questions and assumptions", ordinal=17,
+        key="uncertainty", heading="Open questions and assumptions", ordinal=19,
         group="uncertainty", specialist="metis-test-design",
         summary="Every input nobody supplied, what its absence means, and which "
                 "section it silenced.",

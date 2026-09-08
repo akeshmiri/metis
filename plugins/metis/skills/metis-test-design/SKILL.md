@@ -67,7 +67,7 @@ one of the two tables.
 |---|---|---|
 | **`metis-test-design-technique`** | which technique a behaviour warrants, and its coverage items | `technique`, `dimensions` |
 | **`metis-test-design-data`** | what the data must satisfy | `data` |
-| **`metis-test-design-levels`** | which level, what already covers it, what can be automated | `levels`, `profile`, `setup` |
+| **`metis-test-design-levels`** | which level, what already covers it, what can be automated | `levels`, `profile`, `setup`, `verification` |
 | **`metis-test-design-security`** | authorisation and authentication conditions | `security` |
 | **`metis-test-design-performance`** | load candidacy, and where nobody has sized it | `performance` |
 | **`metis-test-design-contract`** | what an endpoint declares against what it does | `contract` |
@@ -99,6 +99,7 @@ and 15288 when a compliance requirement names one.
 | the basis, and whether there is one | `basis` | every specialist's rows are about it |
 | condition completeness | `conditions` | it is the denominator every other section is measured against |
 | negative obligations | `obligations` | it crosses authorisation, contract and data, and belongs to none of them |
+| whether it was the right thing | `validation` | it rests on criterion provenance, not on the model — and a criterion written from the code cannot validate it (S-19) |
 | missing-criterion candidates | `mirror` | it is the completeness question `conditions` opens, answered as specific proposals rather than classes — and no specialist owns a question about all of them |
 | the uncertainty ledger | `uncertainty` | consolidating what each section could not state *is* running the design |
 | the machine in scope | `machine` | the one thing Métis draws, and it is the whole scope rather than any specialist's slice of it |

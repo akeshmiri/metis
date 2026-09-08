@@ -29,7 +29,34 @@ not re-derive:
 - rows are ordered by risk, and a band ranks — it never forecasts;
 - Métis proposes every row and decides none of them.
 
-This skill owns the `levels`, `profile` and `setup` sections.
+This skill owns the `levels`, `profile`, `setup` and `verification` sections.
+
+## Box transparency is recovered, not chosen
+
+The `verification` section carries **white-box, grey-box or black-box** per
+behaviour, and Métis does not pick it. `guard_claim` records what each guard was
+recovered *from* — a resolved call graph, an enclosing branch, a traced
+exception cause, or one annotation and nothing else — so the visibility is a
+property of the evidence. `design/transparency.py` does the mapping.
+
+Three rules travel with it and none may be softened:
+
+1. **A name is not knowledge of the inside (X-6).** `name-match` maps to
+   `unknown`, not to white. Grading it structural would let a route called
+   `validateAndSave` claim the coverage of a branch nobody found.
+2. **An unrecognised claim is `unknown`, never the nearest neighbour.** The
+   extractors already emit a value the declared vocabulary does not list, so a
+   further one is likely rather than hypothetical.
+3. **Every row states what its transparency CANNOT establish.** A white-box row
+   asserts the branch is taken and cannot assert the branch is right; a
+   black-box row asserts the interface behaves as declared and cannot tell
+   whether a declared outcome is implemented at all.
+
+**Transparency constrains the level; it does not choose it.** You cannot assert
+a private branch through an HTTP call, so `levels this permits` is what the box
+allows and the `levels` section is what the design assigned. Where the two
+disagree, that is a gap to report — not a number to reconcile.
+
 
 ## What this does
 
